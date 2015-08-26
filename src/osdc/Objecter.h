@@ -661,12 +661,18 @@ struct ObjectOperation {
         out_truncate_size(otsize),
         prval(r) {}
     void finish(int r) {
-      if (r < 0)
+      // reqids are copied on ENOENT
+      if (r < 0 && r != -ENOENT)
 	return;
       try {
 	bufferlist::iterator p = bl.begin();
 	object_copy_data_t copy_reply;
 	::decode(copy_reply, p);
+	if (r == -ENOENT) {
+	  if (out_reqids)
+	    *out_reqids = copy_reply.reqids;
+	  return;
+	}
 	if (out_size)
 	  *out_size = copy_reply.size;
 	if (out_mtime)
@@ -1131,17 +1137,19 @@ public:
     object_t target_oid;
     object_locator_t target_oloc;
 
-    bool precalc_pgid;   ///< true if we are directed at base_pgid, not base_oid
-    pg_t base_pgid;      ///< explciti pg target, if any
+    bool precalc_pgid;    ///< true if we are directed at base_pgid, not base_oid
+    pg_t base_pgid;       ///< explciti pg target, if any
 
-    pg_t pgid;           ///< last pg we mapped to
-    unsigned pg_num;     ///< last pg_num we mapped to
-    vector<int> up;      ///< set of up osds for last pg we mapped to
-    vector<int> acting;  ///< set of acting osds for last pg we mapped to
-    int up_primary;      ///< primary for last pg we mapped to based on the up set
-    int acting_primary;  ///< primary for last pg we mapped to based on the acting set
-    int size;        ///< the size of the pool when were were last mapped
-    int min_size;        ///< the min size of the pool when were were last mapped
+    pg_t pgid;            ///< last pg we mapped to
+    unsigned pg_num;      ///< last pg_num we mapped to
+    unsigned pg_num_mask; ///< last pg_num_mask we mapped to
+    vector<int> up;       ///< set of up osds for last pg we mapped to
+    vector<int> acting;   ///< set of acting osds for last pg we mapped to
+    int up_primary;       ///< primary for last pg we mapped to based on the up set
+    int acting_primary;   ///< primary for last pg we mapped to based on the acting set
+    int size;             ///< the size of the pool when were were last mapped
+    int min_size;         ///< the min size of the pool when were were last mapped
+    bool sort_bitwise;    ///< whether the hobject_t sort order is bitwise
 
     bool used_replica;
     bool paused;
@@ -1154,10 +1162,12 @@ public:
 	base_oloc(oloc),
 	precalc_pgid(false),
 	pg_num(0),
+        pg_num_mask(0),
 	up_primary(-1),
 	acting_primary(-1),
 	size(-1),
 	min_size(-1),
+	sort_bitwise(false),
 	used_replica(false),
 	paused(false),
 	osd(-1)
@@ -1214,6 +1224,8 @@ public:
     int *data_offset;
 
     epoch_t last_force_resend;
+
+    osd_reqid_t reqid; // explicitly setting reqid
 
     Op(const object_t& o, const object_locator_t& ol, vector<OSDOp>& op,
        int f, Context *ac, Context *co, version_t *ov, int *offset = NULL) :
@@ -1329,6 +1341,7 @@ public:
     int starting_pg_num;
     bool at_end_of_pool;
     bool at_end_of_pg;
+    bool sort_bitwise;
 
     int64_t pool_id;
     int pool_snap_seq;
@@ -1351,6 +1364,7 @@ public:
     NListContext() : current_pg(0), current_pg_epoch(0), starting_pg_num(0),
 		    at_end_of_pool(false),
 		    at_end_of_pg(false),
+		    sort_bitwise(false),
 		    pool_id(0),
 		    pool_snap_seq(0),
                     max_entries(0),
@@ -1394,6 +1408,7 @@ public:
     int starting_pg_num;
     bool at_end_of_pool;
     bool at_end_of_pg;
+    bool sort_bitwise;
 
     int64_t pool_id;
     int pool_snap_seq;
@@ -1416,6 +1431,7 @@ public:
     ListContext() : current_pg(0), current_pg_epoch(0), starting_pg_num(0),
 		    at_end_of_pool(false),
 		    at_end_of_pg(false),
+		    sort_bitwise(false),
 		    pool_id(0),
 		    pool_snap_seq(0),
                     max_entries(0),
@@ -2059,19 +2075,22 @@ public:
   Op *prepare_mutate_op(const object_t& oid, const object_locator_t& oloc,
 	       ObjectOperation& op,
 	       const SnapContext& snapc, utime_t mtime, int flags,
-	       Context *onack, Context *oncommit, version_t *objver = NULL) {
+	       Context *onack, Context *oncommit, version_t *objver = NULL,
+	       osd_reqid_t reqid = osd_reqid_t()) {
     Op *o = new Op(oid, oloc, op.ops, flags | global_op_flags.read() | CEPH_OSD_FLAG_WRITE, onack, oncommit, objver);
     o->priority = op.priority;
     o->mtime = mtime;
     o->snapc = snapc;
     o->out_rval.swap(op.out_rval);
+    o->reqid = reqid;
     return o;
   }
   ceph_tid_t mutate(const object_t& oid, const object_locator_t& oloc,
 	       ObjectOperation& op,
 	       const SnapContext& snapc, utime_t mtime, int flags,
-	       Context *onack, Context *oncommit, version_t *objver = NULL) {
-    Op *o = prepare_mutate_op(oid, oloc, op, snapc, mtime, flags, onack, oncommit, objver);
+	       Context *onack, Context *oncommit, version_t *objver = NULL,
+	       osd_reqid_t reqid = osd_reqid_t()) {
+    Op *o = prepare_mutate_op(oid, oloc, op, snapc, mtime, flags, onack, oncommit, objver, reqid);
     return op_submit(o);
   }
   Op *prepare_read_op(const object_t& oid, const object_locator_t& oloc,
@@ -2428,16 +2447,6 @@ public:
     return op_submit(o);
   }
 
-  ceph_tid_t lock(const object_t& oid, const object_locator_t& oloc, int op, int flags,
-	     Context *onack, Context *oncommit, version_t *objver = NULL, ObjectOperation *extra_ops = NULL) {
-    SnapContext snapc;  // no snapc for lock ops
-    vector<OSDOp> ops;
-    int i = init_ops(ops, 1, extra_ops);
-    ops[i].op.op = op;
-    Op *o = new Op(oid, oloc, ops, flags | global_op_flags.read() | CEPH_OSD_FLAG_WRITE, onack, oncommit, objver);
-    o->snapc = snapc;
-    return op_submit(o);
-  }
   ceph_tid_t setxattr(const object_t& oid, const object_locator_t& oloc,
 	      const char *name, const SnapContext& snapc, const bufferlist &bl,
 	      utime_t mtime, int flags,

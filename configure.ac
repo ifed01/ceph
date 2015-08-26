@@ -8,7 +8,9 @@ AC_PREREQ(2.59)
 # VERSION define is not used by the code.  It gets a version string
 # from 'git describe'; see src/ceph_ver.[ch]
 
-AC_INIT([ceph], [9.0.2], [ceph-devel@vger.kernel.org])
+AC_INIT([ceph], [9.0.3], [ceph-devel@vger.kernel.org])
+
+AX_CXX_COMPILE_STDCXX_11(, mandatory)
 
 # Create release string.  Used with VERSION for RPMs.
 RPM_RELEASE=0
@@ -97,9 +99,7 @@ AC_PROG_LIBTOOL
 AC_SUBST(AM_CXXFLAGS)
 AM_CXXFLAGS="${AM_CXXFLAGS}"
 
-
-###### PATCH STARTS HERE ######
-# Find out what to build (default is all of these)
+# Find out what to build (default is most of these)
 
 # rados?
 AC_ARG_WITH([rados],
@@ -130,11 +130,21 @@ AM_CONDITIONAL(WITH_CEPHFS, test "$with_cephfs" = "yes")
 # radosgw?
 # radosgw requires rados
 AC_ARG_WITH([radosgw],
-            [AS_HELP_STRING([--with-radosgw], [build RADOS gateway])],
-            [],
-            [with_radosgw=check])
+	[AS_HELP_STRING([--with-radosgw], [build RADOS gateway])],
+	[],
+	[with_radosgw=check])
 # AM_CONDITIONAL is defined later -- we need to check whether we can enable radosgw if no option is present
 #AS_IF([test "$with_radosgw" = "yes"], [AC_DEFINE([WITH_RADOS, WITH_RADOSGW])])
+
+AC_ARG_WITH([selinux],
+	[AS_HELP_STRING([--with-selinux], [build SELinux policy])],
+	[],
+	[with_selinux=no])
+AM_CONDITIONAL(WITH_SELINUX, test "$with_selinux" = "yes")
+if test "x$with_selinux" = x"yes"; then
+	AC_CHECK_FILE([/usr/share/selinux/devel/policyhelp], [true], [AC_MSG_FAILURE([No SELinux found])])
+	AC_CHECK_FILE([/usr/share/selinux/devel/include/Makefile], [true],  [AC_MSG_FAILURE([No SELinux Makefile found])])
+fi
 
 # radosstriper?
 AC_ARG_WITH([radosstriper],
@@ -191,8 +201,6 @@ AS_IF([test "$enable_server" = "yes" -a \( "$with_osd" = "yes" -o "$with_mon" = 
 # cond-check leveldb, necessary if server, osd or mon enabled
 AS_IF([test "$enable_server" = "yes" -a \( "$with_osd" = "yes" -o "$with_mon" = "yes" \)],
 	[AC_CHECK_LIB([leveldb], [leveldb_open], [true], [AC_MSG_FAILURE([libleveldb not found])], [-lsnappy -lpthread])])
-###### PATCH ENDS HERE ######
-
 
 # Check for yasm
 AC_CHECK_PROG(YASM_CHECK, yasm, yes)
@@ -211,7 +219,7 @@ if test x"$YASM_CHECK" = x"yes"; then
            AC_DEFINE([HAVE_GOOD_YASM_ELF64], [1], [we have a recent yasm and are x86_64])
            with_good_yasm=yes
   
-           if yasm -f elf64 -i src/ceph/src/ceph/src/erasure-code/isa/isa-l/include/ src/erasure-code/isa/isa-l/erasure_code/gf_vect_dot_prod_avx2.asm.s -o /dev/null 2> /dev/null ; then
+           if yasm -f elf64 -i src/erasure-code/isa/isa-l/include/ src/erasure-code/isa/isa-l/erasure_code/gf_vect_dot_prod_avx2.asm.s -o /dev/null 2> /dev/null ; then
               echo 'yasm can also build the isa-l stuff'
               AC_DEFINE([HAVE_BETTER_YASM_ELF64], [1], [yasm can also build the isa-l])
   	    with_better_yasm=yes
@@ -266,7 +274,6 @@ AX_C_PRETTY_FUNC
 # Checks for libraries.
 ACX_PTHREAD
 
-AC_CHECK_LIB([uuid], [uuid_parse], [true], AC_MSG_FAILURE([libuuid not found]))
 
 #Linux only dependencies
 if test x"$linux" = x"yes"; then
@@ -908,6 +915,17 @@ BOOST_THREAD_LIBS="${LIBS}"
 LIBS="${saved_LIBS}"
 AC_SUBST(BOOST_THREAD_LIBS)
 
+# boost-random
+BOOST_RANDOM_LIBS=""
+saved_LIBS="${LIBS}"
+LIBS=""
+AC_CHECK_LIB(boost_random, main, [],
+    [AC_CHECK_LIB(boost_random, main, [],
+        AC_MSG_FAILURE(["Boost random library not found."]))])
+BOOST_RANDOM_LIBS="${LIBS}"
+LIBS="${saved_LIBS}"
+AC_SUBST(BOOST_RANDOM_LIBS)
+
 #
 # Check for boost_program_options library (defines BOOST_PROGRAM_OPTIONS_LIBS).
 #
@@ -947,6 +965,11 @@ AC_CHECK_HEADERS([ \
 	utime.h \
 ])
 
+# name_to_handle_at
+AC_CHECK_FUNC([name_to_handle_at],
+	[AC_DEFINE([HAVE_NAME_TO_HANDLE_AT], [], [name_to_handle_at exists])],
+	[])
+
 # sync_file_range
 AC_CHECK_FUNC([sync_file_range],
 	[AC_DEFINE([HAVE_SYNC_FILE_RANGE], [], [sync_file_range(2) is supported])],
@@ -956,6 +979,9 @@ AC_CHECK_FUNC([sync_file_range],
 AC_CHECK_FUNC([fallocate],
 	[AC_DEFINE([CEPH_HAVE_FALLOCATE], [], [fallocate(2) is supported])],
 	[])
+
+# getgrouplist
+AC_CHECK_FUNCS([getgrouplist])
 
 #
 # Test for time-related `struct stat` members.
@@ -1197,6 +1223,76 @@ AC_ARG_WITH(
     ]
 )
 
+
+dnl rgw-user
+AC_SUBST(user_rgw)
+AC_ARG_WITH(
+    rgw-user,
+    AS_HELP_STRING(
+        [--with-rgw-user=USER],
+        [systemd unit directory @<:@USER_RGW@:>@
+        Defaults to "www-data"]
+    ),
+    [
+        user_rgw="$withval"
+    ],
+    [
+        if test "x$USER_RGW" = "x"; then
+            user_rgw=www-data
+        else
+            user_rgw="$USER_RGW"
+        fi
+    ]
+)
+
+dnl rgw-group
+AC_SUBST(group_rgw)
+AC_ARG_WITH(
+    rgw-group,
+    AS_HELP_STRING(
+        [--with-rgw-group=GROUP],
+        [systemd unit directory @<:@GROUP_RGW@:>@
+        Defaults to "www-data"]
+    ),
+    [
+        group_rgw="$withval"
+    ],
+    [
+        if test "x$GROUP_RGW" = "x"; then
+            group_rgw=www-data
+        else
+            group_rgw="$GROUP_RGW"
+        fi
+    ]
+)
+
+
+AC_SUBST(systemd_unit_dir)
+AC_ARG_WITH(
+    systemd-unit-dir,
+    AS_HELP_STRING(
+	    [--with-systemdsystemunitdir=DIR],
+	    [systemd unit directory @<:@SYSTEMD_UNIT_DIR@:>@
+        Defaults to the correct value for debian /etc/systemd/system/]
+    ),
+    [
+	    systemd_unit_dir="$withval"
+    ],
+    [
+        # default to the systemd admin unit directory
+        which pkg-config
+        pkg_config_exists=$?
+        if test x"$pkg_config_exists" = x"0"; then
+            systemd_unit_dir=`pkg-config systemd --variable=systemdsystemunitdir`
+        else
+            systemd_unit_dir="/etc/systemd/system/"
+        fi
+    ]
+)
+
+
+
+
 # Checks for typedefs, structures, and compiler characteristics.
 #AC_HEADER_STDBOOL
 #AC_C_CONST
@@ -1257,8 +1353,11 @@ AC_CONFIG_FILES([Makefile
 	src/ocf/rbd
 	src/java/Makefile
 	src/tracing/Makefile
+	systemd/Makefile
 	man/Makefile
 	doc/Makefile
+	selinux/Makefile
 	systemd/ceph-osd@.service
+	systemd/ceph-rgw.tmpfiles.d
 	ceph.spec])
 AC_OUTPUT

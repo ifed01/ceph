@@ -1,5 +1,28 @@
 #!/bin/sh
 
+# abort on failure
+set -e
+
+if [ -e CMakeCache.txt ]; then
+  # Out of tree build, learn source location from CMakeCache.txt
+  SRC_ROOT=`grep Ceph_SOURCE_DIR CMakeCache.txt | cut -d "=" -f 2`
+  [ -z "$PYBIND" ] && PYBIND=$SRC_ROOT/src/pybind
+  [ -z "$CEPH_ADM" ] && CEPH_ADM=./ceph
+  [ -z "$INIT_CEPH" ] && INIT_CEPH=./init-ceph
+  [ -z "$CEPH_BIN" ] && CEPH_BIN=src
+  [ -z "$CEPH_LIB" ] && CEPH_LIB=src
+  [ -z "$OBJCLASS_PATH" ] && OBJCLASS_PATH=src/cls
+
+  # Gather symlinks to EC plugins in one dir, because with CMake they
+  # are built into multiple locations
+  mkdir -p ec_plugins
+  for file in ./src/erasure-code/*/libec_*.so*;
+  do
+    ln -sf ../${file} ec_plugins/`basename $file`
+  done
+  [ -z "$EC_PATH" ] && EC_PATH=./ec_plugins
+fi
+
 if [ -z "$CEPH_BUILD_ROOT" ]; then
         [ -z "$CEPH_BIN" ] && CEPH_BIN=.
         [ -z "$CEPH_LIB" ] && CEPH_LIB=.libs
@@ -16,12 +39,11 @@ if [ -z "${CEPH_VSTART_WRAPPER}" ]; then
     PATH=$(pwd):$PATH
 fi
 
-export PYTHONPATH=./pybind
+[ -z "$PYBIND" ] && PYBIND=./pybind
+
+export PYTHONPATH=$PYBIND
 export LD_LIBRARY_PATH=$CEPH_LIB
 export DYLD_LIBRARY_PATH=$LD_LIBRARY_PATH
-
-# abort on failure
-set -e
 
 [ -z "$CEPH_NUM_MON" ] && CEPH_NUM_MON="$MON"
 [ -z "$CEPH_NUM_OSD" ] && CEPH_NUM_OSD="$OSD"
@@ -315,11 +337,12 @@ echo "ip $IP"
 echo "port $PORT"
 
 
+[ -z $CEPH_ADM ] && CEPH_ADM=$CEPH_BIN/ceph
 
 if [ "$cephx" -eq 1 ]; then
-    CEPH_ADM="$CEPH_BIN/ceph -c $conf_fn -k $keyring_fn"
+    CEPH_ADM="$CEPH_ADM -c $conf_fn -k $keyring_fn"
 else
-    CEPH_ADM="$CEPH_BIN/ceph -c $conf_fn"
+    CEPH_ADM="$CEPH_ADM -c $conf_fn"
 fi
 
 MONS=""
@@ -361,12 +384,13 @@ if [ "$start_mon" -eq 1 ]; then
         mon osd full ratio = .99
         mon data avail warn = 10
         mon data avail crit = 1
-        osd pool default erasure code directory = $EC_PATH
+        erasure code dir = $EC_PATH
         osd pool default erasure code profile = plugin=jerasure technique=reed_sol_van k=2 m=1 ruleset-failure-domain=osd
         rgw frontends = fastcgi, civetweb port=$CEPH_RGW_PORT
         rgw dns name = localhost
         filestore fd cache size = 32
         run dir = $CEPH_OUT_DIR
+        enable experimental unrecoverable data corrupting features = newstore rocksdb
 EOF
 if [ "$cephx" -eq 1 ] ; then
 cat <<EOF >> $conf_fn
@@ -422,6 +446,7 @@ $extra_conf
         mon osd allow primary affinity = true
         mon reweight min pgs per osd = 4
         mon osd prime pg temp = true
+        crushtool = $CEPH_BIN/crushtool
 $DAEMONOPTS
 $CMONDEBUG
 $extra_conf

@@ -19,11 +19,10 @@ bin_PROGRAMS += ceph-syn
 
 ceph: ceph.in ./ceph_ver.h Makefile
 	rm -f $@ $@.tmp
-	echo "#!/usr/bin/env python" >$@.tmp
-	grep "#define CEPH_GIT_NICE_VER" $(srcdir)/ceph_ver.h | \
-		sed -e 's/#define \(.*VER\) /\1=/' >>$@.tmp
-	grep "#define CEPH_GIT_VER" $(srcdir)/ceph_ver.h | \
-	  sed -e 's/#define \(.*VER\) /\1=/' -e 's/=\(.*\)$$/="\1"/' >>$@.tmp
+	cp $@.in $@.tmp
+	sed -i "s|@PYTHON_EXECUTABLE@|/usr/bin/env python|" $@.tmp
+	grep CEPH_GIT_NICE_VER ./ceph_ver.h | cut -f 3 -d " " | sed s/\"//g | xargs -I "{}" sed -i "s/@CEPH_GIT_NICE_VER@/{}/g" $@.tmp
+	grep CEPH_GIT_VER ./ceph_ver.h | cut -f 3 -d " " | sed s/\"//g | xargs -I "{}" sed -i "s/@CEPH_GIT_VER@/{}/g" $@.tmp
 	cat $(srcdir)/$@.in >>$@.tmp
 	chmod a+x $@.tmp
 	chmod a-w $@.tmp
@@ -60,7 +59,7 @@ noinst_LTLIBRARIES += libkrbd.la
 endif # LINUX
 
 rbd_SOURCES = rbd.cc
-rbd_LDADD = $(LIBKRBD) $(LIBRBD) $(LIBRADOS) $(PTHREAD_LIBS) $(CRYPTO_LIBS)
+rbd_LDADD = $(LIBKRBD) $(LIBRBD) $(LIBRADOS) $(CEPH_GLOBAL)
 if LINUX
 bin_PROGRAMS += rbd
 endif # LINUX
@@ -105,7 +104,7 @@ libcephfs_jni_la_SOURCES = \
 	java/native/ScopedLocalRef.h \
 	java/native/JniConstants.cpp \
 	java/native/JniConstants.h
-libcephfs_jni_la_LIBADD = $(LIBCEPHFS) $(EXTRALIBS)
+libcephfs_jni_la_LIBADD = $(LIBCEPHFS) $(LIBCOMMON) $(EXTRALIBS)
 libcephfs_jni_la_CPPFLAGS = $(JDK_CPPFLAGS) $(AM_CPPFLAGS)
 libcephfs_jni_la_LDFLAGS = ${AM_LDFLAGS} -version-info 1:0:0
 lib_LTLIBRARIES += libcephfs_jni.la

@@ -86,6 +86,21 @@ public:
     const std::set<string> &key,      ///< [in] Key to retrieve
     std::map<string, bufferlist> *out ///< [out] Key value retrieved
     ) = 0;
+  virtual int get(const string &prefix, ///< [in] prefix
+		  const string &key,    ///< [in] key
+		  bufferlist *value) {  ///< [out] value
+    set<string> ks;
+    ks.insert(key);
+    map<string,bufferlist> om;
+    int r = get(prefix, ks, &om);
+    if (om.find(key) != om.end()) {
+      *value = om[key];
+    } else {
+      *value = bufferlist();
+      r = -ENOENT;
+    }
+    return r;
+  }
 
   class WholeSpaceIteratorImpl {
   public:
@@ -176,6 +191,9 @@ public:
   }
 
   virtual uint64_t get_estimated_size(map<string,uint64_t> &extra) = 0;
+  virtual int get_statfs(struct statfs *buf) {
+    return -EOPNOTSUPP;
+  }
 
   virtual ~KeyValueDB() {}
 

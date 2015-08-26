@@ -79,14 +79,14 @@ int _action_on_all_objects_in_pg(ObjectStore *store, coll_t coll, action_on_obje
   ghobject_t next;
   while (!next.is_max()) {
     vector<ghobject_t> list;
-    int r = store->collection_list_partial(
-				       coll,
-				       next,
-				       LIST_AT_A_TIME,
-				       LIST_AT_A_TIME,
-				       0,
-				       &list,
-				       &next);
+    int r = store->collection_list(
+				   coll,
+				   next,
+				   ghobject_t::get_max(),
+				   true,
+				   LIST_AT_A_TIME,
+				   &list,
+				   &next);
     if (r < 0) {
       cerr << "Error listing collection: " << coll << ", "
 	   << cpp_strerror(r) << std::endl;
@@ -164,14 +164,12 @@ int action_on_all_objects_in_pg(ObjectStore *store, string pgidstr, action_on_ob
     if (r < 0)
       break;
   }
-  store->sync_and_flush();
   return r;
 }
 
 int action_on_all_objects_in_exact_pg(ObjectStore *store, coll_t coll, action_on_object_t &action, bool debug)
 {
   int r = _action_on_all_objects_in_pg(store, coll, action, debug);
-  store->sync_and_flush();
   return r;
 }
 
@@ -212,7 +210,6 @@ int _action_on_all_objects(ObjectStore *store, action_on_object_t &action, bool 
 int action_on_all_objects(ObjectStore *store, action_on_object_t &action, bool debug)
 {
   int r = _action_on_all_objects(store, action, debug);
-  store->sync_and_flush();
   return r;
 }
 
@@ -412,7 +409,7 @@ void remove_coll(ObjectStore *store, const coll_t &coll)
   cout << "remove_coll " << coll << std::endl;
   while (!next.is_max()) {
     vector<ghobject_t> objects;
-    r = store->collection_list_partial(coll, next, 200, 300, 0,
+    r = store->collection_list(coll, next, ghobject_t::get_max(), true, 300,
       &objects, &next);
     if (r < 0)
       goto out;
@@ -700,7 +697,7 @@ int ObjectStoreTool::export_files(ObjectStore *store, coll_t coll)
 
   while (!next.is_max()) {
     vector<ghobject_t> objects;
-    int r = store->collection_list_partial(coll, next, 200, 300, 0,
+    int r = store->collection_list(coll, next, ghobject_t::get_max(), true, 300,
       &objects, &next);
     if (r < 0)
       return r;
@@ -1343,7 +1340,8 @@ int ObjectStoreTool::do_import(ObjectStore *store, OSDSuperblock& sb,
 
   if (!dry_run) {
     ObjectStore::Transaction *t = new ObjectStore::Transaction;
-    PG::_create(*t, pgid);
+    PG::_create(*t, pgid,
+		pgid.get_split_bits(curmap.get_pg_pool(pgid.pool())->get_pg_num()));
     PG::_init(*t, pgid, NULL);
 
     // mark this coll for removal until we're done

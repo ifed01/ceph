@@ -336,6 +336,9 @@ public:
     void _wake() {
       pool->_wake();
     }
+    void _wait() {
+      pool->_wait();
+    }
     void drain() {
       pool->drain(this);
     }
@@ -377,10 +380,12 @@ public:
   
   /// assign a work queue to this thread pool
   void add_work_queue(WorkQueue_* wq) {
+    Mutex::Locker l(_lock);
     work_queues.push_back(wq);
   }
   /// remove a work queue from this thread pool
   void remove_work_queue(WorkQueue_* wq) {
+    Mutex::Locker l(_lock);
     unsigned i = 0;
     while (work_queues[i] != wq)
       i++;
@@ -412,6 +417,9 @@ public:
   void wake() {
     Mutex::Locker l(_lock);
     _cond.Signal();
+  }
+  void _wait() {
+    _cond.Wait(_lock);
   }
 
   /// start thread pool thread

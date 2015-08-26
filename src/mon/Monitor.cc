@@ -377,6 +377,7 @@ CompatSet Monitor::get_supported_features()
   compat.incompat.insert(CEPH_MON_FEATURE_INCOMPAT_OSD_ERASURE_CODES);
   compat.incompat.insert(CEPH_MON_FEATURE_INCOMPAT_OSDMAP_ENC);
   compat.incompat.insert(CEPH_MON_FEATURE_INCOMPAT_ERASURE_CODE_PLUGINS_V2);
+  compat.incompat.insert(CEPH_MON_FEATURE_INCOMPAT_ERASURE_CODE_PLUGINS_V3);
   return compat;
 }
 
@@ -1941,6 +1942,9 @@ void Monitor::apply_quorum_to_compatset_features()
   if (quorum_features & CEPH_FEATURE_ERASURE_CODE_PLUGINS_V2) {
     new_features.incompat.insert(CEPH_MON_FEATURE_INCOMPAT_ERASURE_CODE_PLUGINS_V2);
   }
+  if (quorum_features & CEPH_FEATURE_ERASURE_CODE_PLUGINS_V3) {
+    new_features.incompat.insert(CEPH_MON_FEATURE_INCOMPAT_ERASURE_CODE_PLUGINS_V3);
+  }
   if (new_features.compare(features) != 0) {
     CompatSet diff = features.unsupported(new_features);
     dout(1) << __func__ << " enabling new quorum features: " << diff << dendl;
@@ -1965,6 +1969,9 @@ void Monitor::apply_compatset_features_to_quorum_requirements()
   }
   if (features.incompat.contains(CEPH_MON_FEATURE_INCOMPAT_ERASURE_CODE_PLUGINS_V2)) {
     required_features |= CEPH_FEATURE_ERASURE_CODE_PLUGINS_V2;
+  }
+  if (features.incompat.contains(CEPH_MON_FEATURE_INCOMPAT_ERASURE_CODE_PLUGINS_V3)) {
+    required_features |= CEPH_FEATURE_ERASURE_CODE_PLUGINS_V3;
   }
   dout(10) << __func__ << " required_features " << required_features << dendl;
 }
@@ -3361,9 +3368,11 @@ void Monitor::remove_all_sessions()
   while (!session_map.sessions.empty()) {
     MonSession *s = session_map.sessions.front();
     remove_session(s);
-    logger->inc(l_mon_session_rm);
+    if (logger)
+      logger->inc(l_mon_session_rm);
   }
-  logger->set(l_mon_num_sessions, session_map.get_size());
+  if (logger)
+    logger->set(l_mon_num_sessions, session_map.get_size());
 }
 
 void Monitor::send_command(const entity_inst_t& inst,
@@ -3463,6 +3472,7 @@ void Monitor::dispatch(MonOpRequestRef op)
 
     dout(10) << "do not have session, making new one" << dendl;
     s = session_map.new_session(m->get_source_inst(), m->get_connection().get());
+    assert(s);
     m->get_connection()->set_priv(s->get());
     dout(10) << "ms_dispatch new session " << s << " for " << s->inst << dendl;
     op->set_session(s);
@@ -3667,6 +3677,7 @@ void Monitor::dispatch_op(MonOpRequestRef op)
 
     // monmap
     case MSG_MON_JOIN:
+      op->set_type_service();
       paxos_service[PAXOS_MONMAP]->dispatch(op);
       break;
 
@@ -4175,6 +4186,10 @@ void Monitor::handle_subscribe(MonOpRequestRef op)
       }
     } else if (p->first == "osdmap") {
       if ((int)s->is_capable("osd", MON_CAP_R)) {
+	if (s->osd_epoch > p->second.start) {
+	  // client needs earlier osdmaps on purpose, so reset the sent epoch
+	  s->osd_epoch = 0;
+	}
         osdmon()->check_sub(s->sub_map["osdmap"]);
       }
     } else if (p->first == "osd_pg_creates") {

@@ -260,7 +260,6 @@ private:
 
   friend class OSDMonitor;
   friend class PGMonitor;
-  friend class MDS;
 
  public:
   OSDMap() : epoch(0), 
@@ -341,7 +340,7 @@ public:
   }
 
   int get_flags() const { return flags; }
-  int test_flag(int f) const { return flags & f; }
+  bool test_flag(int f) const { return flags & f; }
   void set_flag(int f) { flags |= f; }
   void clear_flag(int f) { flags &= ~f; }
 

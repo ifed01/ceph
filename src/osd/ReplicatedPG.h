@@ -63,8 +63,20 @@ protected:
 public:
   PGLSFilter();
   virtual ~PGLSFilter();
-  virtual bool filter(bufferlist& xattr_data, bufferlist& outdata) = 0;
-  virtual string& get_xattr() { return xattr; }
+  virtual bool filter(const hobject_t &obj, bufferlist& xattr_data,
+                      bufferlist& outdata) = 0;
+
+  /**
+   * xattr key, or empty string.  If non-empty, this xattr will be fetched
+   * and the value passed into ::filter
+   */
+   virtual string& get_xattr() { return xattr; }
+
+  /**
+   * If true, objects without the named xattr (if xattr name is not empty)
+   * will be rejected without calling ::filter
+   */
+  virtual bool reject_empty_xattr() { return true; }
 };
 
 class PGLSPlainFilter : public PGLSFilter {
@@ -75,7 +87,8 @@ public:
     ::decode(val, params);
   }
   virtual ~PGLSPlainFilter() {}
-  virtual bool filter(bufferlist& xattr_data, bufferlist& outdata);
+  virtual bool filter(const hobject_t &obj, bufferlist& xattr_data,
+                      bufferlist& outdata);
 };
 
 class PGLSParentFilter : public PGLSFilter {
@@ -87,7 +100,8 @@ public:
     generic_dout(0) << "parent_ino=" << parent_ino << dendl;
   }
   virtual ~PGLSParentFilter() {}
-  virtual bool filter(bufferlist& xattr_data, bufferlist& outdata);
+  virtual bool filter(const hobject_t &obj, bufferlist& xattr_data,
+                      bufferlist& outdata);
 };
 
 class ReplicatedPG : public PG, public PGBackend::Listener {
@@ -245,6 +259,28 @@ public:
   };
   typedef boost::shared_ptr<ProxyReadOp> ProxyReadOpRef;
 
+  struct ProxyWriteOp {
+    OpContext *ctx;
+    OpRequestRef op;
+    hobject_t soid;
+    ceph_tid_t objecter_tid;
+    vector<OSDOp> &ops;
+    version_t user_version;
+    bool sent_disk;
+    bool sent_ack;
+    utime_t mtime;
+    bool canceled;
+    osd_reqid_t &reqid;
+
+    ProxyWriteOp(OpRequestRef _op, hobject_t oid, vector<OSDOp>& _ops, osd_reqid_t _reqid)
+      : ctx(NULL), op(_op), soid(oid),
+        objecter_tid(0), ops(_ops),
+	user_version(0), sent_disk(false),
+	sent_ack(false), canceled(false),
+        reqid(_reqid) { }
+  };
+  typedef boost::shared_ptr<ProxyWriteOp> ProxyWriteOpRef;
+
   struct FlushOp {
     ObjectContextRef obc;       ///< obc we are flushing
     OpRequestRef op;            ///< initiating op
@@ -257,7 +293,7 @@ public:
     Context *on_flush;          ///< callback, may be null
 
     FlushOp()
-      : objecter_tid(0), rval(0),
+      : flushed_version(0), objecter_tid(0), rval(0),
 	blocking(false), removal(false),
 	on_flush(NULL) {}
     ~FlushOp() { assert(!on_flush); }
@@ -357,7 +393,7 @@ public:
 
   std::string gen_dbg_prefix() const { return gen_prefix(); }
   
-  const map<hobject_t, set<pg_shard_t> > &get_missing_loc_shards() const {
+  const map<hobject_t, set<pg_shard_t>, hobject_t::BitwiseComparator> &get_missing_loc_shards() const {
     return missing_loc.get_missing_locs();
   }
   const map<pg_shard_t, pg_missing_t> &get_shard_missing() const {
@@ -414,8 +450,10 @@ public:
     if (peer == get_primary())
       return true;
     assert(peer_info.count(peer));
-    bool should_send = hoid.pool != (int64_t)info.pgid.pool() ||
-      hoid <= MAX(last_backfill_started, peer_info[peer].last_backfill);
+    bool should_send =
+      hoid.pool != (int64_t)info.pgid.pool() ||
+      cmp(hoid, last_backfill_started, get_sort_bitwise()) <= 0 ||
+      cmp(hoid, peer_info[peer].last_backfill, get_sort_bitwise()) <= 0;
     if (!should_send)
       assert(is_backfill_targets(peer));
     return should_send;
@@ -451,6 +489,9 @@ public:
   }
   uint64_t min_peer_features() const {
     return get_min_peer_features();
+  }
+  bool sort_bitwise() const {
+    return get_sort_bitwise();
   }
 
   bool transaction_use_tbl() {
@@ -536,7 +577,7 @@ public:
 
     interval_set<uint64_t> modified_ranges;
     ObjectContextRef obc;
-    map<hobject_t,ObjectContextRef> src_obc;
+    map<hobject_t,ObjectContextRef, hobject_t::BitwiseComparator> src_obc;
     ObjectContextRef clone_obc;    // if we created a clone
     ObjectContextRef snapset_obc;  // if we created/deleted a snapdir
 
@@ -691,7 +732,7 @@ public:
 
     OpContext *ctx;
     ObjectContextRef obc;
-    map<hobject_t,ObjectContextRef> src_obc;
+    map<hobject_t,ObjectContextRef, hobject_t::BitwiseComparator> src_obc;
 
     ceph_tid_t rep_tid;
 
@@ -875,7 +916,8 @@ protected:
     if (!to_req.empty()) {
       assert(ctx->obc);
       // requeue at front of scrub blocking queue if we are blocked by scrub
-      if (scrubber.write_blocked_by_scrub(ctx->obc->obs.oi.soid.get_head())) {
+      if (scrubber.write_blocked_by_scrub(ctx->obc->obs.oi.soid.get_head(),
+					  get_sort_bitwise())) {
 	waiting_for_active.splice(
 	  waiting_for_active.begin(),
 	  to_req,
@@ -917,9 +959,12 @@ protected:
   bool hit_set_apply_log(); ///< apply log entries to update in-memory HitSet
   void hit_set_trim(RepGather *repop, unsigned max); ///< discard old HitSets
   void hit_set_in_memory_trim();                     ///< discard old in memory HitSets
+  void hit_set_remove_all();
 
   hobject_t get_hit_set_current_object(utime_t stamp);
-  hobject_t get_hit_set_archive_object(utime_t start, utime_t end);
+  hobject_t get_hit_set_archive_object(utime_t start,
+				       utime_t end,
+				       bool using_gmt);
 
   // agent
   boost::scoped_ptr<TierAgentState> agent_state;
@@ -989,13 +1034,13 @@ protected:
   }
 
   // projected object info
-  SharedLRU<hobject_t, ObjectContext> object_contexts;
+  SharedLRU<hobject_t, ObjectContext, hobject_t::ComparatorWithDefault> object_contexts;
   // map from oid.snapdir() to SnapSetContext *
-  map<hobject_t, SnapSetContext*> snapset_contexts;
+  map<hobject_t, SnapSetContext*, hobject_t::BitwiseComparator> snapset_contexts;
   Mutex snapset_contexts_lock;
 
   // debug order that client ops are applied
-  map<hobject_t, map<client_t, ceph_tid_t> > debug_op_order;
+  map<hobject_t, map<client_t, ceph_tid_t>, hobject_t::BitwiseComparator> debug_op_order;
 
   void populate_obc_watchers(ObjectContextRef obc);
   void check_blacklisted_obc_watchers(ObjectContextRef obc);
@@ -1055,7 +1100,7 @@ protected:
   }
   void put_snapset_context(SnapSetContext *ssc);
 
-  map<hobject_t, ObjectContextRef> recovering;
+  map<hobject_t, ObjectContextRef, hobject_t::BitwiseComparator> recovering;
 
   /*
    * Backfill
@@ -1071,8 +1116,8 @@ protected:
    *   - are not included in pg stats (yet)
    *   - have their stats in pending_backfill_updates on the primary
    */
-  set<hobject_t> backfills_in_flight;
-  map<hobject_t, pg_stat_t> pending_backfill_updates;
+  set<hobject_t, hobject_t::Comparator> backfills_in_flight;
+  map<hobject_t, pg_stat_t, hobject_t::Comparator> pending_backfill_updates;
 
   void dump_recovery_info(Formatter *f) const {
     f->open_array_section("backfill_targets");
@@ -1105,7 +1150,7 @@ protected:
     }
     {
       f->open_array_section("backfills_in_flight");
-      for (set<hobject_t>::const_iterator i = backfills_in_flight.begin();
+      for (set<hobject_t, hobject_t::BitwiseComparator>::const_iterator i = backfills_in_flight.begin();
 	   i != backfills_in_flight.end();
 	   ++i) {
 	f->dump_stream("object") << *i;
@@ -1114,7 +1159,7 @@ protected:
     }
     {
       f->open_array_section("recovering");
-      for (map<hobject_t, ObjectContextRef>::const_iterator i = recovering.begin();
+      for (map<hobject_t, ObjectContextRef, hobject_t::BitwiseComparator>::const_iterator i = recovering.begin();
 	   i != recovering.end();
 	   ++i) {
 	f->dump_stream("object") << i->first;
@@ -1178,6 +1223,15 @@ protected:
 				 const hobject_t& missing_oid,
 				 bool must_promote,
 				 bool in_hit_set = false);
+  /**
+   * This helper function checks if a promotion is needed.
+   */
+  bool maybe_promote(ObjectContextRef obc,
+		     const hobject_t& missing_oid,
+		     const object_locator_t& oloc,
+		     bool in_hit_set,
+		     uint32_t recency,
+		     OpRequestRef promote_op);
   /**
    * This helper function tells the client to redirect their request elsewhere.
    */
@@ -1304,7 +1358,7 @@ protected:
   void recover_got(hobject_t oid, eversion_t v);
 
   // -- copyfrom --
-  map<hobject_t, CopyOpRef> copy_ops;
+  map<hobject_t, CopyOpRef, hobject_t::BitwiseComparator> copy_ops;
 
   int fill_in_copy_get(
     OpContext *ctx,
@@ -1312,6 +1366,8 @@ protected:
     OSDOp& op,
     ObjectContextRef& obc,
     bool classic);
+  void fill_in_copy_get_noent(OpRequestRef& op, hobject_t oid,
+                              OSDOp& osd_op, bool classic);
 
   /**
    * To copy an object, call start_copy.
@@ -1349,7 +1405,7 @@ protected:
   friend struct C_Copyfrom;
 
   // -- flush --
-  map<hobject_t, FlushOpRef> flush_ops;
+  map<hobject_t, FlushOpRef, hobject_t::BitwiseComparator> flush_ops;
 
   /// start_flush takes ownership of on_flush iff ret == -EINPROGRESS
   int start_flush(
@@ -1371,7 +1427,7 @@ protected:
     const hobject_t &begin, const hobject_t &end);
   virtual void _scrub(
     ScrubMap &map,
-    const std::map<hobject_t, pair<uint32_t, uint32_t> > &missing_digest);
+    const std::map<hobject_t, pair<uint32_t, uint32_t>, hobject_t::BitwiseComparator> &missing_digest);
   void _scrub_digest_updated();
   virtual void _scrub_clear_state();
   virtual void _scrub_finish();
@@ -1388,17 +1444,28 @@ protected:
   bool pgls_filter(PGLSFilter *filter, hobject_t& sobj, bufferlist& outdata);
   int get_pgls_filter(bufferlist::iterator& iter, PGLSFilter **pfilter);
 
+  map<hobject_t, list<OpRequestRef>, hobject_t::BitwiseComparator> in_progress_proxy_ops;
+  void kick_proxy_ops_blocked(hobject_t& soid);
+  void cancel_proxy_ops(bool requeue);
+
   // -- proxyread --
   map<ceph_tid_t, ProxyReadOpRef> proxyread_ops;
-  map<hobject_t, list<OpRequestRef> > in_progress_proxy_reads;
 
   void do_proxy_read(OpRequestRef op);
   void finish_proxy_read(hobject_t oid, ceph_tid_t tid, int r);
-  void kick_proxy_read_blocked(hobject_t& soid);
   void cancel_proxy_read(ProxyReadOpRef prdop);
-  void cancel_proxy_read_ops(bool requeue);
 
   friend struct C_ProxyRead;
+
+  // -- proxywrite --
+  map<ceph_tid_t, ProxyWriteOpRef> proxywrite_ops;
+
+  void do_proxy_write(OpRequestRef op, const hobject_t& missing_oid);
+  void finish_proxy_write(hobject_t oid, ceph_tid_t tid, int r);
+  void cancel_proxy_write(ProxyWriteOpRef pwop);
+
+  friend struct C_ProxyWrite_Apply;
+  friend struct C_ProxyWrite_Commit;
 
 public:
   ReplicatedPG(OSDService *o, OSDMapRef curmap,
@@ -1450,7 +1517,7 @@ public:
     const pg_pool_t *pool,
     ObjectStore::Transaction *t) {
     coll_t target = coll_t(child);
-    PG::_create(*t, child);
+    PG::_create(*t, child, split_bits);
     t->split_collection(
       coll,
       split_bits,
@@ -1522,11 +1589,16 @@ public:
     return is_missing_object(oid) ||
       !missing_loc.readable_with_acting(oid, actingset);
   }
+  void maybe_kick_recovery(const hobject_t &soid);
   void wait_for_unreadable_object(const hobject_t& oid, OpRequestRef op);
   void wait_for_all_missing(OpRequestRef op);
 
   bool is_degraded_or_backfilling_object(const hobject_t& oid);
   void wait_for_degraded_object(const hobject_t& oid, OpRequestRef op);
+
+  void block_write_on_snap_rollback(
+    const hobject_t& oid, ObjectContextRef obc, OpRequestRef op);
+  void block_write_on_degraded_snap(const hobject_t& oid, OpRequestRef op);
 
   bool maybe_await_blocked_snapset(const hobject_t &soid, OpRequestRef op);
   void wait_for_blocked_object(const hobject_t& soid, OpRequestRef op);
@@ -1541,6 +1613,7 @@ public:
 
   void on_role_change();
   void on_pool_change();
+  void _on_new_interval();
   void on_change(ObjectStore::Transaction *t);
   void on_activate();
   void on_flushed();
@@ -1584,6 +1657,17 @@ inline ostream& operator<<(ostream& out, ReplicatedPG::RepGather& repop)
     out << " lock=" << (int)repop.ctx->lock_to_release;
   if (repop.ctx->op)
     out << " op=" << *(repop.ctx->op->get_req());
+  out << ")";
+  return out;
+}
+
+inline ostream& operator<<(ostream& out, ReplicatedPG::ProxyWriteOpRef pwop)
+{
+  out << "proxywrite(" << &pwop
+      << " " << pwop->user_version
+      << " pwop_tid=" << pwop->objecter_tid;
+  if (pwop->ctx->op)
+    out << " op=" << *(pwop->ctx->op->get_req());
   out << ")";
   return out;
 }

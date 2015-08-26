@@ -15,7 +15,7 @@
 #ifndef CEPH_MDS_SERVER_H
 #define CEPH_MDS_SERVER_H
 
-#include "MDS.h"
+#include "MDSRank.h"
 
 class OSDMap;
 class PerfCounters;
@@ -24,6 +24,9 @@ class EMetaBlob;
 class EUpdate;
 class MMDSSlaveRequest;
 struct SnapInfo;
+class MClientRequest;
+class MClientReply;
+class MDLog;
 
 struct MutationImpl;
 struct MDRequestImpl;
@@ -41,13 +44,10 @@ enum {
 };
 
 class Server {
-public:
-  // XXX FIXME: can probably friend enough contexts to make this not need to be public
-  MDS *mds;
 private:
+  MDSRank *mds;
   MDCache *mdcache;
   MDLog *mdlog;
-  Messenger *messenger;
   PerfCounters *logger;
 
   // OSDMap full status, used to generate ENOSPC on some operations
@@ -57,19 +57,13 @@ private:
   MDSInternalContext *reconnect_done;
   int failed_reconnects;
 
+  friend class MDSContinuation;
+  friend class ServerContext;
+
 public:
   bool terminating_sessions;
 
-  Server(MDS *m) : 
-    mds(m), 
-    mdcache(mds->mdcache), mdlog(mds->mdlog),
-    messenger(mds->messenger),
-    logger(0),
-    is_full(false),
-    reconnect_done(NULL),
-    failed_reconnects(0),
-    terminating_sessions(false) {
-  }
+  Server(MDSRank *m);
   ~Server() {
     g_ceph_context->get_perfcounters_collection()->remove(logger);
     delete logger;
@@ -176,7 +170,7 @@ public:
   void handle_client_setdirlayout(MDRequestRef& mdr);
 
   int parse_layout_vxattr(string name, string value, const OSDMap *osdmap,
-			  ceph_file_layout *layout);
+			  ceph_file_layout *layout, bool validate=true);
   int parse_quota_vxattr(string name, string value, quota_info_t *quota);
   void handle_set_vxattr(MDRequestRef& mdr, CInode *cur,
 			 ceph_file_layout *dir_layout,

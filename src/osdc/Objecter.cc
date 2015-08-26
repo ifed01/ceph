@@ -2007,7 +2007,7 @@ ceph_tid_t Objecter::_op_submit_with_budget(Op *op, RWLock::Context& lc, int *ct
   assert(op->ops.size() == op->out_handler.size());
 
   // throttle.  before we look at any state, because
-  // take_op_budget() may drop our lock while it blocks.
+  // _take_op_budget() may drop our lock while it blocks.
   if (!op->ctx_budgeted || (ctx_budget && (*ctx_budget == -1))) {
     int op_budget = _take_op_budget(op);
     // take and pass out the budget for the first OP
@@ -2481,6 +2481,8 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
   vector<int> up, acting;
   osdmap->pg_to_up_acting_osds(pgid, &up, &up_primary,
 			       &acting, &acting_primary);
+  bool sort_bitwise = osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE);
+  unsigned prev_seed = ceph_stable_mod(pgid.ps(), t->pg_num, t->pg_num_mask);
   if (any_change && pg_interval_t::is_new_interval(
           t->acting_primary,
 	  acting_primary,
@@ -2496,7 +2498,9 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
 	  min_size,
 	  t->pg_num,
 	  pg_num,
-	  pi->raw_pg_to_pg(pgid))) {
+	  t->sort_bitwise,
+	  sort_bitwise,
+	  pg_t(prev_seed, pgid.pool(), pgid.preferred()))) {
     force_resend = true;
   }
 
@@ -2521,6 +2525,8 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
     t->size = size;
     t->min_size = min_size;
     t->pg_num = pg_num;
+    t->pg_num_mask = pi->get_pg_num_mask();
+    t->sort_bitwise = sort_bitwise;
     ldout(cct, 10) << __func__ << " "
 		   << " pgid " << pgid << " acting " << acting << dendl;
     t->used_replica = false;
@@ -2798,6 +2804,10 @@ MOSDOp *Objecter::_prepare_osd_op(Op *op)
     m->set_priority(op->priority);
   else
     m->set_priority(cct->_conf->osd_client_op_priority);
+
+  if (op->reqid != osd_reqid_t()) {
+    m->set_reqid(op->reqid);
+  }
 
   logger->inc(l_osdc_op_send);
   logger->inc(l_osdc_op_send_bytes, m->get_data().length());
@@ -3163,7 +3173,13 @@ void Objecter::list_nobjects(NListContext *list_context, Context *onfinish)
 
   if (list_context->starting_pg_num == 0) {     // there can't be zero pgs!
     list_context->starting_pg_num = pg_num;
+    list_context->sort_bitwise = osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE);
     ldout(cct, 20) << pg_num << " placement groups" << dendl;
+  }
+  if (list_context->sort_bitwise != osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE)) {
+    ldout(cct, 10) << " hobject sort order changed, restarting this pg" << dendl;
+    list_context->cookie = collection_list_handle_t();
+    list_context->sort_bitwise = osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE);
   }
   if (list_context->starting_pg_num != pg_num) {
     // start reading from the beginning; the pgs have changed
@@ -3302,7 +3318,13 @@ void Objecter::list_objects(ListContext *list_context, Context *onfinish)
 
   if (list_context->starting_pg_num == 0) {     // there can't be zero pgs!
     list_context->starting_pg_num = pg_num;
+    list_context->sort_bitwise = osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE);
     ldout(cct, 20) << pg_num << " placement groups" << dendl;
+  }
+  if (list_context->sort_bitwise != osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE)) {
+    ldout(cct, 10) << " hobject sort order changed, restarting this pg" << dendl;
+    list_context->cookie = collection_list_handle_t();
+    list_context->sort_bitwise = osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE);
   }
   if (list_context->starting_pg_num != pg_num) {
     // start reading from the beginning; the pgs have changed

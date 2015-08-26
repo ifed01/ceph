@@ -4,8 +4,9 @@ Priority: optional
 Homepage: http://ceph.com/
 Vcs-Git: git://github.com/ceph/ceph.git
 Vcs-Browser: https://github.com/ceph/ceph
-Maintainer: Laszlo Boszormenyi (GCS) <gcs@debian.hu>
-Uploaders: Sage Weil <sage@newdream.net>
+Maintainer: Ceph Maintainers <ceph-maintainers@lists.ceph.com>
+Uploaders: Ken Dreyer <kdreyer@redhat.com>,
+           Alfredo Deza <adeza@redhat.com>
 Build-Depends: autoconf,
                automake,
                autotools-dev,
@@ -26,6 +27,7 @@ Build-Depends: autoconf,
                libboost-program-options-dev (>= 1.42),
                libboost-system-dev (>= 1.42),
                libboost-thread-dev (>= 1.42),
+	       libboost-random-dev,
                libcurl4-gnutls-dev,
                libedit-dev,
                libexpat1-dev,
@@ -49,7 +51,6 @@ Build-Depends: autoconf,
                python-sphinx,
                python-virtualenv,
                sdparm | hdparm,
-               uuid-dev,
                uuid-runtime,
                xfslibs-dev,
                xfsprogs,
@@ -72,7 +73,6 @@ Depends: binutils,
          python,
          python-argparse,
          sdparm | hdparm,
-         uuid-runtime,
          xfsprogs,
 	 python-flask,
          ${misc:Depends},

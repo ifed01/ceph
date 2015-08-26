@@ -133,7 +133,7 @@ string GenericObjectMap::header_key(const coll_t &cid, const ghobject_t &oid)
 
   t = buf;
   snprintf(t, end - t, "%.*X", (int)(sizeof(oid.hobj.get_hash())*2),
-           (uint32_t)oid.get_filestore_key_u32());
+           (uint32_t)oid.hobj.get_bitwise_key_u32());
   full_name += string(buf);
   full_name.append(GHOBJECT_KEY_SEP_S);
 
@@ -262,10 +262,10 @@ bool GenericObjectMap::parse_header_key(const string &long_name,
   }
 
   if (out) {
-    (*out) = ghobject_t(hobject_t(name, key, snap, hash, (int64_t)pool, ns),
+    (*out) = ghobject_t(hobject_t(name, key, snap,
+				  hobject_t::_reverse_bits(hash),
+				  (int64_t)pool, ns),
                         generation, shard_id);
-    // restore reversed hash. see calculate_key
-    out->hobj.set_hash(out->get_filestore_key());
   }
 
   if (out_coll) {
@@ -1049,7 +1049,7 @@ void GenericObjectMap::set_header(const coll_t &cid, const ghobject_t &oid,
   t->set(GHOBJECT_TO_SEQ_PREFIX, to_set);
 }
 
-int GenericObjectMap::list_objects(const coll_t &cid, ghobject_t start, int max,
+int GenericObjectMap::list_objects(const coll_t &cid, ghobject_t start, ghobject_t end, int max,
                                    vector<ghobject_t> *out, ghobject_t *next)
 {
   // FIXME
@@ -1101,7 +1101,14 @@ int GenericObjectMap::list_objects(const coll_t &cid, ghobject_t start, int max,
       break;
     }
 
-    assert(start <= header.oid);
+    if (cmp_bitwise(header.oid, end) >= 0) {
+      if (next)
+	*next = ghobject_t::get_max();
+      break;
+    }
+
+    assert(cmp_bitwise(start, header.oid) <= 0);
+    assert(cmp_bitwise(header.oid, end) < 0);
 
 
     size++;

@@ -426,6 +426,9 @@ int FileStore::lfn_link(coll_t c, coll_t newcid, const ghobject_t& o, const ghob
     if (r < 0)
       return -errno;
 
+    // make sure old fd for unlinked/overwritten file is gone
+    fdcache.clear(newoid);
+
     r = index_new->created(newoid, path_new->path());
     if (r < 0) {
       assert(!m_filestore_fail_eio || r != -EIO);
@@ -524,8 +527,8 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   fdcache(g_ceph_context),
   wbthrottle(g_ceph_context),
   default_osr("default"),
-  op_queue_len(0), op_queue_bytes(0),
-  op_throttle_lock("FileStore::op_throttle_lock"),
+  throttle_ops(g_ceph_context, "filestore_ops",g_conf->filestore_queue_max_ops),
+  throttle_bytes(g_ceph_context, "filestore_bytes",g_conf->filestore_queue_max_bytes),
   op_finisher(g_ceph_context),
   op_tp(g_ceph_context, "FileStore::op_tp", g_conf->filestore_op_threads, "filestore_op_threads"),
   op_wq(this, g_conf->filestore_op_thread_timeout,
@@ -960,8 +963,8 @@ int FileStore::read_fsid(int fd, uuid_d *uuid)
     return ret;
   if (ret == 8) {
     // old 64-bit fsid... mirror it.
-    *(uint64_t*)&uuid->uuid[0] = *(uint64_t*)fsid_str;
-    *(uint64_t*)&uuid->uuid[8] = *(uint64_t*)fsid_str;
+    *(uint64_t*)&uuid->bytes()[0] = *(uint64_t*)fsid_str;
+    *(uint64_t*)&uuid->bytes()[8] = *(uint64_t*)fsid_str;
     return 0;
   }
 
@@ -1694,6 +1697,8 @@ int FileStore::umount()
 {
   dout(5) << "umount " << basedir << dendl;
   
+  flush();
+  sync();
   do_force_sync();
 
   lock.Lock();
@@ -1789,7 +1794,7 @@ void FileStore::queue_op(OpSequencer *osr, Op *o)
   dout(5) << "queue_op " << o << " seq " << o->op
 	  << " " << *osr
 	  << " " << o->bytes << " bytes"
-	  << "   (queue has " << op_queue_len << " ops and " << op_queue_bytes << " bytes)"
+	  << "   (queue has " << throttle_ops.get_current() << " ops and " << throttle_bytes.get_current() << " bytes)"
 	  << dendl;
   op_wq.queue(osr);
 }
@@ -1809,41 +1814,32 @@ void FileStore::op_queue_reserve_throttle(Op *o, ThreadPool::TPHandle *handle)
   logger->set(l_os_oq_max_bytes, max_bytes);
 
   utime_t start = ceph_clock_now(g_ceph_context);
-  {
-    Mutex::Locker l(op_throttle_lock);
-    while ((max_ops && (op_queue_len + 1) > max_ops) ||
-           (max_bytes && op_queue_bytes      // let single large ops through!
-	      && (op_queue_bytes + o->bytes) > max_bytes)) {
-      dout(2) << "waiting " << op_queue_len + 1 << " > " << max_ops << " ops || "
-	      << op_queue_bytes + o->bytes << " > " << max_bytes << dendl;
-      if (handle)
-	handle->suspend_tp_timeout();
-      op_throttle_cond.Wait(op_throttle_lock);
-      if (handle)
-	handle->reset_tp_timeout();
-    }
-
-    op_queue_len++;
-    op_queue_bytes += o->bytes;
+  if (handle)
+    handle->suspend_tp_timeout();
+  if (throttle_ops.should_wait(1) || 
+    (throttle_bytes.get_current()      // let single large ops through!
+    && throttle_bytes.should_wait(o->bytes))) {
+    dout(2) << "waiting " << throttle_ops.get_current() + 1 << " > " << max_ops << " ops || "
+      << throttle_bytes.get_current() + o->bytes << " > " << max_bytes << dendl;
   }
+  throttle_ops.get();
+  throttle_bytes.get(o->bytes);
+  if (handle)
+    handle->reset_tp_timeout();
+
   utime_t end = ceph_clock_now(g_ceph_context);
   logger->tinc(l_os_queue_lat, end - start);
 
-  logger->set(l_os_oq_ops, op_queue_len);
-  logger->set(l_os_oq_bytes, op_queue_bytes);
+  logger->set(l_os_oq_ops, throttle_ops.get_current());
+  logger->set(l_os_oq_bytes, throttle_bytes.get_current());
 }
 
 void FileStore::op_queue_release_throttle(Op *o)
 {
-  {
-    Mutex::Locker l(op_throttle_lock);
-    op_queue_len--;
-    op_queue_bytes -= o->bytes;
-    op_throttle_cond.Signal();
-  }
-
-  logger->set(l_os_oq_ops, op_queue_len);
-  logger->set(l_os_oq_bytes, op_queue_bytes);
+  throttle_ops.put();
+  throttle_bytes.put(o->bytes);
+  logger->set(l_os_oq_ops, throttle_ops.get_current());
+  logger->set(l_os_oq_bytes, throttle_bytes.get_current());
 }
 
 void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
@@ -1933,7 +1929,7 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
   if (!posr)
     posr = &default_osr;
   if (posr->p) {
-    osr = static_cast<OpSequencer *>(posr->p);
+    osr = static_cast<OpSequencer *>(posr->p.get());
     dout(5) << "queue_transactions existing " << *osr << "/" << osr->parent << dendl; //<< " w/ q " << osr->q << dendl;
   } else {
     osr = new OpSequencer;
@@ -3355,59 +3351,30 @@ int FileStore::_do_sparse_copy_range(int from, int to, uint64_t srcoff, uint64_t
 {
   dout(20) << __func__ << " " << srcoff << "~" << len << " to " << dstoff << dendl;
   int r = 0;
-  struct fiemap *fiemap = NULL;
-
+  map<uint64_t, uint64_t> exomap;
   // fiemap doesn't allow zero length
   if (len == 0)
     return 0;
 
-  r = backend->do_fiemap(from, srcoff, len, &fiemap);
-  if (r < 0) {
-    derr << "do_fiemap failed:" << srcoff << "~" << len << " = " << r << dendl;
-    return r;
-  }
-
-  // No need to copy
-  if (fiemap->fm_mapped_extents == 0)
-    return r;
-
-  struct fiemap_extent *extent = &fiemap->fm_extents[0];
-
-  /* start where we were asked to start */
-  if (extent->fe_logical < srcoff) {
-    extent->fe_length -= srcoff - extent->fe_logical;
-    extent->fe_logical = srcoff;
+  if (backend->has_seek_data_hole()) {
+    dout(15) << "seek_data/seek_hole " << from << " " << srcoff << "~" << len << dendl;
+    r = _do_seek_hole_data(from, srcoff, len, &exomap);
+  } else if (backend->has_fiemap()) {
+    dout(15) << "fiemap ioctl" << from << " " << srcoff << "~" << len << dendl;
+    r = _do_fiemap(from, srcoff, len, &exomap);
   }
 
   int64_t written = 0;
-  uint64_t i = 0;
-
-  while (i < fiemap->fm_mapped_extents) {
-    struct fiemap_extent *next = extent + 1;
-
-    dout(10) << __func__ << " fm_mapped_extents=" << fiemap->fm_mapped_extents
-             << " fe_logical=" << extent->fe_logical << " fe_length="
-             << extent->fe_length << dendl;
-
-    /* try to merge extents */
-    while ((i < fiemap->fm_mapped_extents - 1) &&
-           (extent->fe_logical + extent->fe_length == next->fe_logical)) {
-        next->fe_length += extent->fe_length;
-        next->fe_logical = extent->fe_logical;
-        extent = next;
-        next = extent + 1;
-        i++;
+  for (map<uint64_t, uint64_t>::iterator miter = exomap.begin(); miter != exomap.end(); ++miter) {
+    uint64_t it_off = miter->first - srcoff + dstoff;
+    r = _do_copy_range(from, to, miter->first, miter->second, it_off, true);
+    if (r < 0) {
+      r = -errno;
+      derr << "FileStore::_do_copy_range: copy error at " << miter->first << "~" << miter->second
+             << " to " << it_off << ", " << cpp_strerror(r) << dendl;
+      break;
     }
-
-    if (extent->fe_logical + extent->fe_length > srcoff + len)
-      extent->fe_length = srcoff + len - extent->fe_logical;
-
-    r = _do_copy_range(from, to, extent->fe_logical, extent->fe_length, extent->fe_logical - srcoff + dstoff, true);
-    if (r < 0)
-      goto out;
-    written += extent->fe_length;
-    i++;
-    extent++;
+    written += miter->second;
   }
 
   if (r >= 0) {
@@ -3482,6 +3449,8 @@ int FileStore::_do_copy_range(int from, int to, uint64_t srcoff, uint64_t len, u
 	break;
       }
     }
+    close(pipefd[0]);
+    close(pipefd[1]);
   } else
 #endif
   {
@@ -3799,6 +3768,7 @@ void FileStore::start_sync(Context *onsafe)
   Mutex::Locker l(lock);
   sync_waiters.push_back(onsafe);
   sync_cond.Signal();
+  force_sync = true;
   dout(10) << "start_sync" << dendl;
 }
 
@@ -3873,6 +3843,14 @@ void FileStore::sync_and_flush()
     sync();
   }
   dout(10) << "sync_and_flush done" << dendl;
+}
+
+int FileStore::flush_journal()
+{
+  dout(10) << __func__ << dendl;
+  sync_and_flush();
+  sync();
+  return 0;
 }
 
 int FileStore::snapshot(const string& name)
@@ -4513,7 +4491,8 @@ int FileStore::_collection_remove_recursive(const coll_t &cid,
   vector<ghobject_t> objects;
   ghobject_t max;
   while (!max.is_max()) {
-    r = collection_list_partial(cid, max, 200, 300, 0, &objects, &max);
+    r = collection_list(cid, max, ghobject_t::get_max(), true,
+			300, &objects, &max);
     if (r < 0)
       return r;
     for (vector<ghobject_t>::iterator i = objects.begin();
@@ -4660,7 +4639,8 @@ bool FileStore::collection_empty(coll_t c)
 
   vector<ghobject_t> ls;
   collection_list_handle_t handle;
-  r = index->collection_list_partial(ghobject_t(), 1, 1, 0, &ls, NULL);
+  r = index->collection_list_partial(ghobject_t(), ghobject_t::get_max(), true,
+				     1, &ls, NULL);
   if (r < 0) {
     assert(!m_filestore_fail_eio || r != -EIO);
     return false;
@@ -4669,62 +4649,16 @@ bool FileStore::collection_empty(coll_t c)
   tracepoint(objectstore, collection_empty_exit, ret);
   return ret;
 }
-
-int FileStore::collection_list_range(coll_t c, ghobject_t start, ghobject_t end,
-                                     snapid_t seq, vector<ghobject_t> *ls)
+int FileStore::collection_list(coll_t c, ghobject_t start, ghobject_t end,
+			       bool sort_bitwise, int max,
+			       vector<ghobject_t> *ls, ghobject_t *next)
 {
-  tracepoint(objectstore, collection_list_range_enter, c.c_str());
-  bool done = false;
-  ghobject_t next = start;
-
-  if (!c.is_temp() && !c.is_meta() && next.hobj.pool < -1) {
-    coll_t temp = c.get_temp();
-    int r = collection_list_range(temp, start, end, seq, ls);
-    if (r < 0)
-      return r;
-    // ... always continue on to non-temp ...
-  }
-
-  while (!done) {
-    vector<ghobject_t> next_objects;
-    int r = collection_list_partial(c, next,
-                                get_ideal_list_min(), get_ideal_list_max(),
-                                seq, &next_objects, &next);
-    if (r < 0)
-      return r;
-
-    ls->insert(ls->end(), next_objects.begin(), next_objects.end());
-
-    // special case for empty collection
-    if (ls->empty()) {
-      break;
-    }
-
-    while (!ls->empty() && ls->back() >= end) {
-      ls->pop_back();
-      done = true;
-    }
-
-    if (next >= end) {
-      done = true;
-    }
-  }
-
-  tracepoint(objectstore, collection_list_range_exit, 0);
-  return 0;
-}
-
-int FileStore::collection_list_partial(coll_t c, ghobject_t start,
-				       int min, int max, snapid_t seq,
-				       vector<ghobject_t> *ls, ghobject_t *next)
-{
-  tracepoint(objectstore, collection_list_partial_enter, c.c_str());
-  dout(10) << "collection_list_partial: " << c << " start " << start << dendl;
-  assert(next);
-
   if (start.is_max())
     return 0;
 
+  ghobject_t temp_next;
+  if (!next)
+    next = &temp_next;
   // figure out the pool id.  we need this in order to generate a
   // meaningful 'next' value.
   int64_t pool = -1;
@@ -4749,15 +4683,14 @@ int FileStore::collection_list_partial(coll_t c, ghobject_t start,
     dout(20) << __func__ << " pool is " << pool << " shard is " << shard
 	     << " pgid " << pgid << dendl;
   }
-
   ghobject_t sep;
   sep.hobj.pool = -1;
   sep.set_shard(shard);
   if (!c.is_temp() && !c.is_meta()) {
-    if (start < sep) {
+    if (cmp_bitwise(start, sep) < 0) { // bitwise vs nibble doesn't matter here
       dout(10) << __func__ << " first checking temp pool" << dendl;
       coll_t temp = c.get_temp();
-      int r = collection_list_partial(temp, start, min, max, seq, ls, next);
+      int r = collection_list(temp, start, end, sort_bitwise, max, ls, next);
       if (r < 0)
 	return r;
       if (*next != ghobject_t::get_max())
@@ -4778,50 +4711,22 @@ int FileStore::collection_list_partial(coll_t c, ghobject_t start,
   assert(NULL != index.index);
   RWLock::RLocker l((index.index)->access_lock);
 
-  r = index->collection_list_partial(start,
-				     min, max, seq,
-				     ls, next);
+  r = index->collection_list_partial(start, end, sort_bitwise, max, ls, next);
+
   if (r < 0) {
     assert(!m_filestore_fail_eio || r != -EIO);
     return r;
   }
-  if (ls)
-    dout(20) << "objects: " << *ls << dendl;
+  dout(20) << "objects: " << ls << dendl;
 
   // HashIndex doesn't know the pool when constructing a 'next' value
-  if (!next->is_max()) {
+  if (next && !next->is_max()) {
     next->hobj.pool = pool;
     next->set_shard(shard);
+    dout(20) << "  next " << *next << dendl;
   }
-  dout(20) << "  next " << *next << dendl;
 
-  tracepoint(objectstore, collection_list_partial_exit, 0);
   return 0;
-}
-
-int FileStore::collection_list(coll_t c, vector<ghobject_t>& ls)
-{  
-  tracepoint(objectstore, collection_list_enter, c.c_str());
-
-  if (!c.is_temp() && !c.is_meta()) {
-    coll_t temp = c.get_temp();
-    int r = collection_list(temp, ls);
-    if (r < 0)
-      return r;
-  }
-
-  Index index;
-  int r = get_index(c, &index);
-  if (r < 0)
-    return r;
-
-  assert(NULL != index.index);
-  RWLock::RLocker l((index.index)->access_lock);
-
-  r = index->collection_list(&ls);
-  assert(!m_filestore_fail_eio || r != -EIO);
-  tracepoint(objectstore, collection_list_exit, r);
-  return r;
 }
 
 int FileStore::omap_get(coll_t c, const ghobject_t &hoid,
@@ -5404,10 +5309,11 @@ int FileStore::_split_collection(coll_t cid,
     vector<ghobject_t> objects;
     ghobject_t next;
     while (1) {
-      collection_list_partial(
+      collection_list(
 	cid,
-	next,
-	get_ideal_list_min(), get_ideal_list_max(), 0,
+	next, ghobject_t::get_max(),
+	true,
+	get_ideal_list_max(),
 	&objects,
 	&next);
       if (objects.empty())
@@ -5423,10 +5329,11 @@ int FileStore::_split_collection(coll_t cid,
     }
     next = ghobject_t();
     while (1) {
-      collection_list_partial(
+      collection_list(
 	dest,
-	next,
-	get_ideal_list_min(), get_ideal_list_max(), 0,
+	next, ghobject_t::get_max(),
+	true,
+	get_ideal_list_max(),
 	&objects,
 	&next);
       if (objects.empty())
@@ -5533,6 +5440,8 @@ void FileStore::handle_conf_change(const struct md_config_t *conf,
     m_filestore_sloppy_crc = conf->filestore_sloppy_crc;
     m_filestore_sloppy_crc_block_size = conf->filestore_sloppy_crc_block_size;
     m_filestore_max_alloc_hint_size = conf->filestore_max_alloc_hint_size;
+    throttle_ops.reset_max(conf->filestore_queue_max_ops);
+    throttle_bytes.reset_max(conf->filestore_queue_max_bytes);
   }
   if (changed.count("filestore_commit_timeout")) {
     Mutex::Locker l(sync_entry_timeo_lock);

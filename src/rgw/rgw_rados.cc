@@ -520,7 +520,6 @@ int RGWRegionMap::update(RGWRegion& region)
   return 0;
 }
 
-
 void RGWObjVersionTracker::prepare_op_for_read(ObjectReadOperation *op)
 {
   obj_version *check_objv = version_for_check();
@@ -1545,6 +1544,8 @@ int RGWRados::init_complete()
   ret = zone.init(cct, this, region);
   if (ret < 0)
     return ret;
+
+  init_unique_trans_id_deps();
 
   ret = region_map.read(cct, this);
   if (ret < 0) {
@@ -4016,6 +4017,8 @@ int RGWRados::copy_obj(RGWObjectCtx& obj_ctx,
   if (ret < 0) {
     return ret;
   }
+
+  src_attrs[RGW_ATTR_ACL] = attrs[RGW_ATTR_ACL];
 
   set_copy_attrs(src_attrs, attrs, attrs_mod);
   attrs.erase(RGW_ATTR_ID_TAG);

@@ -227,7 +227,7 @@ int Processor::start(Worker *w)
   ldout(msgr->cct, 1) << __func__ << " " << dendl;
 
   // start thread
-  if (listen_sd > 0) {
+  if (listen_sd >= 0) {
     worker = w;
     w->center.create_file_event(listen_sd, EVENT_READABLE,
                                 EventCallbackRef(new C_processor_accept(this)));
@@ -385,7 +385,7 @@ AsyncMessenger::AsyncMessenger(CephContext *cct, entity_name_t name,
   : SimplePolicyMessenger(cct, name,mname, _nonce),
     processor(this, cct, _nonce),
     lock("AsyncMessenger::lock"),
-    nonce(_nonce), need_addr(true), did_bind(false),
+    nonce(_nonce), need_addr(true), listen_sd(-1), did_bind(false),
     global_seq(0), deleted_lock("AsyncMessenger::deleted_lock"),
     cluster_protocol(0), stopped(true)
 {

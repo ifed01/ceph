@@ -184,18 +184,6 @@ req_state::~req_state() {
   delete object_acl;
 }
 
-void req_state::gen_trans_id()
-{
-  char buf[256];
-  timeval timetest;
-  gettimeofday(&timetest, NULL);
-  if (strftime(buf, sizeof(buf), "%Y%m%d:%H%M%S",gmtime(&(timetest.tv_sec))) ==  0)
-    return;
-
-  snprintf(buf + strlen(buf), sizeof(buf)-strlen(buf) ,":%03ld", timetest.tv_usec/1000);
-  trans_id = req_id + "-" + buf;
-}
-
 struct str_len {
   const char *str;
   int len;
@@ -431,9 +419,6 @@ void calc_hmac_sha1(const char *key, int key_len,
   HMACSHA1 hmac((const unsigned char *)key, key_len);
   hmac.Update((const unsigned char *)msg, msg_len);
   hmac.Final((unsigned char *)dest);
-  
-  char hex_str[(CEPH_CRYPTO_HMACSHA1_DIGESTSIZE * 2) + 1];
-  buf_to_hex((unsigned char *)dest, CEPH_CRYPTO_HMACSHA1_DIGESTSIZE, hex_str);
 }
 
 int gen_rand_base64(CephContext *cct, char *dest, int size) /* size should be the required string size + 1 */
@@ -456,7 +441,7 @@ int gen_rand_base64(CephContext *cct, char *dest, int size) /* size should be th
   }
   tmp_dest[ret] = '\0';
   memcpy(dest, tmp_dest, size);
-  dest[size] = '\0';
+  dest[size-1] = '\0';
 
   return 0;
 }

@@ -134,14 +134,14 @@ inline bool operator<=(const osd_reqid_t& l, const osd_reqid_t& r) {
 inline bool operator>(const osd_reqid_t& l, const osd_reqid_t& r) { return !(l <= r); }
 inline bool operator>=(const osd_reqid_t& l, const osd_reqid_t& r) { return !(l < r); }
 
-CEPH_HASH_NAMESPACE_START
+namespace std {
   template<> struct hash<osd_reqid_t> {
     size_t operator()(const osd_reqid_t &r) const { 
       static hash<uint64_t> H;
       return H(r.name.num() ^ r.tid ^ r.inc);
     }
   };
-CEPH_HASH_NAMESPACE_END
+} // namespace std
 
 
 // -----
@@ -260,7 +260,8 @@ enum {
   CEPH_OSD_RMW_FLAG_PGOP        = (1 << 5),
   CEPH_OSD_RMW_FLAG_CACHE       = (1 << 6),
   CEPH_OSD_RMW_FLAG_FORCE_PROMOTE   = (1 << 7),
-  CEPH_OSD_RMW_FLAG_SKIP_PROMOTE    = (1 << 8),
+  CEPH_OSD_RMW_FLAG_SKIP_HANDLE_CACHE = (1 << 8),
+  CEPH_OSD_RMW_FLAG_SKIP_PROMOTE      = (1 << 9),
 };
 
 
@@ -342,6 +343,10 @@ struct pg_t {
    */
   unsigned get_split_bits(unsigned pg_num) const;
 
+  bool contains(int bits, const ghobject_t& oid) {
+    return oid.match(bits, ps());
+  }
+
   void encode(bufferlist& bl) const {
     __u8 v = 1;
     ::encode(v, bl);
@@ -399,7 +404,7 @@ inline bool operator>=(const pg_t& l, const pg_t& r) {
 
 ostream& operator<<(ostream& out, const pg_t &pg);
 
-CEPH_HASH_NAMESPACE_START
+namespace std {
   template<> struct hash< pg_t >
   {
     size_t operator()( const pg_t& x ) const
@@ -408,7 +413,7 @@ CEPH_HASH_NAMESPACE_START
       return H((x.pool() & 0xffffffff) ^ (x.pool() >> 32) ^ x.ps() ^ x.preferred());
     }
   };
-CEPH_HASH_NAMESPACE_END
+} // namespace std
 
 struct spg_t {
   pg_t pgid;
@@ -480,7 +485,7 @@ WRITE_CLASS_ENCODER(spg_t)
 WRITE_EQ_OPERATORS_2(spg_t, pgid, shard)
 WRITE_CMP_OPERATORS_2(spg_t, pgid, shard)
 
-CEPH_HASH_NAMESPACE_START
+namespace std {
   template<> struct hash< spg_t >
   {
     size_t operator()( const spg_t& x ) const
@@ -489,7 +494,7 @@ CEPH_HASH_NAMESPACE_START
       return H(hash<pg_t>()(x.pgid) ^ x.shard);
     }
   };
-CEPH_HASH_NAMESPACE_END
+} // namespace std
 
 ostream& operator<<(ostream& out, const spg_t &pg);
 
@@ -599,6 +604,11 @@ public:
   void decode(bufferlist::iterator& bl);
 
   inline bool operator==(const coll_t& rhs) const {
+    // only compare type if meta
+    if (type != rhs.type)
+      return false;
+    if (type == TYPE_META)
+      return true;
     return type == rhs.type && pgid == rhs.pgid;
   }
   inline bool operator!=(const coll_t& rhs) const {
@@ -623,7 +633,7 @@ inline ostream& operator<<(ostream& out, const coll_t& c) {
   return out;
 }
 
-CEPH_HASH_NAMESPACE_START
+namespace std {
   template<> struct hash<coll_t> {
     size_t operator()(const coll_t &c) const { 
       size_t h = 0;
@@ -640,7 +650,7 @@ CEPH_HASH_NAMESPACE_START
       return h;
     }
   };
-CEPH_HASH_NAMESPACE_END
+} // namespace std
 
 inline ostream& operator<<(ostream& out, const ceph_object_layout &ol)
 {
@@ -1101,12 +1111,15 @@ public:
   HitSet::Params hit_set_params; ///< The HitSet params to use on this pool
   uint32_t hit_set_period;      ///< periodicity of HitSet segments (seconds)
   uint32_t hit_set_count;       ///< number of periods to retain
-  uint32_t min_read_recency_for_promote;   ///< minimum number of HitSet to check before promote
+  bool use_gmt_hitset;	        ///< use gmt to name the hitset archive object
+  uint32_t min_read_recency_for_promote;   ///< minimum number of HitSet to check before promote on read
+  uint32_t min_write_recency_for_promote;  ///< minimum number of HitSet to check before promote on write
 
   uint32_t stripe_width;        ///< erasure coded stripe size in bytes
 
   uint64_t expected_num_objects; ///< expected number of objects on this pool, a value of 0 indicates
                                  ///< user does not specify any expected value
+  bool fast_read;            ///< whether turn on fast read on the pool or not
 
   pg_pool_t()
     : flags(0), type(0), size(0), min_size(0),
@@ -1130,9 +1143,12 @@ public:
       hit_set_params(),
       hit_set_period(0),
       hit_set_count(0),
+      use_gmt_hitset(true),
       min_read_recency_for_promote(0),
+      min_write_recency_for_promote(0),
       stripe_width(0),
-      expected_num_objects(0)
+      expected_num_objects(0),
+      fast_read(false)
   { }
 
   void dump(Formatter *f) const;
@@ -1325,6 +1341,15 @@ struct object_stat_sum_t {
   int64_t num_objects_omap;
   int64_t num_objects_hit_set_archive;
   int64_t num_bytes_hit_set_archive;
+  int64_t num_flush;
+  int64_t num_flush_kb;
+  int64_t num_evict;
+  int64_t num_evict_kb;
+  int64_t num_promote;
+  int32_t num_flush_mode_high;  // 1 when in high flush mode, otherwise 0
+  int32_t num_flush_mode_low;   // 1 when in low flush mode, otherwise 0
+  int32_t num_evict_mode_some;  // 1 when in evict some mode, otherwise 0
+  int32_t num_evict_mode_full;  // 1 when in evict full mode, otherwise 0
 
   object_stat_sum_t()
     : num_bytes(0),
@@ -1342,7 +1367,14 @@ struct object_stat_sum_t {
       num_whiteouts(0),
       num_objects_omap(0),
       num_objects_hit_set_archive(0),
-      num_bytes_hit_set_archive(0)
+      num_bytes_hit_set_archive(0),
+      num_flush(0),
+      num_flush_kb(0),
+      num_evict(0),
+      num_evict_kb(0),
+      num_promote(0),
+      num_flush_mode_high(0), num_flush_mode_low(0),
+      num_evict_mode_some(0), num_evict_mode_full(0)
   {}
 
   void floor(int64_t f) {
@@ -1370,6 +1402,15 @@ struct object_stat_sum_t {
     FLOOR(num_objects_omap);
     FLOOR(num_objects_hit_set_archive);
     FLOOR(num_bytes_hit_set_archive);
+    FLOOR(num_flush);
+    FLOOR(num_flush_kb);
+    FLOOR(num_evict);
+    FLOOR(num_evict_kb);
+    FLOOR(num_promote);
+    FLOOR(num_flush_mode_high);
+    FLOOR(num_flush_mode_low);
+    FLOOR(num_evict_mode_some);
+    FLOOR(num_evict_mode_full);
 #undef FLOOR
   }
 
@@ -1405,6 +1446,15 @@ struct object_stat_sum_t {
     SPLIT(num_objects_omap);
     SPLIT(num_objects_hit_set_archive);
     SPLIT(num_bytes_hit_set_archive);
+    SPLIT(num_flush);
+    SPLIT(num_flush_kb);
+    SPLIT(num_evict);
+    SPLIT(num_evict_kb);
+    SPLIT(num_promote);
+    SPLIT(num_flush_mode_high);
+    SPLIT(num_flush_mode_low);
+    SPLIT(num_evict_mode_some);
+    SPLIT(num_evict_mode_full);
 #undef SPLIT
   }
 
@@ -1671,10 +1721,9 @@ WRITE_CLASS_ENCODER_FEATURES(pool_stat_t)
 struct pg_hit_set_info_t {
   utime_t begin, end;   ///< time interval
   eversion_t version;   ///< version this HitSet object was written
-
-  pg_hit_set_info_t() {}
-  pg_hit_set_info_t(utime_t b)
-    : begin(b) {}
+  bool using_gmt;	///< use gmt for creating the hit_set archive object name
+  pg_hit_set_info_t(bool using_gmt = true)
+    : using_gmt(using_gmt) {}
 
   void encode(bufferlist &bl) const;
   void decode(bufferlist::iterator &bl);
@@ -1806,15 +1855,16 @@ inline ostream& operator<<(ostream& out, const pg_history_t& h) {
  */
 struct pg_info_t {
   spg_t pgid;
-  eversion_t last_update;    // last object version applied to store.
-  eversion_t last_complete;  // last version pg was complete through.
-  epoch_t last_epoch_started;// last epoch at which this pg started on this osd
+  eversion_t last_update;      ///< last object version applied to store.
+  eversion_t last_complete;    ///< last version pg was complete through.
+  epoch_t last_epoch_started;  ///< last epoch at which this pg started on this osd
   
-  version_t last_user_version; // last user object version applied to store
+  version_t last_user_version; ///< last user object version applied to store
 
-  eversion_t log_tail;     // oldest log entry.
+  eversion_t log_tail;         ///< oldest log entry.
 
-  hobject_t last_backfill;   // objects >= this and < last_complete may be missing
+  hobject_t last_backfill;     ///< objects >= this and < last_complete may be missing
+  bool last_backfill_bitwise;  ///< true if last_backfill reflects a bitwise (vs nibblewise) sort
 
   interval_set<snapid_t> purged_snaps;
 
@@ -1825,14 +1875,21 @@ struct pg_info_t {
 
   pg_info_t()
     : last_epoch_started(0), last_user_version(0),
-      last_backfill(hobject_t::get_max())
+      last_backfill(hobject_t::get_max()),
+      last_backfill_bitwise(false)
   { }
   pg_info_t(spg_t p)
     : pgid(p),
       last_epoch_started(0), last_user_version(0),
-      last_backfill(hobject_t::get_max())
+      last_backfill(hobject_t::get_max()),
+      last_backfill_bitwise(false)
   { }
   
+  void set_last_backfill(hobject_t pos, bool sort) {
+    last_backfill = pos;
+    last_backfill_bitwise = sort;
+  }
+
   bool is_empty() const { return last_update.version == 0; }
   bool dne() const { return history.epoch_created == 0; }
 
@@ -1864,7 +1921,8 @@ inline ostream& operator<<(ostream& out, const pg_info_t& pgi)
     out << " (" << pgi.log_tail << "," << pgi.last_update << "]";
   }
   if (pgi.is_incomplete())
-    out << " lb " << pgi.last_backfill;
+    out << " lb " << pgi.last_backfill
+	<< (pgi.last_backfill_bitwise ? " (bitwise)" : " (NIBBLEWISE)");
   //out << " c " << pgi.epoch_created;
   out << " local-les=" << pgi.last_epoch_started;
   out << " n=" << pgi.stats.stats.sum.num_objects;
@@ -1943,6 +2001,8 @@ struct pg_interval_t {
     int new_min_size,
     unsigned old_pg_num,
     unsigned new_pg_num,
+    bool old_sort_bitwise,
+    bool new_sort_bitwise,
     pg_t pgid
     );
 
@@ -2462,7 +2522,7 @@ struct pg_missing_t {
   }; 
   WRITE_CLASS_ENCODER(item)
 
-  map<hobject_t, item> missing;         // oid -> (need v, have v)
+  map<hobject_t, item, hobject_t::ComparatorWithDefault> missing;  // oid -> (need v, have v)
   map<version_t, hobject_t> rmissing;  // v -> oid
 
   unsigned int num_missing() const;
@@ -2476,15 +2536,17 @@ struct pg_missing_t {
   void revise_have(hobject_t oid, eversion_t have);
   void add(const hobject_t& oid, eversion_t need, eversion_t have);
   void rm(const hobject_t& oid, eversion_t v);
-  void rm(const std::map<hobject_t, pg_missing_t::item>::iterator &m);
+  void rm(const std::map<hobject_t, pg_missing_t::item, hobject_t::ComparatorWithDefault>::iterator &m);
   void got(const hobject_t& oid, eversion_t v);
-  void got(const std::map<hobject_t, pg_missing_t::item>::iterator &m);
+  void got(const std::map<hobject_t, pg_missing_t::item, hobject_t::ComparatorWithDefault>::iterator &m);
   void split_into(pg_t child_pgid, unsigned split_bits, pg_missing_t *omissing);
 
   void clear() {
     missing.clear();
     rmissing.clear();
   }
+
+  void resort(bool sort_bitwise);
 
   void encode(bufferlist &bl) const;
   void decode(bufferlist::iterator &bl, int64_t pool = -1);
@@ -2965,7 +3027,6 @@ struct object_info_t {
     return get_flag_string(flags);
   }
 
-  osd_reqid_t wrlock_by;   // [head]
   vector<snapid_t> snaps;  // [clone]
 
   uint64_t truncate_seq, truncate_size;
@@ -3466,7 +3527,7 @@ struct ObjectRecoveryInfo {
   object_info_t oi;
   SnapSet ss;
   interval_set<uint64_t> copy_subset;
-  map<hobject_t, interval_set<uint64_t> > clone_subset;
+  map<hobject_t, interval_set<uint64_t>, hobject_t::BitwiseComparator> clone_subset;
 
   ObjectRecoveryInfo() : size(0) { }
 
@@ -3592,7 +3653,7 @@ struct ScrubMap {
   };
   WRITE_CLASS_ENCODER(object)
 
-  map<hobject_t,object> objects;
+  map<hobject_t,object, hobject_t::BitwiseComparator> objects;
   eversion_t valid_through;
   eversion_t incr_since;
 

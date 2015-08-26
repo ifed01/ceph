@@ -220,7 +220,7 @@ class KeyValueStore : public ObjectStore,
 
   string strip_object_key(uint64_t no) {
     char n[100];
-    snprintf(n, 100, "%lld", (long long)no);
+    snprintf(n, 100, "%08lld", (long long)no);
     return string(n);
   }
 
@@ -234,11 +234,27 @@ class KeyValueStore : public ObjectStore,
   // 4. Clone or rename
   struct BufferTransaction {
     typedef pair<coll_t, ghobject_t> uniq_id;
-    typedef map<uniq_id, StripObjectMap::StripObjectHeaderRef> StripHeaderMap;
+
+    struct CollGhobjectPairBitwiseComparator {
+      bool operator()(const uniq_id& l,
+		      const uniq_id& r) const {
+	if (l.first < r.first)
+	  return true;
+	if (l.first != r.first)
+	  return false;
+	if (cmp_bitwise(l.second, r.second) < 0)
+	  return true;
+	return false;
+      }
+    };
+
+    typedef map<uniq_id, StripObjectMap::StripObjectHeaderRef,
+		CollGhobjectPairBitwiseComparator> StripHeaderMap;
 
     //Dirty records
     StripHeaderMap strip_headers;
-    map< uniq_id, map<pair<string, string>, bufferlist> > buffers;  // pair(prefix, key),to buffer updated data in one transaction
+    map< uniq_id, map<pair<string, string>, bufferlist>,
+	 CollGhobjectPairBitwiseComparator> buffers;  // pair(prefix, key),to buffer updated data in one transaction
 
     list<Context*> finishes;
 
@@ -391,7 +407,6 @@ class KeyValueStore : public ObjectStore,
       Mutex::Locker l(qlock);
       uint64_t seq = 0;
       if (_get_max_uncompleted(&seq)) {
-	delete c;
 	return true;
       } else {
 	flush_commit_waiters.push_back(make_pair(seq, c));
@@ -416,9 +431,7 @@ class KeyValueStore : public ObjectStore,
 
   Sequencer default_osr;
   deque<OpSequencer*> op_queue;
-  uint64_t op_queue_len, op_queue_bytes;
-  Cond op_throttle_cond;
-  Mutex op_throttle_lock;
+  Throttle throttle_ops, throttle_bytes;
   Finisher op_finisher;
 
   ThreadPool op_tp;
@@ -578,10 +591,6 @@ class KeyValueStore : public ObjectStore,
                       BufferTransaction &t);
 
   void start_sync() {}
-  void sync() {}
-  using ObjectStore::sync;
-  void flush() {}
-  void sync_and_flush() {}
 
   void set_fsid(uuid_d u) { fsid = u; }
   uuid_d get_fsid() { return fsid; }
@@ -618,12 +627,9 @@ class KeyValueStore : public ObjectStore,
   int list_collections(vector<coll_t>& ls);
   bool collection_exists(coll_t c);
   bool collection_empty(coll_t c);
-  int collection_list(coll_t c, vector<ghobject_t>& oid);
-  int collection_list_partial(coll_t c, ghobject_t start,
-                              int min, int max, snapid_t snap,
-                              vector<ghobject_t> *ls, ghobject_t *next);
-  int collection_list_range(coll_t c, ghobject_t start, ghobject_t end,
-                            snapid_t seq, vector<ghobject_t> *ls);
+  int collection_list(coll_t c, ghobject_t start, ghobject_t end,
+		      bool sort_bitwise, int max,
+		      vector<ghobject_t> *ls, ghobject_t *next);
   int collection_version_current(coll_t c, uint32_t *version);
 
   // omap (see ObjectStore.h for documentation)
@@ -643,7 +649,7 @@ class KeyValueStore : public ObjectStore,
                                                  const ghobject_t &oid);
 
   int check_get_rc(const coll_t cid, const ghobject_t& oid, int r, bool is_equal_size);
-  void dump_start(const std::string file);
+  void dump_start(const std::string &file);
   void dump_stop();
   void dump_transactions(list<ObjectStore::Transaction*>& ls, uint64_t seq,
                          OpSequencer *osr);

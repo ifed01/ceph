@@ -135,6 +135,7 @@ enum {
   l_osd_tier_clean,
   l_osd_tier_delay,
   l_osd_tier_proxy_read,
+  l_osd_tier_proxy_write,
 
   l_osd_agent_wake,
   l_osd_agent_skip,
@@ -388,6 +389,7 @@ public:
   OSD *osd;
   CephContext *cct;
   SharedPtrRegistry<spg_t, ObjectStore::Sequencer> osr_registry;
+  ceph::shared_ptr<ObjectStore::Sequencer> meta_osr;
   SharedPtrRegistry<spg_t, DeletingState> deleting_pgs;
   const int whoami;
   ObjectStore *&store;
@@ -647,7 +649,7 @@ public:
   bool agent_valid_iterator;
   int agent_ops;
   int flush_mode_high_count; //once have one pg with FLUSH_MODE_HIGH then flush objects with high speed
-  set<hobject_t> agent_oids;
+  set<hobject_t, hobject_t::BitwiseComparator> agent_oids;
   bool agent_active;
   struct AgentThread : public Thread {
     OSDService *osd;
@@ -1379,6 +1381,13 @@ public:
 	 ++i) {
       clear_session_waiting_on_pg(session, *i);
     }
+    /* Messages have connection refs, we need to clear the
+     * connection->session->message->connection
+     * cycles which result.
+     * Bug #12338
+     */
+    session->waiting_on_map.clear();
+    session->waiting_for_pg.clear();
   }
   void register_session_waiting_on_pg(Session *session, spg_t pgid) {
     Mutex::Locker l(session_waiting_lock);
@@ -2146,7 +2155,7 @@ protected:
   utime_t defer_recovery_until;
   int recovery_ops_active;
 #ifdef DEBUG_RECOVERY_OIDS
-  map<spg_t, set<hobject_t> > recovery_oids;
+  map<spg_t, set<hobject_t, hobject_t::BitwiseComparator> > recovery_oids;
 #endif
 
   struct RecoveryWQ : public ThreadPool::WorkQueue<PG> {

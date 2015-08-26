@@ -137,15 +137,15 @@ public:
    * ABC for Sequencer implementation, private to the ObjectStore derived class.
    * created in ...::queue_transaction(s)
    */
-  struct Sequencer_impl {
+  struct Sequencer_impl : public RefCountedObject {
     virtual void flush() = 0;
 
     /**
      * Async flush_commit
      *
      * There are two cases:
-     * 1) sequencer is currently idle: the method returns true and
-     *    c is deleted
+     * 1) sequencer is currently idle: the method returns true.  c is
+     *    not touched.
      * 2) sequencer is not idle: the method returns false and c is
      *    called asyncronously with a value of 0 once all transactions
      *    queued on this sequencer prior to the call have been applied
@@ -155,20 +155,21 @@ public:
       Context *c ///< [in] context to call upon flush/commit
       ) = 0; ///< @return true if idle, false otherwise
 
+    Sequencer_impl() : RefCountedObject(0) {}
     virtual ~Sequencer_impl() {}
   };
+  typedef boost::intrusive_ptr<Sequencer_impl> Sequencer_implRef;
 
   /**
    * External (opaque) sequencer implementation
    */
   struct Sequencer {
     string name;
-    Sequencer_impl *p;
+    Sequencer_implRef p;
 
     Sequencer(string n)
       : name(n), p(NULL) {}
     ~Sequencer() {
-      delete p;
     }
 
     /// return a unique string identifier for this sequencer
@@ -184,7 +185,6 @@ public:
     /// @see Sequencer_impl::flush_commit()
     bool flush_commit(Context *c) {
       if (!p) {
-	delete c;
 	return true;
       } else {
 	return p->flush_commit(c);
@@ -434,7 +434,7 @@ public:
     bufferlist tbl;
 
     map<coll_t, __le32> coll_index;
-    map<ghobject_t, __le32> object_index;
+    map<ghobject_t, __le32, ghobject_t::BitwiseComparator> object_index;
 
     __le32 coll_id;
     __le32 object_id;
@@ -660,7 +660,7 @@ public:
       }
 
       vector<__le32> om(other.object_index.size());
-      map<ghobject_t, __le32>::iterator object_index_p;
+      map<ghobject_t, __le32, ghobject_t::BitwiseComparator>::iterator object_index_p;
       for (object_index_p = other.object_index.begin();
            object_index_p != other.object_index.end();
            ++object_index_p) {
@@ -796,7 +796,7 @@ public:
           colls[coll_index_p->second] = coll_index_p->first;
         }
 
-        map<ghobject_t, __le32>::iterator object_index_p;
+        map<ghobject_t, __le32, ghobject_t::BitwiseComparator>::iterator object_index_p;
         for (object_index_p = t->object_index.begin();
              object_index_p != t->object_index.end();
              ++object_index_p) {
@@ -838,11 +838,11 @@ public:
         ::decode(keys, data_bl_p);
       }
 
-      ghobject_t get_oid(__le32 oid_id) {
+      const ghobject_t &get_oid(__le32 oid_id) {
         assert(oid_id < objects.size());
         return objects[oid_id];
       }
-      coll_t get_cid(__le32 cid_id) {
+      const coll_t &get_cid(__le32 cid_id) {
         assert(cid_id < colls.size());
         return colls[cid_id];
       }
@@ -892,7 +892,7 @@ private:
       return index_id;
     }
     __le32 _get_object_id(const ghobject_t& oid) {
-      map<ghobject_t, __le32>::iterator o = object_index.find(oid);
+      map<ghobject_t, __le32, ghobject_t::BitwiseComparator>::iterator o = object_index.find(oid);
       if (o != object_index.end())
         return o->second;
 
@@ -1190,7 +1190,7 @@ public:
       data.ops++;
     }
     /// Create the collection
-    void create_collection(coll_t cid) {
+    void create_collection(coll_t cid, int bits) {
       if (use_tbl) {
         __u32 op = OP_MKCOLL;
         ::encode(op, tbl);
@@ -1199,6 +1199,7 @@ public:
         Op* _op = _get_next_op();
         _op->op = OP_MKCOLL;
         _op->cid = _get_coll_id(cid);
+	_op->split_bits = bits;
       }
       data.ops++;
     }
@@ -1768,6 +1769,10 @@ public:
   virtual void set_allow_sharded_objects() = 0;
   virtual bool get_allow_sharded_objects() = 0;
 
+  virtual bool can_sort_nibblewise() {
+    return false;   // assume a backend cannot, unless it says otherwise
+  }
+
   virtual int statfs(struct statfs *buf) = 0;
 
   virtual void collect_metadata(map<string,string> *pm) { }
@@ -1809,14 +1814,7 @@ public:
 			std::string *value);
 
   /**
-   * get ideal min value for collection_list_partial()
-   *
-   * default to some arbitrary values; the implementation will override.
-   */
-  virtual int get_ideal_list_min() { return 32; }
-
-  /**
-   * get ideal max value for collection_list_partial()
+   * get ideal max value for collection_list()
    *
    * default to some arbitrary values; the implementation will override.
    */
@@ -2029,42 +2027,21 @@ public:
   virtual bool collection_empty(coll_t c) = 0;
 
   /**
-   * collection_list - get all objects of a collection in sorted order
-   *
-   * @param c collection name
-   * @param o [out] list of objects
-   * @returns 0 on success, negative error code on failure
-   */
-  virtual int collection_list(coll_t c, vector<ghobject_t>& o) = 0;
-
-  /**
-   * list partial contents of collection relative to a hash offset/position
-   *
-   * @param c collection
-   * @param start list objects that sort >= this value
-   * @param min return at least this many results, unless we reach the end
-   * @param max return no more than this many results
-   * @param snap return no objects with snap < snapid
-   * @param ls [out] result
-   * @param next [out] next item sorts >= this value
-   * @return zero on success, or negative error
-   */
-  virtual int collection_list_partial(coll_t c, ghobject_t start,
-				      int min, int max, snapid_t snap,
-				      vector<ghobject_t> *ls, ghobject_t *next) = 0;
-
-  /**
-   * list contents of a collection that fall in the range [start, end)
+   * list contents of a collection that fall in the range [start, end) and no more than a specified many result
    *
    * @param c collection
    * @param start list object that sort >= this value
    * @param end list objects that sort < this value
+   * @param sort_bitwise sort bitwise (instead of legacy nibblewise)
+   * @param max return no more than this many results
    * @param seq return no objects with snap < seq
    * @param ls [out] result
+   * @param next [out] next item sorts >= this value
    * @return zero on success, or negative error
    */
-  virtual int collection_list_range(coll_t c, ghobject_t start, ghobject_t end,
-	                            snapid_t seq, vector<ghobject_t> *ls) = 0;
+  virtual int collection_list(coll_t c, ghobject_t start, ghobject_t end,
+			      bool sort_bitwise, int max,
+			      vector<ghobject_t> *ls, ghobject_t *next) = 0;
 
   /// OMAP
   /// Get omap contents
@@ -2120,10 +2097,8 @@ public:
     const ghobject_t &oid  ///< [in] object
     ) = 0;
 
-  virtual void sync(Context *onsync) {}
-  virtual void sync() {}
-  virtual void flush() {}
-  virtual void sync_and_flush() {}
+
+  virtual int flush_journal() { return -EOPNOTSUPP; }
 
   virtual int dump_journal(ostream& out) { return -EOPNOTSUPP; }
 
@@ -2141,6 +2116,13 @@ public:
 };
 WRITE_CLASS_ENCODER(ObjectStore::Transaction)
 WRITE_CLASS_ENCODER(ObjectStore::Transaction::TransactionData)
+
+static inline void intrusive_ptr_add_ref(ObjectStore::Sequencer_impl *s) {
+  s->get();
+}
+static inline void intrusive_ptr_release(ObjectStore::Sequencer_impl *s) {
+  s->put();
+}
 
 ostream& operator<<(ostream& out, const ObjectStore::Sequencer& s);
 

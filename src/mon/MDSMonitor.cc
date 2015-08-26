@@ -297,8 +297,10 @@ bool MDSMonitor::preprocess_beacon(MonOpRequestRef op)
   // booted, but not in map?
   if (pending_mdsmap.is_dne_gid(gid)) {
     if (state != MDSMap::STATE_BOOT) {
-      dout(7) << "mds_beacon " << *m << " is not in mdsmap" << dendl;
+      dout(7) << "mds_beacon " << *m << " is not in mdsmap (state "
+              << ceph_mds_state_name(state) << ")" << dendl;
       mon->send_reply(op, new MMDSMap(mon->monmap->fsid, &mdsmap));
+      m->put();
       return true;
     } else {
       return false;  // not booted yet.
@@ -334,6 +336,15 @@ bool MDSMonitor::preprocess_beacon(MonOpRequestRef op)
 	 info.state == MDSMap::STATE_ONESHOT_REPLAY) && state > 0) {
       dout(10) << "mds_beacon mds can't activate itself (" << ceph_mds_state_name(info.state)
 	       << " -> " << ceph_mds_state_name(state) << ")" << dendl;
+      goto reply;
+    }
+
+    if ((state == MDSMap::STATE_STANDBY || state == MDSMap::STATE_STANDBY_REPLAY)
+        && info.rank != MDS_RANK_NONE)
+    {
+      dout(4) << "mds_beacon MDS can't go back into standby after taking rank: "
+                 "held rank " << info.rank << " while requesting state "
+              << ceph_mds_state_name(state) << dendl;
       goto reply;
     }
     
@@ -830,12 +841,13 @@ bool MDSMonitor::preprocess_command(MonOpRequestRef op)
 	mm.decode(b);
 	mm.encode(rdata, m->get_connection()->get_features());
 	ss << "got mdsmap epoch " << mm.get_epoch();
+	r = 0;
       }
     } else {
       mdsmap.encode(rdata, m->get_connection()->get_features());
       ss << "got mdsmap epoch " << mdsmap.get_epoch();
+      r = 0;
     }
-    r = 0;
   } else if (prefix == "mds tell") {
     string whostr;
     cmd_getval(g_ceph_context, cmdmap, "who", whostr);
@@ -1404,6 +1416,10 @@ int MDSMonitor::management_command(
     newmap.inc = mdsmap.inc;
     newmap.enabled = mdsmap.enabled;
     newmap.inline_data_enabled = mdsmap.inline_data_enabled;
+    newmap.compat = get_mdsmap_compat_set_default();
+    newmap.session_timeout = g_conf->mds_session_timeout;
+    newmap.session_autoclose = g_conf->mds_session_autoclose;
+    newmap.max_file_size = g_conf->mds_max_file_size;
 
     // Persist the new MDSMap
     pending_mdsmap = newmap;
@@ -1469,6 +1485,10 @@ int MDSMonitor::filesystem_command(
     if (!cmd_getval(g_ceph_context, cmdmap, "maxmds", maxmds) || maxmds < 0) {
       return -EINVAL;
     }
+    if (maxmds > MAX_MDS) {
+      ss << "may not have more than " << MAX_MDS << " MDS ranks";
+      return -EINVAL;
+    }
     pending_mdsmap.max_mds = maxmds;
     r = 0;
     ss << "max_mds = " << pending_mdsmap.max_mds;
@@ -1490,6 +1510,10 @@ int MDSMonitor::filesystem_command(
       // NOTE: see also "mds set_max_mds", which can modify the same field.
       if (interr.length()) {
 	return -EINVAL;
+      }
+      if (n > MAX_MDS) {
+        ss << "may not have more than " << MAX_MDS << " MDS ranks";
+        return -EINVAL;
       }
       pending_mdsmap.max_mds = n;
     } else if (var == "inline_data") {

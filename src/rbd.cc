@@ -10,11 +10,13 @@
  */
 #include "include/int_types.h"
 
-#include "common/debug.h"
-#include "common/dout.h"
+#include "mon/MonClient.h"
+#include "common/config.h"
+
 #include "common/errno.h"
 #include "common/ceph_argparse.h"
 #include "common/strtol.h"
+#include "global/global_init.h"
 #include "common/safe_io.h"
 #include "include/krbd.h"
 #include "include/stringify.h"
@@ -73,10 +75,7 @@ bool resize_allow_shrink = false;
 
 map<string, string> map_options; // -o / --options map
 
-CephContext *g_ceph_context = NULL;
 #define dout_subsys ceph_subsys_rbd
-
-namespace {
 
 static std::map<uint64_t, std::string> feature_mapping =
   boost::assign::map_list_of(
@@ -87,22 +86,7 @@ static std::map<uint64_t, std::string> feature_mapping =
     RBD_FEATURE_FAST_DIFF, "fast-diff")(
     RBD_FEATURE_DEEP_FLATTEN, "deep-flatten");
 
-template <typename T>
-T get_config_value(librados::Rados &rados, const std::string &key) {
-  std::string value;
-  int r = rados.conf_get(key.c_str(), value);
-  assert(r == 0);
-
-  std::istringstream ss(value);
-  T typed_value;
-  ss >> typed_value;
-  return typed_value;
-}
-
-} // anonymous namespace
-
-
-void usage(librados::Rados &rados)
+void usage()
 {
   cout <<
 "usage: rbd [-n <auth user>] [OPTIONS] <cmd> ...\n"
@@ -177,10 +161,10 @@ void usage(librados::Rados &rados)
 "  lock add <image-spec> <id> [--shared <tag>] take a lock called id on an image\n"
 "  lock remove <image-spec> <id> <locker>      release a lock on an image\n"
 "  bench-write <image-spec>                    simple write benchmark\n"
-"                 --io-size <bytes>              write size\n"
-"                 --io-threads <num>             ios in flight\n"
-"                 --io-total <bytes>             total bytes to write\n"
-"                 --io-pattern <seq|rand>        write pattern\n"
+"               --io-size <size in B/K/M/G/T>    write size\n"
+"               --io-threads <num>               ios in flight\n"
+"               --io-total <size in B/K/M/G/T>   total size to write\n"
+"               --io-pattern <seq|rand>          write pattern\n"
 "\n"
 "<image-spec> is [<pool-name>]/<image-name>,\n"
 "<snap-spec> is [<pool-name>]/<image-name>@<snap-name>,\n"
@@ -204,7 +188,7 @@ void usage(librados::Rados &rados)
 "                                     use multiple times to enable multiple features\n"
 "  --image-shared                     image will be used concurrently (disables\n"
 "                                     RBD exclusive lock and dependent features)\n"
-"  --stripe-unit <size-in-bytes>      size (in bytes) of a block of data\n"
+"  --stripe-unit <size in B/K/M>      size of a block of data\n"
 "  --stripe-count <num>               number of consecutive objects in a stripe\n"
 "  --id <username>                    rados user (without 'client.'prefix) to\n"
 "                                     authenticate as\n"
@@ -221,8 +205,6 @@ void usage(librados::Rados &rados)
 "Supported image features:\n"
 "  ";
 
-uint64_t default_features = get_config_value<uint64_t>(
-  rados, "rbd_default_features");
 for (std::map<uint64_t, std::string>::const_iterator it = feature_mapping.begin();
      it != feature_mapping.end(); ++it) {
   if (it != feature_mapping.begin()) {
@@ -232,7 +214,7 @@ for (std::map<uint64_t, std::string>::const_iterator it = feature_mapping.begin(
   if ((it->first & RBD_FEATURES_MUTABLE) != 0) {
     cout << " (*)";
   }
-  if ((it->first & default_features) != 0) {
+  if ((it->first & g_conf->rbd_default_features) != 0) {
     cout << " (+)";
   }
 }
@@ -805,7 +787,7 @@ static int do_purge_snaps(librbd::Image& image)
         return r;
       } else if (is_protected == true) {
         pc.fail();
-        cerr << "\r" <<snaps[i].name.c_str()<< " is a protected snap."<< std::endl;
+        cerr << "\r" << "rbd: snapshot '" <<snaps[i].name.c_str()<< "' is protected from removal." << std::endl;
         return -EBUSY;
       }
     }
@@ -1067,15 +1049,7 @@ static int do_bench_write(librbd::Image& image, uint64_t io_size,
   for (off = 0; off < io_bytes; ) {
     b.wait_for(io_threads - 1);
     i = 0;
-    while (i < io_threads && off < io_bytes &&
-	   b.start_write(io_threads, thread_offset[i], io_size, bl, op_flags)) {
-      ++i;
-      ++ios;
-      off += io_size;
-
-      ++cur_ios;
-      cur_off += io_size;
-
+    while (i < io_threads && off < io_bytes) {
       if (pattern == "rand") {
         thread_offset[i] = (rand() % (size / io_size)) * io_size;
       } else {
@@ -1083,6 +1057,16 @@ static int do_bench_write(librbd::Image& image, uint64_t io_size,
         if (thread_offset[i] + io_size > size)
           thread_offset[i] = 0;
       }
+
+      if (!b.start_write(io_threads, thread_offset[i], io_size, bl, op_flags))
+	break;
+
+      ++i;
+      ++ios;
+      off += io_size;
+
+      ++cur_ios;
+      cur_off += io_size;
     }
 
     utime_t now = ceph_clock_now(NULL);
@@ -1126,11 +1110,16 @@ struct ExportContext {
   uint64_t totalsize;
   MyProgressContext pc;
 
-  ExportContext(librbd::Image *i, int f, uint64_t t) :
+  SimpleThrottle throttle;
+  Mutex lock;
+
+  ExportContext(librbd::Image *i, int f, uint64_t t, int max_ops) :
     image(i),
     fd(f),
     totalsize(t),
-    pc("Exporting image")
+    pc("Exporting image"),
+    throttle(max_ops, true),
+    lock("ExportContext::lock")
   {}
 };
 
@@ -1213,8 +1202,7 @@ private:
   int m_fd;
 };
 
-static int do_export(librados::Rados &rados, librbd::Image& image,
-                     const char *path)
+static int do_export(librbd::Image& image, const char *path)
 {
   librbd::image_info_t info;
   int64_t r = image.stat(info, sizeof(info));
@@ -1228,8 +1216,7 @@ static int do_export(librados::Rados &rados, librbd::Image& image,
     fd = STDOUT_FILENO;
     max_concurrent_ops = 1;
   } else {
-    max_concurrent_ops = max(
-      get_config_value<int>(rados, "rbd_concurrent_management_ops"), 1);
+    max_concurrent_ops = max(g_conf->rbd_concurrent_management_ops, 1);
     fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
     if (fd < 0) {
       return -errno;
@@ -1263,37 +1250,95 @@ static int do_export(librados::Rados &rados, librbd::Image& image,
   return r;
 }
 
-static int export_diff_cb(uint64_t ofs, size_t _len, int exists, void *arg)
-{
-  ExportContext *ec = static_cast<ExportContext *>(arg);
-  int r;
-
-  // extent
-  bufferlist bl;
-  __u8 tag = exists ? 'w' : 'z';
-  ::encode(tag, bl);
-  ::encode(ofs, bl);
-  uint64_t len = _len;
-  ::encode(len, bl);
-  r = bl.write_fd(ec->fd);
-  if (r < 0)
-    return r;
-
-  if (exists) {
-    // read block
-    bl.clear();
-    r = ec->image->read2(ofs, len, bl, LIBRADOS_OP_FLAG_FADVISE_NOCACHE);
-    if (r < 0)
-      return r;
-    r = bl.write_fd(ec->fd);
-    if (r < 0)
-      return r;
+class C_ExportDiff {
+public:
+  C_ExportDiff(ExportContext *ec, uint64_t offset, uint64_t length)
+    : m_export_context(ec), m_offset(offset), m_length(length)
+  {
   }
 
-  ec->pc.update_progress(ofs, ec->totalsize);
+  int send() {
+    if (m_export_context->throttle.pending_error()) {
+      return m_export_context->throttle.wait_for_ret();
+    }
+    m_export_context->throttle.start_op();
 
-  return 0;
-}
+    librbd::RBD::AioCompletion *aio_completion =
+      new librbd::RBD::AioCompletion(this, &C_ExportDiff::aio_callback);
+    int op_flags = LIBRADOS_OP_FLAG_FADVISE_NOCACHE;
+    int r = m_export_context->image->aio_read2(m_offset, m_length, m_read_data,
+                                               aio_completion, op_flags);
+    if (r < 0) {
+      aio_completion->release();
+      complete(r);
+    }
+    return r;
+  }
+
+  static int export_diff_cb(uint64_t offset, size_t length, int exists,
+                            void *arg) {
+    ExportContext *ec = reinterpret_cast<ExportContext *>(arg);
+
+    int r;
+    {
+      if (exists) {
+        C_ExportDiff *context = new C_ExportDiff(ec, offset, length);
+        r = context->send();
+      } else {
+        Mutex::Locker lock(ec->lock);
+        r = write_extent(ec, offset, length, false);
+      }
+    }
+    ec->pc.update_progress(offset, ec->totalsize);
+    return r;
+  }
+
+private:
+  ExportContext *m_export_context;
+  uint64_t m_offset;
+  uint64_t m_length;
+  bufferlist m_read_data;
+
+  void complete(int r) {
+    {
+      Mutex::Locker locker(m_export_context->lock);
+      if (r >= 0) {
+        r = write_extent(m_export_context, m_offset, m_length,
+                         !m_read_data.is_zero());
+        if (r == 0) {
+          // block
+          r = m_read_data.write_fd(m_export_context->fd);
+        }
+      }
+    }
+    m_export_context->throttle.end_op(r);
+    delete this;
+  }
+
+  static void aio_callback(librbd::completion_t completion, void *arg)
+  {
+    librbd::RBD::AioCompletion *aio_completion =
+      reinterpret_cast<librbd::RBD::AioCompletion*>(completion);
+    C_ExportDiff *context = reinterpret_cast<C_ExportDiff*>(arg);
+
+    context->complete(aio_completion->get_return_value());
+    aio_completion->release();
+  }
+
+  static int write_extent(ExportContext *ec, uint64_t offset, uint64_t length,
+                          bool exists) {
+    assert(ec->lock.is_locked());
+
+    // extent
+    bufferlist bl;
+    __u8 tag = exists ? 'w' : 'z';
+    ::encode(tag, bl);
+    ::encode(offset, bl);
+    ::encode(length, bl);
+    int r = bl.write_fd(ec->fd);
+    return r;
+  }
+};
 
 static int do_export_diff(librbd::Image& image, const char *fromsnapname,
 			  const char *endsnapname, bool whole_object,
@@ -1313,6 +1358,13 @@ static int do_export_diff(librbd::Image& image, const char *fromsnapname,
     fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
   if (fd < 0)
     return -errno;
+
+  BOOST_SCOPE_EXIT((&r) (&fd) (&path)) {
+    close(fd);
+    if (r < 0 && fd != 1) {
+      remove(path);
+    }
+  } BOOST_SCOPE_EXIT_END
 
   {
     // header
@@ -1341,16 +1393,22 @@ static int do_export_diff(librbd::Image& image, const char *fromsnapname,
 
     r = bl.write_fd(fd);
     if (r < 0) {
-      close(fd);
       return r;
     }
   }
 
-  ExportContext ec(&image, fd, info.size);
+  ExportContext ec(&image, fd, info.size,
+                   g_conf->rbd_concurrent_management_ops);
   r = image.diff_iterate2(fromsnapname, 0, info.size, true, whole_object,
-                          export_diff_cb, (void *)&ec);
-  if (r < 0)
+                          &C_ExportDiff::export_diff_cb, (void *)&ec);
+  if (r < 0) {
     goto out;
+  }
+
+  r = ec.throttle.wait_for_ret();
+  if (r < 0) {
+    goto out;
+  }
 
   {
     __u8 tag = 'e';
@@ -1360,7 +1418,6 @@ static int do_export_diff(librbd::Image& image, const char *fromsnapname,
   }
 
  out:
-  close(fd);
   if (r < 0)
     ec.pc.fail();
   else
@@ -1538,7 +1595,6 @@ static int do_import(librbd::RBD &rbd, librados::IoCtx& io_ctx,
 		     int format, uint64_t features, uint64_t size,
                      uint64_t stripe_unit, uint64_t stripe_count)
 {
-  librados::Rados rados(io_ctx);
   int fd, r;
   struct stat stat_buf;
   MyProgressContext pc("Importing image");
@@ -1566,8 +1622,7 @@ static int do_import(librbd::RBD &rbd, librados::IoCtx& io_ctx,
     size = 1ULL << *order;
   } else {
     throttle.reset(new SimpleThrottle(
-      max(get_config_value<int>(rados, "rbd_concurrent_management_ops"), 1),
-      false));
+      max(g_conf->rbd_concurrent_management_ops, 1), false));
     if ((fd = open(path, O_RDONLY)) < 0) {
       r = -errno;
       cerr << "rbd: error opening " << path << std::endl;
@@ -2985,41 +3040,18 @@ bool size_set;
 
 int main(int argc, const char **argv)
 {
-  vector<const char*> args;
-  argv_to_vec(argc, argv, args);
-  env_to_vec(args);
-
-  std::string cluster_name = "ceph";
-  std::string conf_file_list;
-  CephInitParameters init_params = ceph_argparse_early_args(
-    args, CEPH_ENTITY_TYPE_CLIENT, 0, &cluster_name, &conf_file_list);
-
   librados::Rados rados;
-  int r = rados.init2(init_params.name.to_cstr(), cluster_name.c_str(),
-                      0);
-  if (r < 0) {
-    std::cerr << "rbd: couldn't initialize rados!" << std::endl;
-    return EXIT_FAILURE;
-  }
-
-  r = rados.conf_read_file(
-    conf_file_list.empty() ? NULL : conf_file_list.c_str());
-  if (r == -EINVAL) {
-    std::cerr << "rbd: did not load config file, using default settings."
-              << std::endl;
-  } else if (r < 0) {
-    std::cerr << "rbd: failed to read configuration" << std::endl;
-    return EXIT_FAILURE;
-  }
-
-  // required for dout usage within rbd
-  g_ceph_context = reinterpret_cast<CephContext *>(rados.cct());
-
   librbd::RBD rbd;
   librados::IoCtx io_ctx, dest_io_ctx;
   librbd::Image image;
 
+  vector<const char*> args;
+
+  argv_to_vec(argc, argv, args);
+  env_to_vec(args);
+
   int opt_cmd = OPT_NO_CMD;
+  global_init(NULL, args, CEPH_ENTITY_TYPE_CLIENT, CODE_ENVIRONMENT_UTILITY, 0);
 
   const char *poolname = NULL;
   uint64_t size = 0;  // in bytes
@@ -3045,6 +3077,7 @@ int main(int argc, const char **argv)
   long long bench_io_size = 4096, bench_io_threads = 16, bench_bytes = 1 << 30;
   string bench_pattern = "seq";
   bool diff_whole_object = false;
+  bool input_feature = false;
 
   std::string val, parse_err;
   std::ostringstream err;
@@ -3054,10 +3087,10 @@ int main(int argc, const char **argv)
     if (ceph_argparse_double_dash(args, i)) {
       break;
     } else if (ceph_argparse_witharg(args, i, &val, "--secret", (char*)NULL)) {
-      r = rados.conf_set("keyfile", val.c_str());
+      int r = g_conf->set_val("keyfile", val.c_str());
       assert(r == 0);
     } else if (ceph_argparse_flag(args, i, "-h", "--help", (char*)NULL)) {
-      usage(rados);
+      usage();
       return 0;
     } else if (ceph_argparse_flag(args, i, "--new-format", (char*)NULL)) {
       cerr << "rbd: --new-format is deprecated" << std::endl;
@@ -3071,8 +3104,10 @@ int main(int argc, const char **argv)
 	return EXIT_FAILURE;
       }
       format_specified = true;
-      r = rados.conf_set("rbd_default_format", val.c_str());
-      assert(r == 0);
+      if (0 != g_conf->set_val("rbd_default_format", val.c_str())) {
+        cerr << "rbd: image format must be 1 or 2" << std::endl;
+        return EXIT_FAILURE;
+      }
     } else if (ceph_argparse_witharg(args, i, &val, "-p", "--pool", (char*)NULL)) {
       poolname = strdup(val.c_str());
     } else if (ceph_argparse_witharg(args, i, &val, "--dest-pool", (char*)NULL)) {
@@ -3102,7 +3137,17 @@ int main(int argc, const char **argv)
       size_set = true;
     } else if (ceph_argparse_flag(args, i, "-l", "--long", (char*)NULL)) {
       lflag = true;
-    } else if (ceph_argparse_witharg(args, i, &stripe_unit, err, "--stripe-unit", (char*)NULL)) {
+    } else if (ceph_argparse_witharg(args, i, &val, err, "--stripe-unit", (char*)NULL)) {
+      if (!err.str().empty()) {
+        cerr << "rbd: " << err.str() << std::endl;
+        return EXIT_FAILURE;
+      }
+      const char *stripeval = val.c_str();
+      stripe_unit = strict_sistrtoll(stripeval, &parse_err);
+      if (!parse_err.empty()) {
+        cerr << "rbd: error parsing --stripe-unit " << parse_err << std::endl;
+        return EXIT_FAILURE;
+      }
     } else if (ceph_argparse_witharg(args, i, &stripe_count, err, "--stripe-count", (char*)NULL)) {
     } else if (ceph_argparse_witharg(args, i, &order, err, "--order", (char*)NULL)) {
       if (!err.str().empty()) {
@@ -3113,17 +3158,33 @@ int main(int argc, const char **argv)
 	cerr << "rbd: order must be between 12 (4 KB) and 25 (32 MB)" << std::endl;
 	return EXIT_FAILURE;
       }
-    } else if (ceph_argparse_witharg(args, i, &bench_io_size, err, "--io-size", (char*)NULL)) {
+    } else if (ceph_argparse_witharg(args, i, &val, err, "--io-size", (char*)NULL)) {
       if (!err.str().empty()) {
 	cerr << "rbd: " << err.str() << std::endl;
 	return EXIT_FAILURE;
+      }
+      const char *iosval = val.c_str();
+      bench_io_size = strict_sistrtoll(iosval, &parse_err);
+      if (!parse_err.empty()) {
+        cerr << "rbd: error parsing --io-size " << parse_err << std::endl;
+        return EXIT_FAILURE;
       }
       if (bench_io_size == 0) {
 	cerr << "rbd: io-size must be > 0" << std::endl;
 	return EXIT_FAILURE;
       }
     } else if (ceph_argparse_witharg(args, i, &bench_io_threads, err, "--io-threads", (char*)NULL)) {
-    } else if (ceph_argparse_witharg(args, i, &bench_bytes, err, "--io-total", (char*)NULL)) {
+    } else if (ceph_argparse_witharg(args, i, &val, err, "--io-total", (char*)NULL)) {
+      if (!err.str().empty()) {
+       cerr << "rbd: " << err.str() << std::endl;
+       return EXIT_FAILURE;
+      }
+      const char *iotval = val.c_str();
+      bench_bytes = strict_sistrtoll(iotval, &parse_err);
+      if (!parse_err.empty()) {
+        cerr << "rbd: error parsing --io-total " << parse_err << std::endl;
+        return EXIT_FAILURE;
+      }
     } else if (ceph_argparse_witharg(args, i, &bench_pattern, "--io-pattern", (char*)NULL)) {
     } else if (ceph_argparse_witharg(args, i, &val, "--path", (char*)NULL)) {
       path = strdup(val.c_str());
@@ -3146,6 +3207,7 @@ int main(int argc, const char **argv)
       resize_allow_shrink = true;
     } else if (ceph_argparse_witharg(args, i, &val, "--image-feature", (char *)NULL)) {
       uint64_t feature;
+      input_feature = true;
       if (!decode_feature(val.c_str(), &feature)) {
         cerr << "rbd: invalid image feature: " << val << std::endl;
         return EXIT_FAILURE;
@@ -3155,6 +3217,7 @@ int main(int argc, const char **argv)
       cerr << "rbd: using --image-features for specifying the rbd image format is"
 	   << " deprecated, use --image-feature instead" << std::endl;
       features = strict_strtol(val.c_str(), 10, &parse_err);
+      input_feature = true;
       if (!parse_err.empty()) {
 	cerr << "rbd: error parsing --image-features: " << parse_err
              << std::endl;
@@ -3165,8 +3228,7 @@ int main(int argc, const char **argv)
     } else if (ceph_argparse_witharg(args, i, &val, "--format", (char *) NULL)) {
       long long ret = strict_strtoll(val.c_str(), 10, &parse_err);
       if (parse_err.empty()) {
-        r = rados.conf_set("rbd_default_format", val.c_str());
-        assert(r == 0);
+	g_conf->set_val_or_die("rbd_default_format", val.c_str());
 	format = ret;
 	format_specified = true;
 	cerr << "rbd: using --format for specifying the rbd image format is"
@@ -3188,7 +3250,7 @@ int main(int argc, const char **argv)
     format = 2;
     format_specified = true;
   } else if (features == 0) {
-    features = get_config_value<uint64_t>(rados, "rbd_default_features");
+    features = g_conf->rbd_default_features;
   }
   if (shared) {
     features &= ~(RBD_FEATURE_EXCLUSIVE_LOCK | RBD_FEATURE_OBJECT_MAP);
@@ -3199,6 +3261,8 @@ int main(int argc, const char **argv)
          << "the object map" << std::endl;
     return EXIT_FAILURE;
   }
+
+  common_init_finish(g_ceph_context);
 
   std::map<std::string, CommandType> command_map = boost::assign::map_list_of
     ("snap", COMMAND_TYPE_SNAP)
@@ -3318,19 +3382,18 @@ if (!set_conf_param(v, p1, p2, p3)) { \
     }
   }
 
-  r = rados.conf_set("rbd_cache_writethrough_until_flush", "false");
-  assert(r == 0);
+  g_conf->set_val_or_die("rbd_cache_writethrough_until_flush", "false");
 
   /* get defaults from rbd_default_* options to keep behavior consistent with
      manual short-form options */
   if (!format_specified)
-    format = get_config_value<int>(rados, "rbd_default_format");
+    format = g_conf->rbd_default_format;
   if (!order)
-    order = get_config_value<int>(rados, "rbd_default_order");
+    order = g_conf->rbd_default_order;
   if (!stripe_unit)
-    stripe_unit = get_config_value<long long>(rados, "rbd_default_stripe_unit");
+    stripe_unit = g_conf->rbd_default_stripe_unit;
   if (!stripe_count)
-    stripe_count = get_config_value<long long>(rados, "rbd_default_stripe_count");
+    stripe_count = g_conf->rbd_default_stripe_count;
 
   if (format_specified && opt_cmd != OPT_IMPORT && opt_cmd != OPT_CREATE) {
     cerr << "rbd: image format can only be set when "
@@ -3394,8 +3457,7 @@ if (!set_conf_param(v, p1, p2, p3)) { \
   }
 
   if (opt_cmd == OPT_MAP) {
-    char *default_map_options = strdup(
-      get_config_value<std::string>(rados, "rbd_default_map_options").c_str());
+    char *default_map_options = strdup(g_conf->rbd_default_map_options.c_str());
 
     // parse default options first so they can be overwritten by cli options
     if (parse_map_options(default_map_options)) {
@@ -3492,7 +3554,7 @@ if (!set_conf_param(v, p1, p2, p3)) { \
   }
 
   if ((opt_cmd == OPT_COPY || opt_cmd == OPT_CLONE || opt_cmd == OPT_RENAME) &&
-      !destname ) {
+      ((!destname) || (destname[0] == '\0')) ) {
     cerr << "rbd: destination image name was not specified" << std::endl;
     return EXIT_FAILURE;
   }
@@ -3554,11 +3616,17 @@ if (!set_conf_param(v, p1, p2, p3)) { \
 			  opt_cmd != OPT_UNMAP &&
 			  opt_cmd != OPT_SHOWMAPPED &&
                           opt_cmd != OPT_MERGE_DIFF);
+  if (talk_to_cluster && rados.init_with_context(g_ceph_context) < 0) {
+    cerr << "rbd: couldn't initialize rados!" << std::endl;
+    return EXIT_FAILURE;
+  }
+
   if (talk_to_cluster && rados.connect() < 0) {
     cerr << "rbd: couldn't connect to the cluster!" << std::endl;
     return EXIT_FAILURE;
   }
 
+  int r;
   if (talk_to_cluster && opt_cmd != OPT_IMPORT) {
     r = rados.ioctx_create(poolname, io_ctx);
     if (r < 0) {
@@ -3638,7 +3706,7 @@ if (!set_conf_param(v, p1, p2, p3)) { \
     if ((stripe_unit && !stripe_count) || (!stripe_unit && stripe_count)) {
       cerr << "must specify both (or neither) of stripe-unit and stripe-count"
 	   << std::endl;
-      usage(rados);
+      usage();
       return EINVAL;
     }
 
@@ -3660,6 +3728,10 @@ if (!set_conf_param(v, p1, p2, p3)) { \
     break;
 
   case OPT_CREATE:
+    if (input_feature && (format == 1)){
+      cerr << "feature not allowed with format 1; use --image-format 2" << std::endl;
+      return EINVAL;
+    }
     r = do_create(rbd, io_ctx, imgname, size, &order, format, features,
 		  stripe_unit, stripe_count);
     if (r < 0) {
@@ -3785,7 +3857,9 @@ if (!set_conf_param(v, p1, p2, p3)) { \
   case OPT_SNAP_PURGE:
     r = do_purge_snaps(image);
     if (r < 0) {
-      cerr << "rbd: removing snaps failed: " << cpp_strerror(-r) << std::endl;
+      if (r != -EBUSY) {
+        cerr << "rbd: removing snaps failed: " << cpp_strerror(-r) << std::endl;
+      }
       return -r;
     }
     break;
@@ -3816,7 +3890,7 @@ if (!set_conf_param(v, p1, p2, p3)) { \
     break;
 
   case OPT_EXPORT:
-    r = do_export(rados, image, path);
+    r = do_export(image, path);
     if (r < 0) {
       cerr << "rbd: export error: " << cpp_strerror(-r) << std::endl;
       return -r;

@@ -64,6 +64,10 @@
 // duplicated since it was introduced at the same time as MIN_SIZE_RECOVERY
 #define CEPH_FEATURE_OSD_PROXY_FEATURES (1ULL<<49)  /* overlap w/ above */
 #define CEPH_FEATURE_MON_METADATA (1ULL<<50)
+#define CEPH_FEATURE_OSD_BITWISE_HOBJ_SORT (1ULL<<51) /* can sort objs bitwise */
+#define CEPH_FEATURE_OSD_HITSET_GMT (1ULL<<51) /* overlap with bitwise sort */
+#define CEPH_FEATURE_OSD_PROXY_WRITE_FEATURES (1ULL<<52)
+#define CEPH_FEATURE_ERASURE_CODE_PLUGINS_V3 (1ULL<<53)
 
 #define CEPH_FEATURE_RESERVED2 (1ULL<<61)  /* slow down, we are almost out... */
 #define CEPH_FEATURE_RESERVED  (1ULL<<62)  /* DO NOT USE THIS ... last bit! */
@@ -150,6 +154,9 @@ static inline unsigned long long ceph_sanitize_features(unsigned long long f) {
          CEPH_FEATURE_CRUSH_V4 |	     \
          CEPH_FEATURE_OSD_MIN_SIZE_RECOVERY |		 \
 	 CEPH_FEATURE_MON_METADATA |			 \
+	 CEPH_FEATURE_OSD_BITWISE_HOBJ_SORT |		 \
+         CEPH_FEATURE_ERASURE_CODE_PLUGINS_V3 |   \
+         CEPH_FEATURE_OSD_PROXY_WRITE_FEATURES |         \
 	 0ULL)
 
 #define CEPH_FEATURES_SUPPORTED_DEFAULT  CEPH_FEATURES_ALL

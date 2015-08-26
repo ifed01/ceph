@@ -17,7 +17,57 @@ message(status " ams compiler ${CMAKE_ASM_COMPILER}")
 set(CMAKE_ASM_FLAGS "-f elf64")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -rdynamic -Wall -Wtype-limits -Wignored-qualifiers -Winit-self -Wpointer-arith -Werror=format-security -fno-strict-aliasing -fsigned-char -fPIC")
 
+execute_process(
+  COMMAND "yasm -f elf64 ${CMAKE_SOURCE_DIR}/src/common/crc32c_intel_fast_asm.S -o /dev/null"
+  RETURN_VALUE no_yasm
+  OUTPUT_QUIET)
+if(no_yasm)
+  message("we do not have a modern/working yasm")
+else(no_yasm)
+  message("we have a modern and working yasm")
+  execute_process(
+    COMMAND "arch"
+    OUTPUT_VARIABLE arch
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(arch STREQUAL "x86_64")
+    message("we are x84_64")
+    include(CheckCXXSourceCompiles)
+    check_cxx_source_compiles("
+      #if defined(__x86_64__) && defined(__ILP32__)
+      #error x32
+      #endif
+      int main() {}
+      " not_arch_x32)
+    if(not_arch_x32)
+      message("we are not x32")
+      add_definitions("-DHAVE_GOOD_YASM_ELF64")
+    else(not_arch_x32)
+      message("we are x32; no yasm for you")
+    endif(not_arch_x32)
+  else(arch STREQUAL "x86_64")
+    message("we are not x86_64 && !x32")
+  endif(arch STREQUAL "x86_64")
+endif(no_yasm)
+
+execute_process(COMMAND yasm -f elf64 -i ${CMAKE_SOURCE_DIR}/src/erasure-code/isa/isa-l/include/ ${CMAKE_SOURCE_DIR}/src/erasure-code/isa/isa-l/erasure_code/gf_vect_dot_prod_avx2.asm.s -o /dev/null
+  RESULT_VARIABLE rc
+  OUTPUT_QUIET)
+if(NOT rc)
+  set(HAVE_BETTER_YASM_ELF64 1)
+endif(NOT rc)
+MESSAGE("HAVE_BETTER_YASM_ELF64=" ${HAVE_BETTER_YASM_ELF64})
+
 set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -ftemplate-depth-1024 -Wno-invalid-offsetof -Wnon-virtual-dtor -Wno-invalid-offsetof -Wstrict-null-sentinel -Woverloaded-virtual")
+
+# require c++11
+include(CheckCXXCompilerFlag)
+CHECK_CXX_COMPILER_FLAG("-std=c++11" COMPILER_SUPPORTS_CXX11)
+if (COMPILER_SUPPORTS_CXX11)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+else()
+  message(FATAL_ERROR "The compiler ${CMAKE_CXX_COMPILER} has no C++11 support.")
+endif()
+
 
 set(EXTRALIBS uuid rt dl ${Boost_LIBS})
 
@@ -417,6 +467,58 @@ install(TARGETS rados librados-config DESTINATION bin)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/src/pybind/
   DESTINATION ${PYTHON_INSTDIR})
 
+## dencoder
+set(dencoder_srcs
+  test/encoding/ceph_dencoder.cc
+  krbd.cc
+  common/secret.c
+  common/TextTable.cc
+  )
+if(${WITH_RADOSGW})
+  list(APPEND dencoder_srcs
+    rgw/rgw_dencoder.cc
+    rgw/rgw_acl.cc
+    rgw/rgw_common.cc
+    rgw/rgw_env.cc
+    rgw/rgw_json_enc.cc
+  )
+endif(${WITH_RADOSGW})
+add_executable(ceph-dencoder ${dencoder_srcs} $<TARGET_OBJECTS:heap_profiler_objs>)
+if(${WITH_RADOSGW})
+  set(DENCODER_EXTRALIBS
+    rgw_a
+    cls_rgw_client
+    curl
+    expat
+    fcgi
+    resolv
+  )
+endif(${WITH_RADOSGW})
+target_link_libraries(ceph-dencoder
+  librados
+  librbd
+  global
+  osd
+  mds
+  mon
+  osdc
+  cls_lock_client
+  cls_refcount_client
+  cls_log_client
+  cls_statelog_client
+  cls_version_client
+  cls_replica_log_client
+  cls_kvs
+  cls_user_client
+  ${DENCODER_EXTRALIBS}
+  blkid
+  udev
+  keyutils
+  ${EXTRALIBS}
+  ${TCMALLOC_LIBS}
+  ${CMAKE_DL_LIBS}
+  )
+
 # Monitor
 set(lib_mon_srcs
   auth/cephx/CephxKeyServer.cc
@@ -461,7 +563,6 @@ set(libos_srcs
   os/JournalingObjectStore.cc
   os/LFNIndex.cc
   os/IndexManager.cc
-  os/FlatIndex.cc
   os/LevelDBStore.cc
   os/DBObjectMap.cc 
   os/Transaction.cc
@@ -534,7 +635,8 @@ install(TARGETS ceph-osd DESTINATION bin)
 if(${WITH_MDS})
   set(mds_srcs 
     mds/Capability.cc
-    mds/MDS.cc
+    mds/MDSDaemon.cc
+    mds/MDSRank.cc
     mds/Beacon.cc
     mds/flock.cc
     mds/locks.c
@@ -543,6 +645,7 @@ if(${WITH_MDS})
     mds/Mutation.cc
     mds/MDCache.cc
     mds/RecoveryQueue.cc
+    mds/StrayManager.cc
     mds/Locker.cc
     mds/Migrator.cc
     mds/MDBalancer.cc
@@ -552,8 +655,10 @@ if(${WITH_MDS})
     mds/LogEvent.cc
     mds/MDSTable.cc
     mds/InoTable.cc
+    mds/JournalPointer.cc
     mds/MDSTableClient.cc
     mds/MDSTableServer.cc
+    mds/SimpleLock.cc
     mds/SnapRealm.cc
     mds/SnapServer.cc
     mds/snap.cc
@@ -561,9 +666,7 @@ if(${WITH_MDS})
     mds/MDSContext.cc
     mds/MDSAuthCaps.cc
     mds/MDLog.cc
-    mds/JournalPointer.cc
-    mds/StrayManager.cc
-    mds/SimpleLock.cc
+    ${CMAKE_SOURCE_DIR}/src/common/TrackedOp.cc
     ${CMAKE_SOURCE_DIR}/src/osdc/Journaler.cc)
   add_library(mds ${mds_srcs})
   set(ceph_mds_srcs
@@ -626,7 +729,7 @@ configure_file(${CMAKE_SOURCE_DIR}/src/ceph-coverage.in
 configure_file(${CMAKE_SOURCE_DIR}/src/ceph-debugpack.in
   ${CMAKE_BINARY_DIR}/ceph-debugpack @ONLY)
 
-configure_file(${CMAKE_SOURCE_DIR}/src/ceph.in.cmake
+configure_file(${CMAKE_SOURCE_DIR}/src/ceph.in
   ${CMAKE_BINARY_DIR}/ceph @ONLY)
 
 configure_file(${CMAKE_SOURCE_DIR}/src/ceph-crush-location.in
@@ -656,8 +759,6 @@ install(PROGRAMS
 install(PROGRAMS
   ${CMAKE_SOURCE_DIR}/src/ceph-create-keys
   ${CMAKE_SOURCE_DIR}/src/ceph-disk
-  ${CMAKE_SOURCE_DIR}/src/ceph-disk-activate
-  ${CMAKE_SOURCE_DIR}/src/ceph-disk-prepare
   ${CMAKE_SOURCE_DIR}/src/ceph-disk-udev
   DESTINATION sbin)
 
@@ -729,7 +830,8 @@ if(${WITH_RBD})
     librbd/librbd.cc
     librbd/LibrbdWriteback.cc
     librbd/ObjectMap.cc
-    librbd/RebuildObjectMapRequest.cc)
+    librbd/RebuildObjectMapRequest.cc
+    librbd/DiffIterate.cc)
   add_library(librbd ${CEPH_SHARED} ${librbd_srcs}
     $<TARGET_OBJECTS:osdc_rbd_objs>
     $<TARGET_OBJECTS:common_util_obj>)
@@ -746,7 +848,7 @@ if(${WITH_RBD})
     $<TARGET_OBJECTS:parse_secret_objs>
     $<TARGET_OBJECTS:heap_profiler_objs>)
   set_target_properties(rbd PROPERTIES OUTPUT_NAME rbd)
-  target_link_libraries(rbd librbd librados common keyutils udev
+  target_link_libraries(rbd librbd librados global common keyutils udev
     ${BLKID_LIBRARIES} ${CMAKE_DL_LIBS} ${TCMALLOC_LIBS})
   install(TARGETS rbd DESTINATION bin)
   install(PROGRAMS ${CMAKE_SOURCE_DIR}/src/ceph-rbdnamer DESTINATION bin)

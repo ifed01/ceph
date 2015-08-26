@@ -232,8 +232,8 @@ static bool rgw_find_host_in_domains(const string& host, string *domain, string 
     if (!str_ends_with(host, *iter, &pos))
       continue;
 
-    *domain = host.substr(pos);
     if (pos == 0) {
+      *domain = host;
       subdomain->clear();
     } else {
       if (host[pos - 1] != '.') {
@@ -361,8 +361,11 @@ void dump_bucket_from_state(struct req_state *s)
 {
   int expose_bucket = g_conf->rgw_expose_bucket;
   if (expose_bucket) {
-    if (!s->bucket_name_str.empty())
-      s->cio->print("Bucket: %s\r\n", s->bucket_name_str.c_str());
+    if (!s->bucket_name_str.empty()) {
+      string b;
+      url_encode(s->bucket_name_str, b);
+      s->cio->print("Bucket: %s\r\n", b.c_str());
+    }
   }
 }
 
@@ -497,7 +500,7 @@ void dump_start(struct req_state *s)
 void dump_trans_id(req_state *s)
 {
   if (s->prot_flags & RGW_REST_SWIFT) {
-    s->cio->print("X-Trans-Id: ts-%s\r\n", s->trans_id.c_str());
+    s->cio->print("X-Trans-Id: %s\r\n", s->trans_id.c_str());
   }
   else {
     s->cio->print("x-amz-request-id: %s\r\n", s->trans_id.c_str());
@@ -515,7 +518,7 @@ void end_header(struct req_state *s, RGWOp *op, const char *content_type, const 
     dump_access_control(s, op);
   }
 
-  if (s->prot_flags & RGW_REST_SWIFT) {
+  if (s->prot_flags & RGW_REST_SWIFT && !content_type) {
     force_content_type = true;
   }
 
