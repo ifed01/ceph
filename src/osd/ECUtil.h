@@ -20,6 +20,7 @@
 
 #include "include/memory.h"
 #include "erasure-code/ErasureCodeInterface.h"
+#include "erasure-code/CompressionInterface.h"
 #include "include/buffer.h"
 #include "include/assert.h"
 #include "include/encoding.h"
@@ -97,6 +98,16 @@ int decode(
   map<int, bufferlist> &to_decode,
   map<int, bufferlist*> &out);
 
+int decompress(
+  CompressionInterfaceRef &cs_impl,
+  bufferlist &in,
+  bufferlist *out);
+
+int compress(
+  CompressionInterfaceRef &cs_impl,
+  bufferlist &in,
+  bufferlist *out);
+
 int encode(
   const stripe_info_t &sinfo,
   ErasureCodeInterfaceRef &ec_impl,
@@ -148,6 +159,7 @@ typedef ceph::shared_ptr<HashInfo> HashInfoRef;
 
 bool is_hinfo_key_string(const string &key);
 const string &get_hinfo_key();
+const string &get_cinfo_key();
 
 }
 WRITE_CLASS_ENCODER(ECUtil::HashInfo)

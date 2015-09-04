@@ -21,6 +21,11 @@
 #include "ECBackend.h"
 #include "ECUtil.h"
 #include "os/ObjectStore.h"
+#include "common/debug.h"
+
+#define dout_subsys ceph_subsys_osd
+#undef dout_prefix
+#define dout_prefix *_dout
 
 struct AppendObjectsGenerator: public boost::static_visitor<void> {
   set<hobject_t, hobject_t::BitwiseComparator> *out;
@@ -61,6 +66,7 @@ struct TransGenerator : public boost::static_visitor<void> {
   map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos;
 
   ErasureCodeInterfaceRef &ecimpl;
+  CompressionInterfaceRef &csimpl;
   const pg_t pgid;
   const ECUtil::stripe_info_t sinfo;
   map<shard_id_t, ObjectStore::Transaction> *trans;
@@ -70,7 +76,7 @@ struct TransGenerator : public boost::static_visitor<void> {
   stringstream *out;
   TransGenerator(
     map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
-    ErasureCodeInterfaceRef &ecimpl,
+    ErasureCodeInterfaceRef &ecimpl, CompressionInterfaceRef &csimpl,
     pg_t pgid,
     const ECUtil::stripe_info_t &sinfo,
     map<shard_id_t, ObjectStore::Transaction> *trans,
@@ -78,7 +84,7 @@ struct TransGenerator : public boost::static_visitor<void> {
     set<hobject_t, hobject_t::BitwiseComparator> *temp_removed,
     stringstream *out)
     : hash_infos(hash_infos),
-      ecimpl(ecimpl), pgid(pgid),
+      ecimpl(ecimpl), csimpl(csimpl), pgid(pgid),
       sinfo(sinfo),
       trans(trans),
       temp_added(temp_added), temp_removed(temp_removed),
@@ -131,8 +137,12 @@ struct TransGenerator : public boost::static_visitor<void> {
   }
   void operator()(const ECTransaction::AppendOp &op) {
     uint64_t offset = op.off;
-    bufferlist bl(op.bl);
-    assert(bl.length());
+    bufferlist bl_cs(op.bl), bl;
+    assert(bl_cs.length());
+    int r0 = ECUtil::compress(csimpl, bl_cs, &bl);
+    assert(r0 == 0);
+    dout(10) << "!!!!" << bl.c_str() << dendl;
+    dout(10) << "!!!!" << bl_cs.c_str() << dendl;
     assert(offset % sinfo.get_stripe_width() == 0);
     map<int, bufferlist> buffers;
 
@@ -151,10 +161,16 @@ struct TransGenerator : public boost::static_visitor<void> {
     hinfo->append(
       sinfo.aligned_logical_offset_to_chunk_offset(op.off),
       buffers);
-    bufferlist hbuf;
+    //bufferlist hbuf;
+    map<string,bufferlist> attrset;
     ::encode(
       *hinfo,
-      hbuf);
+      attrset[ECUtil::get_hinfo_key()]);
+//      hbuf);
+    std::string cinfo=csimpl->get_profile().at("plugin_name");
+    ::encode(
+      cinfo, 
+      attrset[ECUtil::get_cinfo_key()]);
 
     assert(r == 0);
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
@@ -170,11 +186,12 @@ struct TransGenerator : public boost::static_visitor<void> {
 	enc_bl.length(),
 	enc_bl,
 	op.fadvise_flags);
-      i->second.setattr(
+      i->second.setattrs(
 	get_coll_ct(i->first, op.oid),
 	ghobject_t(op.oid, ghobject_t::NO_GEN, i->first),
-	ECUtil::get_hinfo_key(),
-	hbuf);
+  attrset);
+	// ECUtil::get_hinfo_key(),
+	// hbuf);
     }
   }
   void operator()(const ECTransaction::CloneOp &op) {
@@ -274,7 +291,7 @@ struct TransGenerator : public boost::static_visitor<void> {
 
 void ECTransaction::generate_transactions(
   map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
-  ErasureCodeInterfaceRef &ecimpl,
+  ErasureCodeInterfaceRef &ecimpl, CompressionInterfaceRef &csimpl,
   pg_t pgid,
   const ECUtil::stripe_info_t &sinfo,
   map<shard_id_t, ObjectStore::Transaction> *transactions,
@@ -285,6 +302,7 @@ void ECTransaction::generate_transactions(
   TransGenerator gen(
     hash_infos,
     ecimpl,
+    csimpl,
     pgid,
     sinfo,
     transactions,

@@ -22,6 +22,7 @@
 #include "PGBackend.h"
 #include "OSD.h"
 #include "erasure-code/ErasureCodePlugin.h"
+#include "erasure-code/CompressionFake.h"
 
 #define dout_subsys ceph_subsys_osd
 #define DOUT_PREFIX_ARGS this
@@ -293,12 +294,15 @@ PGBackend *PGBackend::build_pg_backend(
       &ec_impl,
       &ss);
     assert(ec_impl);
+    Compression* cs = (Compression*)(new CompressionFake());
+    CompressionInterfaceRef cs_impl = CompressionInterfaceRef(cs);
     return new ECBackend(
       l,
       coll,
       store,
       cct,
       ec_impl,
+      cs_impl,
       pool.stripe_width);
   }
   default:

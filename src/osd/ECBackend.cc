@@ -28,7 +28,8 @@ class ReplicatedPG;
 #define dout_subsys ceph_subsys_osd
 #define DOUT_PREFIX_ARGS this
 #undef dout_prefix
-#define dout_prefix _prefix(_dout, this)
+//#define dout_prefix _prefix(_dout, this)
+#define dout_prefix *_dout
 static ostream& _prefix(std::ostream *_dout, ECBackend *pgb) {
   return *_dout << pgb->get_parent()->gen_dbg_prefix();
 }
@@ -173,10 +174,12 @@ ECBackend::ECBackend(
   ObjectStore *store,
   CephContext *cct,
   ErasureCodeInterfaceRef ec_impl,
+  CompressionInterfaceRef cs_impl,
   uint64_t stripe_width)
   : PGBackend(pg, store, coll),
     cct(cct),
     ec_impl(ec_impl),
+    cs_impl(cs_impl),
     sinfo(ec_impl->get_data_chunk_count(), stripe_width) {
   assert((ec_impl->get_data_chunk_count() *
 	  ec_impl->get_chunk_size(stripe_width)) == stripe_width);
@@ -817,6 +820,7 @@ void ECBackend::handle_sub_write(
   ECSubWrite &op,
   Context *on_local_applied_sync)
 {
+  dout(10) << "!!! ec write" << dendl;
   if (msg)
     msg->mark_started();
   assert(!get_parent()->get_log().get_missing().is_missing(op.soid));
@@ -1250,6 +1254,7 @@ void ECBackend::submit_transaction(
   OpRequestRef client_op
   )
 {
+  dout(10) << "!st! encode" << dendl;
   assert(!tid_to_op_map.count(tid));
   Op *op = &(tid_to_op_map[tid]);
   op->hoid = hoid;
@@ -1538,12 +1543,14 @@ void ECBackend::start_write(Op *op) {
     trans[i->shard];
     trans[i->shard].set_use_tbl(parent->transaction_use_tbl());
   }
+  dout(10) << "!sw! encode" << dendl;
   ObjectStore::Transaction empty;
   empty.set_use_tbl(parent->transaction_use_tbl());
 
   op->t->generate_transactions(
     op->unstable_hash_infos,
     ec_impl,
+    cs_impl,
     get_parent()->get_info().pgid.pgid,
     sinfo,
     &trans,
@@ -1635,7 +1642,7 @@ struct CallClientContexts :
       assert(res.returned.front().get<0>() == adjusted.first &&
 	     res.returned.front().get<1>() == adjusted.second);
       map<int, bufferlist> to_decode;
-      bufferlist bl;
+      bufferlist bl, cs_bl;
       for (map<pg_shard_t, bufferlist>::iterator j =
 	     res.returned.front().get<2>().begin();
 	   j != res.returned.front().get<2>().end();
@@ -1646,7 +1653,12 @@ struct CallClientContexts :
 	ec->sinfo,
 	ec->ec_impl,
 	to_decode,
-	&bl);
+	&cs_bl);
+      dout(10) << "!!!!! dec" << cs_bl.c_str() << dendl;
+      ECUtil::decompress(
+  ec->cs_impl,
+  cs_bl,
+  &bl);
       assert(i->second.second);
       assert(i->second.first);
       i->second.first->substr_of(
@@ -1722,7 +1734,7 @@ void ECBackend::objects_read_async(
 	hoid,
 	offsets,
 	shards,
-	false,
+	true, //retrieving attrs to learn if compression was applied
 	c)));
 
   start_read_op(

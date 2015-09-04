@@ -171,6 +171,7 @@ void ErasureCodeJerasureReedSolomonVandermonde::jerasure_encode(char **data,
                                                                 char **coding,
                                                                 int blocksize)
 {
+  dout(10) << "!e! encode" << dendl;
   jerasure_matrix_encode(k, m, w, matrix, data, coding, blocksize);
 }
 

@@ -97,6 +97,27 @@ int ECUtil::decode(
   return 0;
 }
 
+
+int ECUtil::decompress(
+  CompressionInterfaceRef &cs_impl,
+  bufferlist &in,
+  bufferlist *out)
+{
+  int r = cs_impl->decode(in, out);
+  assert(r == 0);
+  return 0;
+}
+
+int ECUtil::compress(
+  CompressionInterfaceRef &cs_impl,
+  bufferlist &in,
+  bufferlist *out)
+{
+  int r = cs_impl->encode(in, out);
+  assert(r == 0);
+  return 0;
+}
+
 int ECUtil::encode(
   const stripe_info_t &sinfo,
   ErasureCodeInterfaceRef &ec_impl,
@@ -184,6 +205,7 @@ void ECUtil::HashInfo::generate_test_instances(list<HashInfo*>& o)
 }
 
 const string HINFO_KEY = "hinfo_key";
+const string CINFO_KEY = "cinfo_key";
 
 bool ECUtil::is_hinfo_key_string(const string &key)
 {
@@ -193,4 +215,9 @@ bool ECUtil::is_hinfo_key_string(const string &key)
 const string &ECUtil::get_hinfo_key()
 {
   return HINFO_KEY;
+}
+
+const string &ECUtil::get_cinfo_key()
+{
+  return CINFO_KEY;
 }

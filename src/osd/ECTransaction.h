@@ -21,6 +21,7 @@
 #include "ECUtil.h"
 #include <boost/optional/optional_io.hpp>
 #include "erasure-code/ErasureCodeInterface.h"
+#include "erasure-code/CompressionInterface.h"
 
 class ECTransaction : public PGBackend::PGTransaction {
 public:
@@ -197,7 +198,7 @@ public:
      set<hobject_t, hobject_t::BitwiseComparator> *out) const;
   void generate_transactions(
     map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
-    ErasureCodeInterfaceRef &ecimpl,
+    ErasureCodeInterfaceRef &ecimpl, CompressionInterfaceRef &csimpl,
     pg_t pgid,
     const ECUtil::stripe_info_t &sinfo,
     map<shard_id_t, ObjectStore::Transaction> *transactions,
