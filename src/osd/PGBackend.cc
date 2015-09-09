@@ -294,8 +294,16 @@ PGBackend *PGBackend::build_pg_backend(
       &ec_impl,
       &ss);
     assert(ec_impl);
-    Compression* cs = (Compression*)(new CompressionFake());
-    CompressionInterfaceRef cs_impl = CompressionInterfaceRef(cs);
+    // Compression* cs = (Compression*)(new CompressionFake());
+    CompressionInterfaceRef cs_impl;// = CompressionInterfaceRef(cs);
+    CompressionProfile cp;
+    cp["plugin"] = "zlib"
+    ceph::ErasureCodePluginRegistry::instance().factory(
+      profile.find("plugin")->second,
+      g_conf->erasure_code_dir,
+      profile,
+      &cs_impl,
+      &ss);
     return new ECBackend(
       l,
       coll,
