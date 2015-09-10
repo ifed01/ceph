@@ -34,59 +34,43 @@ _prefix(std::ostream* _dout)
 int CompressionZlib::encode(const bufferlist &in,
                             bufferlist *encoded)
 {
-	char* data = in.c_str();
-    int ret, flush;
-    unsigned have;
-    z_stream strm;
-    int CHUNK = sizeof(data);
-    unsigned char *in = new unsigned char [CHUNK];
-    unsigned char *out = new unsigned char [CHUNK];
+  dout(10) << "enter CompressionZlib!" << dendl;
 
-    /* allocate deflate state */
-    strm.zalloc = Z_NULL;
-    strm.zfree = Z_NULL;
-    strm.opaque = Z_NULL;
-    ret = deflateInit(&strm, level);
-    if (ret != Z_OK)
-        return ret;
+  bufferlist tmp(in);
+	unsigned char* c_in = (unsigned char*)tmp.c_str();
+  long unsigned int len = in.length();
+  long unsigned int new_len = compressBound(len);
+  dout(10) << c_in << ">>" << len << "->" << new_len << dendl;
 
-    strm.avail_in = data;
-    flush = Z_FINISH;
-    strm.next_in = in;
+  unsigned char *c_out = new unsigned char [new_len];
 
-    do {
-        strm.avail_out = CHUNK;
-        strm.next_out = out;
-        ret = deflate(&strm, flush);    /* no bad return value */
-        assert(ret != Z_STREAM_ERROR);  /* state not clobbered */
-        encoded->append(ret);
-        have = CHUNK - strm.avail_out;
-    } while (strm.avail_out == 0);
-    assert(strm.avail_in == 0);     /* all input will be used */
+  int ret = compress(c_out, &new_len, c_in, len);
+  dout(10) << "ret " << ret << dendl;
 
-    assert(ret == Z_STREAM_END);        /* stream will be complete */
+  assert(ret == Z_OK);
 
-    /* clean up and return */
-    (void)deflateEnd(&strm);
-    return 0;
+  encoded->append((char*)c_out, new_len);
+  return 0;
 }
 
 int CompressionZlib::decode(const bufferlist &in,
                             bufferlist *decoded)
 {
-	char* data = in.c_str();
+  int level = Z_DEFAULT_COMPRESSION;
+  bufferlist tmp(in);
+	char* data = tmp.c_str();
 	int ret, flush;
 	unsigned have;
 	z_stream strm;
 	int CHUNK = sizeof(data);
-	unsigned char *in = new unsigned char [CHUNK];
-	unsigned char *out = new unsigned char [CHUNK];
-	strm.avail_in = data;
-    strm.next_in = in;
+	unsigned char *c_in = (unsigned char*)data;//new unsigned char [CHUNK];
+	unsigned char *c_out = new unsigned char [CHUNK];
+	strm.avail_in = CHUNK;
+    strm.next_in = c_in;
 
     do {
         strm.avail_out = CHUNK;
-        strm.next_out = out;
+        strm.next_out = c_out;
         ret = inflate(&strm, Z_NO_FLUSH);
         assert(ret != Z_STREAM_ERROR);  /* state not clobbered */
         switch (ret) {

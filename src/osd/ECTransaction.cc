@@ -139,10 +139,10 @@ struct TransGenerator : public boost::static_visitor<void> {
     uint64_t offset = op.off;
     bufferlist bl_cs(op.bl), bl;
     assert(bl_cs.length());
+    dout(10) << "!!!!" << bl_cs.c_str() << dendl;
     int r0 = ECUtil::compress(csimpl, bl_cs, &bl);
     assert(r0 == 0);
     dout(10) << "!!!!" << bl.c_str() << dendl;
-    dout(10) << "!!!!" << bl_cs.c_str() << dendl;
     assert(offset % sinfo.get_stripe_width() == 0);
     map<int, bufferlist> buffers;
 
@@ -167,7 +167,7 @@ struct TransGenerator : public boost::static_visitor<void> {
       *hinfo,
       attrset[ECUtil::get_hinfo_key()]);
 //      hbuf);
-    std::string cinfo=csimpl->get_profile().at("plugin_name");
+    std::string cinfo = csimpl->get_profile().at("plugin");
     ::encode(
       cinfo, 
       attrset[ECUtil::get_cinfo_key()]);

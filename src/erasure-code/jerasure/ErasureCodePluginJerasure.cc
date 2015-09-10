@@ -69,7 +69,7 @@ public:
     }
     *erasure_code = ErasureCodeInterfaceRef(interface);
     return 0;
-  }k
+  }
 };
 
 extern "C" {

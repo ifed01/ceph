@@ -13,76 +13,56 @@
  */
 
 
-/**
- * @file   ErasureCodePluginIsa.cc
- *
- * @brief  Erasure Code Plug-in class wrapping the INTEL ISA-L library
- *
- * The factory plug-in class allows to call individual encoding techniques.
- * The INTEL ISA-L library provides two pre-defined encoding matrices
- * (cauchy, reed_sol_van = default).
- */
-
 // -----------------------------------------------------------------------------
 #include "ceph_ver.h"
 #include "common/debug.h"
-#include "erasure-code/ErasureCodePlugin.h"
-#include "ErasureCodeIsaTableCache.h"
-#include "ErasureCodeIsa.h"
+#include "erasure-code/CompressionPlugin.h"
+#include "CompressionZlib.h"
 // -----------------------------------------------------------------------------
+#define dout_subsys ceph_subsys_osd
+#undef dout_prefix
+#define dout_prefix _prefix(_dout)
 
-class ErasureCodePluginIsa : public ErasureCodePlugin {
+static ostream& _prefix(std::ostream* _dout)
+{
+  return *_dout << "CompressionPluginZlib: ";
+}
+
+class CompressionPluginZlib : public CompressionPlugin {
 public:
-  ErasureCodeIsaTableCache tcache;
 
   virtual int factory(const std::string &directory,
-		      ErasureCodeProfile &profile,
-                      ErasureCodeInterfaceRef *erasure_code,
+		                  CompressionProfile &profile,
+                      CompressionInterfaceRef *cs,
                       ostream *ss)
   {
-    ErasureCodeIsa *interface;
+    dout(10) << "i'm here" << dendl;
+    CompressionZlib *interface;
     std::string t;
-    if (profile.find("technique") == profile.end())
-      profile["technique"] = "reed_sol_van";
-    t = profile.find("technique")->second;
-    if ((t == "reed_sol_van")) {
-      interface = new ErasureCodeIsaDefault(tcache,
-                                            ErasureCodeIsaDefault::kVandermonde);
-    } else {
-      if ((t == "cauchy")) {
-        interface = new ErasureCodeIsaDefault(tcache,
-                                              ErasureCodeIsaDefault::kCauchy);
-      } else {
-        *ss << "technique=" << t << " is not a valid coding technique. "
-          << " Choose one of the following: "
-          << "reed_sol_van,"
-          << "cauchy" << std::endl;
-        return -ENOENT;
-      }
-    }
+    interface = new CompressionZlib();
 
     int r = interface->init(profile, ss);
     if (r) {
       delete interface;
       return r;
     }
-    *erasure_code = ErasureCodeInterfaceRef(interface);
+    *cs = CompressionInterfaceRef(interface);
     return 0;
   }
 };
 
 // -----------------------------------------------------------------------------
 
-const char *__erasure_code_version()
+const char *__compression_version()
 {
   return CEPH_GIT_NICE_VER;
 }
 
 // -----------------------------------------------------------------------------
 
-int __erasure_code_init(char *plugin_name, char *directory)
+int __compression_init(char *plugin_name, char *directory)
 {
-  ErasureCodePluginRegistry &instance = ErasureCodePluginRegistry::instance();
+  CompressionPluginRegistry &instance = CompressionPluginRegistry::instance();
 
-  return instance.add(plugin_name, new ErasureCodePluginIsa());
+  return instance.add(plugin_name, new CompressionPluginZlib());
 }

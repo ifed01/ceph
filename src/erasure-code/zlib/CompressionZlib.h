@@ -24,6 +24,7 @@ public:
 
   CompressionZlib()
   {
+    CompressionInterface::name = "zlib";
   }
 
   virtual

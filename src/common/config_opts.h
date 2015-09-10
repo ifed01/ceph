@@ -559,6 +559,9 @@ OPTION(osd_erasure_code_plugins, OPT_STR,
        " isa"
 #endif
        ) // list of erasure code plugins
+OPTION(osd_compression_plugins, OPT_STR,
+       "zlib"
+       ) // list of compression plugins
 
 // Allows the "peered" state for recovery and backfill below min_size
 OPTION(osd_allow_recovery_below_min_size, OPT_BOOL, true)

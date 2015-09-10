@@ -47,6 +47,7 @@ namespace ceph {
   class CompressionInterface {
   public:
     virtual ~CompressionInterface() {}
+    string name;
 
     /**
      * Initialize the instance according to the content of

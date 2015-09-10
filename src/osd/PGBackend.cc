@@ -22,15 +22,16 @@
 #include "PGBackend.h"
 #include "OSD.h"
 #include "erasure-code/ErasureCodePlugin.h"
-#include "erasure-code/CompressionFake.h"
+#include "erasure-code/CompressionPlugin.h"
 
 #define dout_subsys ceph_subsys_osd
 #define DOUT_PREFIX_ARGS this
 #undef dout_prefix
-#define dout_prefix _prefix(_dout, this)
-static ostream& _prefix(std::ostream *_dout, PGBackend *pgb) {
-  return *_dout << pgb->get_parent()->gen_dbg_prefix();
-}
+#define dout_prefix *_dout
+// #define dout_prefix _prefix(_dout, this)
+// static ostream& _prefix(std::ostream *_dout, PGBackend *pgb) {
+//   return *_dout << pgb->get_parent()->gen_dbg_prefix();
+// }
 
 // -- ObjectModDesc --
 struct RollbackVisitor : public ObjectModDesc::Visitor {
@@ -297,13 +298,14 @@ PGBackend *PGBackend::build_pg_backend(
     // Compression* cs = (Compression*)(new CompressionFake());
     CompressionInterfaceRef cs_impl;// = CompressionInterfaceRef(cs);
     CompressionProfile cp;
-    cp["plugin"] = "zlib"
-    ceph::ErasureCodePluginRegistry::instance().factory(
-      profile.find("plugin")->second,
+    cp["plugin"] = "zlib";
+    ceph::CompressionPluginRegistry::instance().factory(
+      cp.find("plugin")->second,
       g_conf->erasure_code_dir,
-      profile,
+      cp,
       &cs_impl,
       &ss);
+    dout(10) << "!!!PGBackend::build_pg_backend" << ss.str() << dendl;
     return new ECBackend(
       l,
       coll,

@@ -39,7 +39,8 @@ int def(FILE *source, FILE *dest, int level)
     unsigned have;
     z_stream strm;
     unsigned char in[CHUNK];
-    unsigned char out[CHUNK];
+    unsigned char o
+    ut[CHUNK];
 
     /* allocate deflate state */
     strm.zalloc = Z_NULL;

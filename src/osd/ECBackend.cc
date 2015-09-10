@@ -16,6 +16,7 @@
 #include <boost/optional/optional_io.hpp>
 #include <iostream>
 #include <sstream>
+#include <typeinfo>
 
 #include "ECUtil.h"
 #include "ECBackend.h"
@@ -183,6 +184,8 @@ ECBackend::ECBackend(
     sinfo(ec_impl->get_data_chunk_count(), stripe_width) {
   assert((ec_impl->get_data_chunk_count() *
 	  ec_impl->get_chunk_size(stripe_width)) == stripe_width);
+      dout(10) << "!!!t!!!" << cs_impl->name << dendl;
+
 }
 
 PGBackend::RecoveryHandle *ECBackend::open_recovery_op()

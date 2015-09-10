@@ -105,11 +105,11 @@ int CompressionPluginRegistry::factory(const std::string &plugin_name,
   int r = plugin->factory(directory, profile, cs, ss);
   if (r)
     return r;
-  if (profile != (*cs)->get_profile()) {
-    *ss << __func__ << " profile " << profile << " != get_profile() "
-	<< (*cs)->get_profile() << std::endl;
-    return -EINVAL;
-  }
+ //  if (profile != (*cs)->get_profile()) {
+ //    *ss << __func__ << " profile " << profile << " != get_profile() "
+	// << (*cs)->get_profile() << std::endl;
+  //   return -EINVAL;
+  // }
   return 0;
 }
 
