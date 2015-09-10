@@ -45,11 +45,12 @@ int CompressionZlib::encode(const bufferlist &in,
   unsigned char *c_out = new unsigned char [new_len];
 
   int ret = compress(c_out, &new_len, c_in, len);
-  dout(10) << "ret " << ret << dendl;
+  dout(10) << "ret " << ret << " new_len " << new_len << dendl;
 
   assert(ret == Z_OK);
 
   encoded->append((char*)c_out, new_len);
+  dout(10) << "encoded len " << encoded->length() << dendl;
   return 0;
 }
 

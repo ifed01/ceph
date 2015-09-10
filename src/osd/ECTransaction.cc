@@ -154,7 +154,7 @@ struct TransGenerator : public boost::static_visitor<void> {
       bl.append_zero(
 	sinfo.get_stripe_width() -
 	((offset + bl.length()) % sinfo.get_stripe_width()));
-    assert(bl.length() - op.bl.length() < sinfo.get_stripe_width());
+    //assert(bl.length() - op.bl.length() < sinfo.get_stripe_width());
     int r = ECUtil::encode(
       sinfo, ecimpl, bl, want, &buffers);
 
