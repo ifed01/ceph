@@ -30,6 +30,7 @@ namespace ceph {
     virtual int encode(const bufferlist &in,
                        bufferlist *encoded);
     virtual int decode(const bufferlist &in,
+                       long unsigned int original_size,
                        bufferlist *decoded);
   };
 }

@@ -76,6 +76,7 @@ namespace ceph {
     virtual int encode(const bufferlist &in,
                        bufferlist *encoded) = 0;
     virtual int decode(const bufferlist &in,
+                       long unsigned int original_size,
                        bufferlist *decoded) = 0;
 
 

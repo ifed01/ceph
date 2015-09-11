@@ -100,10 +100,11 @@ int ECUtil::decode(
 
 int ECUtil::decompress(
   CompressionInterfaceRef &cs_impl,
+  int original_size,
   bufferlist &in,
   bufferlist *out)
 {
-  int r = cs_impl->decode(in, out);
+  int r = cs_impl->decode(in, original_size, out);
   assert(r == 0);
   return 0;
 }

@@ -37,6 +37,7 @@ int CompressionFake::encode(const bufferlist &in,
 }
 
 int CompressionFake::decode(const bufferlist &in,
+                            long unsigned int original_size,
                             bufferlist *decoded)
 {
   *decoded = in;

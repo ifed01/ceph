@@ -167,7 +167,9 @@ struct TransGenerator : public boost::static_visitor<void> {
       *hinfo,
       attrset[ECUtil::get_hinfo_key()]);
 //      hbuf);
-    std::string cinfo = csimpl->get_profile().at("plugin");
+    std::string pname = csimpl->get_profile().at("plugin");
+    std::string origlen = std::to_string(bl_cs.length());
+    std::string cinfo = pname + "/" + origlen;
     ::encode(
       cinfo, 
       attrset[ECUtil::get_cinfo_key()]);

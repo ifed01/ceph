@@ -55,38 +55,23 @@ int CompressionZlib::encode(const bufferlist &in,
 }
 
 int CompressionZlib::decode(const bufferlist &in,
+                            long unsigned int original_size,
                             bufferlist *decoded)
 {
-  int level = Z_DEFAULT_COMPRESSION;
+  dout(10) << "enter CompressionZlib decompress!" << dendl;
+
   bufferlist tmp(in);
-	char* data = tmp.c_str();
-	int ret, flush;
-	unsigned have;
-	z_stream strm;
-	int CHUNK = sizeof(data);
-	unsigned char *c_in = (unsigned char*)data;//new unsigned char [CHUNK];
-	unsigned char *c_out = new unsigned char [CHUNK];
-	strm.avail_in = CHUNK;
-    strm.next_in = c_in;
+  unsigned char* c_in = (unsigned char*)tmp.c_str();
+  long unsigned int len = in.length();
+  unsigned char *c_out = new unsigned char [original_size];
 
-    do {
-        strm.avail_out = CHUNK;
-        strm.next_out = c_out;
-        ret = inflate(&strm, Z_NO_FLUSH);
-        assert(ret != Z_STREAM_ERROR);  /* state not clobbered */
-        switch (ret) {
-        case Z_NEED_DICT:
-            ret = Z_DATA_ERROR;     /* and fall through */
-        case Z_DATA_ERROR:
-        case Z_MEM_ERROR:
-            (void)inflateEnd(&strm);
-            return ret;
-        }
-        have = CHUNK - strm.avail_out;
-        decoded->append(ret);
-    } while (strm.avail_out == 0);
+  int ret = uncompress(c_out, &original_size, c_in, len);
+  dout(10) << "ret " << ret << " new_len " << original_size << dendl;
 
-	(void)inflateEnd(&strm);
-	return ret == Z_STREAM_END ? 0 : Z_DATA_ERROR;
- //return 0;
+  assert(ret == Z_OK);
+
+  decoded->append((char*)c_out, original_size);
+  dout(10) << "decoded len " << decoded->length() << dendl;
+  
+  return 0;
 }

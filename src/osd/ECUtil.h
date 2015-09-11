@@ -100,6 +100,7 @@ int decode(
 
 int decompress(
   CompressionInterfaceRef &cs_impl,
+  int original_size,
   bufferlist &in,
   bufferlist *out);
 
