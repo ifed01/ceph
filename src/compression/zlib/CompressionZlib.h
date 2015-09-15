@@ -14,7 +14,7 @@
 
 // -----------------------------------------------------------------------------
 #include "common/Mutex.h"
-#include "erasure-code/Compression.h"
+#include "compression/Compression.h"
 // -----------------------------------------------------------------------------
 #include <list>
 // -----------------------------------------------------------------------------
@@ -24,7 +24,6 @@ public:
 
   CompressionZlib()
   {
-    CompressionInterface::name = "zlib";
   }
 
   virtual

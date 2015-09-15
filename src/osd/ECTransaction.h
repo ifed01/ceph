@@ -21,7 +21,7 @@
 #include "ECUtil.h"
 #include <boost/optional/optional_io.hpp>
 #include "erasure-code/ErasureCodeInterface.h"
-#include "erasure-code/CompressionInterface.h"
+#include "compression/CompressionInterface.h"
 
 class ECTransaction : public PGBackend::PGTransaction {
 public:

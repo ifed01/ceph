@@ -20,7 +20,7 @@
 #include "osd_types.h"
 #include <boost/optional/optional_io.hpp>
 #include "erasure-code/ErasureCodeInterface.h"
-#include "erasure-code/CompressionInterface.h"
+#include "compression/CompressionInterface.h"
 #include "ECTransaction.h"
 #include "ECMsgTypes.h"
 #include "ECUtil.h"

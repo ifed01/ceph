@@ -16,7 +16,7 @@
 // -----------------------------------------------------------------------------
 #include "ceph_ver.h"
 #include "common/debug.h"
-#include "erasure-code/CompressionPlugin.h"
+#include "compression/CompressionPlugin.h"
 #include "CompressionZlib.h"
 // -----------------------------------------------------------------------------
 #define dout_subsys ceph_subsys_osd

@@ -19,6 +19,7 @@ include mds/Makefile.am
 include os/Makefile.am
 include osd/Makefile.am
 include erasure-code/Makefile.am
+include compression/Makefile.am
 include osdc/Makefile.am
 include client/Makefile.am
 include global/Makefile.am

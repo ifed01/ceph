@@ -131,6 +131,7 @@ noinst_HEADERS += \
 # important; libmsg before libauth!
 LIBCOMMON_DEPS += \
 	$(LIBERASURE_CODE) \
+	$(LIBCOMPRESSION) \
 	$(LIBMSG) $(LIBAUTH) \
 	$(LIBCRUSH) $(LIBJSON_SPIRIT) $(LIBLOG) $(LIBARCH) \
 	$(BOOST_RANDOM_LIBS)

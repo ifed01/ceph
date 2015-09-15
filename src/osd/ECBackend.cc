@@ -31,9 +31,9 @@ class ReplicatedPG;
 #undef dout_prefix
 //#define dout_prefix _prefix(_dout, this)
 #define dout_prefix *_dout
-static ostream& _prefix(std::ostream *_dout, ECBackend *pgb) {
-  return *_dout << pgb->get_parent()->gen_dbg_prefix();
-}
+// static ostream& _prefix(std::ostream *_dout, ECBackend *pgb) {
+//   return *_dout << pgb->get_parent()->gen_dbg_prefix();
+// }
 
 struct ECRecoveryHandle : public PGBackend::RecoveryHandle {
   list<ECBackend::RecoveryOp> ops;
@@ -184,7 +184,6 @@ ECBackend::ECBackend(
     sinfo(ec_impl->get_data_chunk_count(), stripe_width) {
   assert((ec_impl->get_data_chunk_count() *
 	  ec_impl->get_chunk_size(stripe_width)) == stripe_width);
-      dout(10) << "!!!t!!!" << cs_impl->name << dendl;
 
 }
 

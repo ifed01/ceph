@@ -22,7 +22,7 @@
 #include "PGBackend.h"
 #include "OSD.h"
 #include "erasure-code/ErasureCodePlugin.h"
-#include "erasure-code/CompressionPlugin.h"
+#include "compression/CompressionPlugin.h"
 
 #define dout_subsys ceph_subsys_osd
 #define DOUT_PREFIX_ARGS this

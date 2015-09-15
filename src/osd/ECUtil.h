@@ -20,7 +20,7 @@
 
 #include "include/memory.h"
 #include "erasure-code/ErasureCodeInterface.h"
-#include "erasure-code/CompressionInterface.h"
+#include "compression/CompressionInterface.h"
 #include "include/buffer.h"
 #include "include/assert.h"
 #include "include/encoding.h"
