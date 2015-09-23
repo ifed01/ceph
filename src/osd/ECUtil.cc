@@ -205,12 +205,131 @@ void ECUtil::HashInfo::generate_test_instances(list<HashInfo*>& o)
   o.push_back(new HashInfo(4));
 }
 
+void ECUtil::CompressInfo::BlockInfo::encode(bufferlist &bl) const
+{
+        ENCODE_START(1, 1, bl);
+        ::encode(method, bl);
+        ::encode(original_size, bl);
+        ::encode(target_offset, bl);
+        ENCODE_FINISH(bl);
+}
+
+void ECUtil::CompressInfo::BlockInfo::decode(bufferlist::iterator &bl)
+{
+        DECODE_START(1, bl);
+        ::decode(method, bl);
+        ::decode(original_size, bl);
+        ::decode(target_offset, bl);
+        DECODE_FINISH(bl);
+}
+
+int ECUtil::CompressInfo::setup(const map<string, bufferlist>& attrset) const
+{
+        int ret = 0;
+        clear();
+        try{
+                bool root_key_found = false, some_compression_keys_found = false;
+                string key_prefix = ECUtil::get_cinfo_key();
+                key_prefix += '_';
+                map<string, bufferlist>::const_iterator it = attrset.begin();
+                while (it != attrset.end())
+                {
+                        int pos = it->first.find(key_prefix);
+                        if (pos == 0)
+                        {
+                                string str_offs = it->first;
+                                stringstream ss0(it->first);
+                                ss0.seekg(key_prefix.size());
+                                uint64_t original_offset;
+                                ss0 >> std::hex >> original_offset;
+
+                                ::decode(
+                                        blocks[original_offset],
+                                        it->second);
+                                some_compression_keys_found = true;
+                        }
+                        else if (it->first == ECUtil::get_cinfo_key())
+                        {
+                                ::decode(
+                                        next_target_offset,
+                                        it->second);
+                                root_key_found = true;
+                        }
+                        ++it;
+                }
+                if (!root_key_found && some_compression_keys_found)
+                        ret = -1;
+        }
+        catch (...){
+                ret = -1;
+        }
+        if (ret != 0)
+                clear();
+}
+
+void ECUtil::CompressInfo::flush(bufferlist > & attrset) const
+{
+        for (CompressInfo::BlockMap::iterator it = blocks.begin(); i != blocks.end(); i++) {
+                stringstream ss_key;
+                ss_key << ECUtil::get_cinfo_key() << "_" << std::hex << it->first;
+
+                ::encode(
+                        it->second,
+                        attrset[ss_key.str()]);
+        }
+
+        ::encode(
+                next_target_offset,
+                attrset[ECUtil::get_cinfo_key()]);
+}
+
+void ECUtil::CompressInfo::dump(Formatter *f) const
+{
+        f->dump_unsigned("next_target_offset", next_target_offset);
+        f->open_object_section("blocks");
+        for (CompressInfo::BlockMap::iterator it = blocks.begin(); i != blocks.end(); i++) {
+                f->open_object_section("block");
+                f->dump_unsigned("offset", i->first);
+                f->dump_string("method", i->second.method);
+                f->dump_unsigned("original_size", i->second.original_size);
+                f->dump_unsigned("target_offset", i->second.target_offset);
+                f->close_section();
+        }
+        f->close_section();
+}
+
+void ECUtil::CompressInfo::append_block(uint64_t original_offset,
+                  uint64_t original_size, 
+                  const string& method, 
+                  uint64_t new_block_size, 
+                  map<string, 
+                  bufferlist>& attrset)
+{
+        BlockInfo bi(method, original_size, next_target_offset);
+        blocks[original_offset] = bi;
+
+        //saving compression info for the appended block
+        stringstream ss_key;
+        ss_key << ECUtil::get_cinfo_key() << "_" << std::hex << original_offset;
+
+        ::encode(
+                bi,
+                attrset[ss_key.str()]);
+        
+     
+        //updating compressed data block length
+        next_target_offset += new_block_size;
+        ::encode(
+                next_target_offset,
+                attrset[ECUtil::get_cinfo_key()]);
+}
+
 const string HINFO_KEY = "hinfo_key";
 const string CINFO_KEY = "cinfo_key";
 
-bool ECUtil::is_hinfo_key_string(const string &key)
+bool ECUtil::is_internal_key_string(const string &key)
 {
-  return key == HINFO_KEY;
+  return key == HINFO_KEY || key.find(CINFO_KEY)==0;
 }
 
 const string &ECUtil::get_hinfo_key()

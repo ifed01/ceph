@@ -46,6 +46,12 @@ public:
   uint64_t get_stripe_width() const {
     return stripe_width;
   }
+  uint64_t pad_to_stripe_width(uint64_t length) const {
+    if (length % get_stripe_width())
+        length += get_stripe_width() - (length % get_stripe_width());
+    return length;
+  }
+
   uint64_t get_chunk_size() const {
     return chunk_size;
   }
@@ -158,10 +164,48 @@ public:
 };
 typedef ceph::shared_ptr<HashInfo> HashInfoRef;
 
-bool is_hinfo_key_string(const string &key);
+class CompressInfo {
+        uint64_t next_target_offset;
+        struct BlockInfo
+        {
+                string method;
+                uint64_t original_size;
+                uint64_t target_offset;
+                BlockInfo() : modified(false), original_size(0), target_offset(0){}
+                BlockInfo(const string& _method, uint64_t _original_size, uint64_t target_offset)
+                        : method(_method), original_size(_original_size), target_offset(_target_offset){}
+
+                void encode(bufferlist &bl) const;
+                void decode(bufferlist::iterator &bl);
+        };
+
+        typedef std::map<uint64_t, BlockInfo> BlockMap;
+        BlockMap blocks;
+public:
+        CompressInfo() : next_target_offset(0) {}
+        void clear() {
+                next_target_offset = 0;
+                blocks.clear();
+        }
+        uint64_t get_next_target_offset() const { return next_target_offset; }
+
+        int setup(const map<string, bufferlist>& attrset) const;
+        void flush(bufferlist>& attrset) const;
+
+        void dump(Formatter *f) const;
+        //static void generate_test_instances(list<HashInfo*>& o);
+
+        void append_block(uint64_t original_offset, uint64_t original_size, const string& method, uint64_t new_block_size, map<string, bufferlist>& attrset);
+        bool can_compress(uint64_t offs) { return (offs == 0 && next_target_offset == 0) || next_target_offset != 0; }
+};
+typedef ceph::shared_ptr<CompressInfo> CompressInfoRef;
+
+bool is_internal_key_string(const string &key);
 const string &get_hinfo_key();
 const string &get_cinfo_key();
 
 }
 WRITE_CLASS_ENCODER(ECUtil::HashInfo)
+//WRITE_CLASS_ENCODER(ECUtil::CompressInfo)
+WRITE_CLASS_ENCODER(ECUtil::CompressInfo::BlockInfo)
 #endif

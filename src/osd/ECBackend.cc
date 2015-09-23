@@ -1287,10 +1287,20 @@ void ECBackend::submit_transaction(
 	   << " context" << dendl;
       assert(0);
     }
+    ECUtil::CompressInfoRef ci_ref = get_compress_info(*i);
+    if (!ci_ref) {
+            derr << __func__ << ": get_compress_info(" << *i << ")"
+                    << " returned a null pointer and there is no "
+                    << " way to recover from such an error in this "
+                    << " context" << dendl;
+            assert(0);
+    }
+
     op->unstable_hash_infos.insert(
       make_pair(
 	*i,
 	ref));
+    op->compress_infos.insert(make_pair(*i, ci_ref));
   }
 
   for (vector<pg_log_entry_t>::iterator i = op->log_entries.begin();
@@ -1302,11 +1312,15 @@ void ECBackend::submit_transaction(
       dout(10) << __func__ << ": stashing HashInfo for "
 	       << i->soid << " for entry " << *i << dendl;
       assert(op->unstable_hash_infos.count(i->soid));
+      assert(op->compress_infos.count(i->soid));
       ObjectModDesc desc;
       map<string, boost::optional<bufferlist> > old_attrs;
       bufferlist old_hinfo;
       ::encode(*(op->unstable_hash_infos[i->soid]), old_hinfo);
       old_attrs[ECUtil::get_hinfo_key()] = old_hinfo;
+
+      op->compress_infos[i->soid]->flush(old_attrs);
+
       desc.setattrs(old_attrs);
       i->mod_desc.swap(desc);
       i->mod_desc.claim_append(desc);
@@ -1510,6 +1524,36 @@ ECUtil::HashInfoRef ECBackend::get_hash_info(
   return ref;
 }
 
+ECUtil::CompressInfoRef ECBackend::get_compress_info(
+        const hobject_t &hoid)
+{
+        ECUtil::CompressInfoRef ref(new ECUtil::CompressInfo);
+        dout(10) << __func__ << ": Getting attr on " << hoid << dendl;
+        struct stat st;
+        int r = store->stat(
+                coll,
+                ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
+                &st);
+        if (r >= 0 && st.st_size > 0) {
+                dout(10) << __func__ << ": found on disk, size " << st.st_size << dendl;
+                bufferlist bl;
+
+                map<string, bufferptr> attrset;
+                r = store->getattrs(
+                        coll,
+                        ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
+                        attrset);
+                if (r >= 0) {
+                        r = ref->setup(attrset);
+                        if (r < 0){
+                                dout(0) << __func__ << ": failed to retrieve CompressInfo" << dendl;
+                                ref->clear(); //FIXME: indicate error somehow, ref=NULL isn't a good idea since it asserts
+                        }
+                }
+        }
+        return ref;
+}
+
 void ECBackend::check_op(Op *op)
 {
   if (op->pending_apply.empty() && op->on_all_applied) {
@@ -1551,6 +1595,7 @@ void ECBackend::start_write(Op *op) {
 
   op->t->generate_transactions(
     op->unstable_hash_infos,
+    op->compress_infos,
     ec_impl,
     cs_impl,
     get_parent()->get_info().pgid.pgid,
@@ -1775,7 +1820,7 @@ int ECBackend::objects_get_attrs(
   for (map<string, bufferlist>::iterator i = out->begin();
        i != out->end();
        ) {
-    if (ECUtil::is_hinfo_key_string(i->first))
+    if (ECUtil::is_internal_key_string(i->first))
       out->erase(i++);
     else
       ++i;

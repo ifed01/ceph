@@ -64,6 +64,7 @@ void ECTransaction::get_append_objects(
 
 struct TransGenerator : public boost::static_visitor<void> {
   map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos;
+  map<hobject_t, ECUtil::CompressInfoRef, hobject_t::BitwiseComparator> &compress_infos;
 
   ErasureCodeInterfaceRef &ecimpl;
   CompressionInterfaceRef &csimpl;
@@ -76,6 +77,7 @@ struct TransGenerator : public boost::static_visitor<void> {
   stringstream *out;
   TransGenerator(
     map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
+    map<hobject_t, ECUtil::CompressInfoRef, hobject_t::BitwiseComparator> &compress_infos,
     ErasureCodeInterfaceRef &ecimpl, CompressionInterfaceRef &csimpl,
     pg_t pgid,
     const ECUtil::stripe_info_t &sinfo,
@@ -84,6 +86,7 @@ struct TransGenerator : public boost::static_visitor<void> {
     set<hobject_t, hobject_t::BitwiseComparator> *temp_removed,
     stringstream *out)
     : hash_infos(hash_infos),
+      compress_infos(compress_infos),
       ecimpl(ecimpl), csimpl(csimpl), pgid(pgid),
       sinfo(sinfo),
       trans(trans),
@@ -138,16 +141,36 @@ struct TransGenerator : public boost::static_visitor<void> {
   void operator()(const ECTransaction::AppendOp &op) {
     uint64_t offset = op.off;
     bufferlist bl_cs(op.bl), bl;
+    bool compressed = false;
     assert(bl_cs.length());
-    dout(10) << "!!!!" << bl_cs.c_str() << dendl;
-    int r0 = ECUtil::compress(csimpl, bl_cs, &bl);
-    assert(r0 == 0);
-    dout(10) << "!!!!" << bl.c_str() << dendl;
     assert(offset % sinfo.get_stripe_width() == 0);
     map<int, bufferlist> buffers;
 
     assert(hash_infos.count(op.oid));
     ECUtil::HashInfoRef hinfo = hash_infos[op.oid];
+
+    assert(compress_infos.count(op.oid));
+    ECUtil::CompressInfoRef cinfo = compress_infos[op.oid];
+
+    //apply compression if append was triggered by Copy-From operation and compression was applied to previous blocks if any
+    bool can_compress = op.is_copy_from_op && cinfo.can_compress(op.off);
+    if (can_compress) {
+        if (bl.cs.length()>sinfo.get_stripe_width()) {
+                int r0 = ECUtil::compress(csimpl, bl_cs, &bl);
+                if (r0 != 0) {
+                        dout(0) << "block compression failed, left uncompressed, oid=" << op.oid << dendl;
+                }
+                else if (sinfo.pad_to_stripe_width(bl.length()) < sinfo.pad_to_stripe_width(bl_cs.length())) { 
+                   //There is some benefit from compression after data alignment
+                   compressed = true;
+                   dout(10) << "block compressed, oid=" << op.oid <<", ratio = "<< (float)bl_cs.length() / bl.length() << dendl;
+                }
+                else
+                   dout(10) << "block compression bypassed, oid=" << op.oid << dendl;
+        }
+    }
+    if(!compressed) //no compression has been applied
+        bl=op.bl;
 
     // align
     if (bl.length() % sinfo.get_stripe_width())
@@ -161,18 +184,15 @@ struct TransGenerator : public boost::static_visitor<void> {
     hinfo->append(
       sinfo.aligned_logical_offset_to_chunk_offset(op.off),
       buffers);
-    //bufferlist hbuf;
     map<string,bufferlist> attrset;
     ::encode(
       *hinfo,
       attrset[ECUtil::get_hinfo_key()]);
-//      hbuf);
-    std::string pname = csimpl->get_profile().at("plugin");
-    std::string origlen = std::to_string(bl_cs.length());
-    std::string cinfo = pname + "/" + origlen;
-    ::encode(
-      cinfo, 
-      attrset[ECUtil::get_cinfo_key()]);
+
+    if (can_compress) {
+        std::string method = compressed ? csimpl->get_profile().at("plugin") : ""; //FIXME: add a method to access compression method directly
+        cinfo.append_block(op.off, bl_cs.length(), method, bl.length(), attrset);
+    }
 
     assert(r == 0);
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
@@ -191,9 +211,7 @@ struct TransGenerator : public boost::static_visitor<void> {
       i->second.setattrs(
 	get_coll_ct(i->first, op.oid),
 	ghobject_t(op.oid, ghobject_t::NO_GEN, i->first),
-  attrset);
-	// ECUtil::get_hinfo_key(),
-	// hbuf);
+        attrset);
     }
   }
   void operator()(const ECTransaction::CloneOp &op) {
@@ -293,6 +311,7 @@ struct TransGenerator : public boost::static_visitor<void> {
 
 void ECTransaction::generate_transactions(
   map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
+  map<hobject_t, ECUtil::CompressInfoRef, hobject_t::BitwiseComparator> &compress_infos,
   ErasureCodeInterfaceRef &ecimpl, CompressionInterfaceRef &csimpl,
   pg_t pgid,
   const ECUtil::stripe_info_t &sinfo,
@@ -303,6 +322,7 @@ void ECTransaction::generate_transactions(
 {
   TransGenerator gen(
     hash_infos,
+    compresS_infos,
     ecimpl,
     csimpl,
     pgid,
