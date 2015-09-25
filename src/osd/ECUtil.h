@@ -165,19 +165,21 @@ public:
 typedef ceph::shared_ptr<HashInfo> HashInfoRef;
 
 class CompressInfo {
-        uint64_t next_target_offset;
+public:
         struct BlockInfo
         {
                 string method;
                 uint64_t original_size;
                 uint64_t target_offset;
-                BlockInfo() : modified(false), original_size(0), target_offset(0){}
-                BlockInfo(const string& _method, uint64_t _original_size, uint64_t target_offset)
+                BlockInfo() : original_size(0), target_offset(0){}
+                BlockInfo(const string& _method, uint64_t _original_size, uint64_t _target_offset)
                         : method(_method), original_size(_original_size), target_offset(_target_offset){}
 
                 void encode(bufferlist &bl) const;
                 void decode(bufferlist::iterator &bl);
         };
+private:
+        uint64_t next_target_offset;
 
         typedef std::map<uint64_t, BlockInfo> BlockMap;
         BlockMap blocks;
@@ -189,8 +191,8 @@ public:
         }
         uint64_t get_next_target_offset() const { return next_target_offset; }
 
-        int setup(const map<string, bufferlist>& attrset) const;
-        void flush(bufferlist>& attrset) const;
+        int setup(map<string, bufferlist>& attrset);
+        void flush(map<string, boost::optional<bufferlist> >& attrset) const;
 
         void dump(Formatter *f) const;
         //static void generate_test_instances(list<HashInfo*>& o);

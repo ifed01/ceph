@@ -442,8 +442,8 @@
        uint64_t off,          ///< [in] off at which to write
        uint64_t len,          ///< [in] len to write from bl
        bufferlist &bl,        ///< [in] bl to write will be claimed to len
-       uint32_t fadvise_flags ///< [in] fadvise hint
-       bool is_copy_from_op,  ///< [in] indicate cache flush operation, used by overriden implementation
+       uint32_t fadvise_flags,///< [in] fadvise hint
+       bool is_copy_from_op   ///< [in] indicate cache flush operation, used by overriden implementation
        ) { write(hoid, off, len, bl, fadvise_flags); }
 
      /// to_append *must* have come from the same PGBackend (same concrete type)

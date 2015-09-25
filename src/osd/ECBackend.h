@@ -437,7 +437,7 @@ public:
   /// If modified, ensure that the ref is held until the update is applied
   SharedPtrRegistry<hobject_t, ECUtil::HashInfo, hobject_t::BitwiseComparator> unstable_hashinfo_registry;
   ECUtil::HashInfoRef get_hash_info(const hobject_t &hoid);
-  ECUtil::CompressInfoRef ECBackend::get_compress_info(const hobject_t &hoid);
+  ECUtil::CompressInfoRef get_compress_info(const hobject_t &hoid);
 
 
   friend struct ReadCB;

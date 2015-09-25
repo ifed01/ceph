@@ -223,7 +223,7 @@ void ECUtil::CompressInfo::BlockInfo::decode(bufferlist::iterator &bl)
         DECODE_FINISH(bl);
 }
 
-int ECUtil::CompressInfo::setup(const map<string, bufferlist>& attrset) const
+int ECUtil::CompressInfo::setup(map<string, bufferlist>& attrset)
 {
         int ret = 0;
         clear();
@@ -231,7 +231,7 @@ int ECUtil::CompressInfo::setup(const map<string, bufferlist>& attrset) const
                 bool root_key_found = false, some_compression_keys_found = false;
                 string key_prefix = ECUtil::get_cinfo_key();
                 key_prefix += '_';
-                map<string, bufferlist>::const_iterator it = attrset.begin();
+                map<string, bufferlist>::iterator it = attrset.begin();
                 while (it != attrset.end())
                 {
                         int pos = it->first.find(key_prefix);
@@ -243,9 +243,10 @@ int ECUtil::CompressInfo::setup(const map<string, bufferlist>& attrset) const
                                 uint64_t original_offset;
                                 ss0 >> std::hex >> original_offset;
 
+                                bufferlist::iterator bp=it->second.begin();
                                 ::decode(
                                         blocks[original_offset],
-                                        it->second);
+                                        bp);
                                 some_compression_keys_found = true;
                         }
                         else if (it->first == ECUtil::get_cinfo_key())
@@ -265,34 +266,35 @@ int ECUtil::CompressInfo::setup(const map<string, bufferlist>& attrset) const
         }
         if (ret != 0)
                 clear();
+	return ret;
 }
 
-void ECUtil::CompressInfo::flush(bufferlist > & attrset) const
+void ECUtil::CompressInfo::flush( map<string, boost::optional<bufferlist> > & attrset) const
 {
-        for (CompressInfo::BlockMap::iterator it = blocks.begin(); i != blocks.end(); i++) {
+        for (ECUtil::CompressInfo::BlockMap::const_iterator it = blocks.begin(); it != blocks.end(); it++) {
                 stringstream ss_key;
                 ss_key << ECUtil::get_cinfo_key() << "_" << std::hex << it->first;
 
                 ::encode(
                         it->second,
-                        attrset[ss_key.str()]);
+                        attrset[ss_key.str()].get());
         }
 
         ::encode(
                 next_target_offset,
-                attrset[ECUtil::get_cinfo_key()]);
+                attrset[ECUtil::get_cinfo_key()].get());
 }
 
 void ECUtil::CompressInfo::dump(Formatter *f) const
 {
         f->dump_unsigned("next_target_offset", next_target_offset);
         f->open_object_section("blocks");
-        for (CompressInfo::BlockMap::iterator it = blocks.begin(); i != blocks.end(); i++) {
+        for (CompressInfo::BlockMap::const_iterator it = blocks.begin(); it != blocks.end(); it++) {
                 f->open_object_section("block");
-                f->dump_unsigned("offset", i->first);
-                f->dump_string("method", i->second.method);
-                f->dump_unsigned("original_size", i->second.original_size);
-                f->dump_unsigned("target_offset", i->second.target_offset);
+                f->dump_unsigned("offset", it->first);
+                f->dump_string("method", it->second.method);
+                f->dump_unsigned("original_size", it->second.original_size);
+                f->dump_unsigned("target_offset", it->second.target_offset);
                 f->close_section();
         }
         f->close_section();

@@ -153,9 +153,9 @@ struct TransGenerator : public boost::static_visitor<void> {
     ECUtil::CompressInfoRef cinfo = compress_infos[op.oid];
 
     //apply compression if append was triggered by Copy-From operation and compression was applied to previous blocks if any
-    bool can_compress = op.is_copy_from_op && cinfo.can_compress(op.off);
+    bool can_compress = op.is_copy_from_op && cinfo->can_compress(op.off);
     if (can_compress) {
-        if (bl.cs.length()>sinfo.get_stripe_width()) {
+        if (bl_cs.length()>sinfo.get_stripe_width()) {
                 int r0 = ECUtil::compress(csimpl, bl_cs, &bl);
                 if (r0 != 0) {
                         dout(0) << "block compression failed, left uncompressed, oid=" << op.oid << dendl;
@@ -191,7 +191,7 @@ struct TransGenerator : public boost::static_visitor<void> {
 
     if (can_compress) {
         std::string method = compressed ? csimpl->get_profile().at("plugin") : ""; //FIXME: add a method to access compression method directly
-        cinfo.append_block(op.off, bl_cs.length(), method, bl.length(), attrset);
+        cinfo->append_block(op.off, bl_cs.length(), method, bl.length(), attrset);
     }
 
     assert(r == 0);
@@ -322,7 +322,7 @@ void ECTransaction::generate_transactions(
 {
   TransGenerator gen(
     hash_infos,
-    compresS_infos,
+    compress_infos,
     ecimpl,
     csimpl,
     pgid,

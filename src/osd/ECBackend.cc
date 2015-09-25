@@ -1538,7 +1538,7 @@ ECUtil::CompressInfoRef ECBackend::get_compress_info(
                 dout(10) << __func__ << ": found on disk, size " << st.st_size << dendl;
                 bufferlist bl;
 
-                map<string, bufferptr> attrset;
+                map<string, bufferlist> attrset;
                 r = store->getattrs(
                         coll,
                         ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
