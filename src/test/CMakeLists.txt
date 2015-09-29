@@ -42,6 +42,9 @@ if(${WITH_RADOSGW})
 endif(${WITH_RADOSGW})
 add_subdirectory(rbd_mirror)
 add_subdirectory(system)
+if(WITH_FIO)
+  add_subdirectory(fio)
+endif()
 
 # test_timers
 add_executable(ceph_test_timers
