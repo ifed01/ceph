@@ -366,6 +366,11 @@ option(HAVE_LIBZFS "LibZFS is enabled" OFF)
 option(ENABLE_COVERAGE "Coverage is enabled" OFF)
 option(PG_DEBUG_REFS "PG Ref debugging is enabled" OFF)
 
+option(WITH_FIO "Support for fio engines" OFF)
+if(WITH_FIO)
+  find_package(fio REQUIRED)
+endif(WITH_FIO)
+
 if(LINUX)
   add_definitions(-D__linux__)
 endif(LINUX)
