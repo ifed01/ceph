@@ -184,14 +184,15 @@ private:
         typedef std::map<uint64_t, BlockInfo> BlockMap;
         BlockMap blocks;
 public:
-        CompressInfo() : next_target_offset(0) {}
+        CompressInfo() : current_original_pos, current_compressed_pos(0) {}
         void clear() {
-                next_target_offset = 0;
+                current_original_pos = current_compressed_pos = 0;
                 blocks.clear();
         }
-        uint64_t get_next_target_offset() const { return next_target_offset; }
+        uint64_t get_next_compressed_offset() const { return current_compressed_pos; }
+        uint64_t get_next_original_offset() const { return current_original_pos; }
 
-        int setup(map<string, bufferlist>& attrset);
+        int setup(map<string, bufferlist>& attrset, uint64_t start_offset, uint64_t end_offset );
         void flush(map<string, boost::optional<bufferlist> >& attrset) const;
 
         void dump(Formatter *f) const;

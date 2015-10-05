@@ -223,39 +223,61 @@ void ECUtil::CompressInfo::BlockInfo::decode(bufferlist::iterator &bl)
         DECODE_FINISH(bl);
 }
 
-int ECUtil::CompressInfo::setup(map<string, bufferlist>& attrset)
+int ECUtil::CompressInfo::setup(map<string, bufferlist>& attr, uint64_t start_offset, uint64_t end_offset)
 {
         int ret = 0;
         clear();
         try{
                 bool root_key_found = false, some_compression_keys_found = false;
                 string key_prefix = ECUtil::get_cinfo_key();
-                key_prefix += '_';
                 map<string, bufferlist>::iterator it = attrset.begin();
+
+				uint64_t found_start_offset, found_end_offset;
+				map<string, bufferlist>::iterator start_it=attrset.end(), end_it=attrset.begin();
+
                 while (it != attrset.end())
                 {
                         int pos = it->first.find(key_prefix);
-                        if (pos == 0)
-                        {
-                                string str_offs = it->first;
-                                stringstream ss0(it->first);
-                                ss0.seekg(key_prefix.size());
-                                uint64_t original_offset;
-                                ss0 >> std::hex >> original_offset;
+						if( pos == 0 ) {
+							if (start_offset != end_offset && it->first != key_prefix) {
+									string str_offs = it->first;
+									stringstream ss0(it->first);
+									ss0.seekg(key_prefix.size());
+									uint64_t rec_offset;
+									ss0 >> std::hex >> original_offset;
+									bool is_in_range=false;
+									if( rec_offset > start_offset && rec_offset < end_offset ) {
+										is_in_range = true;
+									}
+									else if( rec_offset <= start_offset && 
+											( start_it == attrset.end() || rec_offset > found_start_offset ) {
+										is_in_range=true;
+										found_start_offset = rec_offset;
+										start_it = it;
+									}
+									else if( rec_offset >= end_offset && 
+											( end_it == attrset.begin() || rec_offset < found_end_offset ) {
+										is_in_range=true;
+										found_end_offset = rec_offset;
+										end_it = it;
+									}
 
-                                bufferlist::iterator bp=it->second.begin();
-                                ::decode(
-                                        blocks[original_offset],
-                                        bp);
-                                some_compression_keys_found = true;
-                        }
-                        else if (it->first == ECUtil::get_cinfo_key())
-                        {
-                                ::decode(
-                                        next_target_offset,
-                                        it->second);
-                                root_key_found = true;
-                        }
+									bufferlist::iterator bp=it->second.begin();
+									::decode(
+											blocks[original_offset],
+											bp);
+									some_compression_keys_found = true;
+							}
+							else if (it->first != key_prefix) {
+									::decode(
+											current_original_pos,
+											it->second);
+									::decode(
+											current_compressed_pos,
+											it->second);
+									root_key_found = true;
+							}
+						}
                         ++it;
                 }
                 if (!root_key_found && some_compression_keys_found)

@@ -1544,7 +1544,7 @@ ECUtil::CompressInfoRef ECBackend::get_compress_info(
                         ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
                         attrset);
                 if (r >= 0) {
-                        r = ref->setup(attrset);
+                        r = ref->setup(attrset, true);
                         if (r < 0){
                                 dout(0) << __func__ << ": failed to retrieve CompressInfo" << dendl;
                                 ref->clear(); //FIXME: indicate error somehow, ref=NULL isn't a good idea since it asserts
