@@ -13,13 +13,18 @@
  */
 
 #include "Compressor.h"
-#include "SnappyCompressor.h"
+ #include "CompressionPlugin.h"
 
 
-Compressor* Compressor::create(const string &type)
+CompressorRef Compressor::create(const string &type)
 {
-  if (type == "snappy")
-    return new SnappyCompressor();
-
-  assert(0);
+  CompressorRef cs_impl = NULL;
+  stringstream ss;
+  ceph::CompressionPluginRegistry::instance().factory(
+      type,
+      g_conf->compression_dir,
+      &cs_impl,
+      &ss);
+  assert(cs_impl != NULL);
+  return cs_impl;
 }
