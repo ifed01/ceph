@@ -4284,7 +4284,7 @@ int OSDMonitor::get_compressor(const string &compression_type,
   *compressor = Compressor::create(g_ceph_context, compression_type);
 
   if (!compressor->get())
-    return -1;
+    return -EINVAL;
   else 
     return 0;
 }
