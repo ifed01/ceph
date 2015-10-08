@@ -3563,9 +3563,9 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	  case CACHE_MIN_EVICT_AGE:
 	    f->dump_unsigned("cache_min_evict_age", p->cache_min_evict_age);
 	    break;
-    case COMPRESSION_TYPE:
-      f->dump_string("compression_type", p->compression_type);
-      break;
+	  case COMPRESSION_TYPE:
+	    f->dump_string("compression_type", p->compression_type);
+	    break;
 	  case ERASURE_CODE_PROFILE:
 	    f->dump_string("erasure_code_profile", p->erasure_code_profile);
 	    break;
@@ -3683,9 +3683,9 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	  case CACHE_MIN_EVICT_AGE:
 	    ss << "cache_min_evict_age: " << p->cache_min_evict_age << "\n";
 	    break;
-    case COMPRESSION_TYPE:
-      ss << "compression_type: " << p->compression_type << "\n";
-      break;
+	  case COMPRESSION_TYPE:
+	    ss << "compression_type: " << p->compression_type << "\n";
+	    break;
 	  case ERASURE_CODE_PROFILE:
 	    ss << "erasure_code_profile: " << p->erasure_code_profile << "\n";
 	    break;
@@ -4280,7 +4280,7 @@ int OSDMonitor::get_compressor(const string &compression_type,
 {
   *compressor = Compressor::create(g_ceph_context, compression_type);
 
-  if (compressor == NULL)
+  if (!compressor->get())
     return -1;
   else 
     return 0;
@@ -4924,9 +4924,8 @@ int OSDMonitor::prepare_command_pool_set(map<string,cmd_vartype> &cmdmap,
       stringstream tmp;
       int err = get_compressor(val, &cs, &tmp);
       if (err) {
-        ss << __func__ << " compressor " <<  val
-           << " failed to load: " << tmp.rdbuf();
-        return err;
+        ss << "compressor " <<  val << " failed to load";
+        return -EINVAL;
       }
     }
     p.compression_type = val;
