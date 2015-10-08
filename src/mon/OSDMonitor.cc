@@ -6666,6 +6666,9 @@ done:
     if (pool_type_str.empty())
       pool_type_str = pg_pool_t::get_default_type();
 
+    string compression_type;
+    cmd_getval(g_ceph_context, cmdmap, "compression", compression_type);
+
     string poolstr;
     cmd_getval(g_ceph_context, cmdmap, "pool", poolstr);
     int64_t pool_id = osdmap.lookup_pg_pool_name(poolstr);
@@ -6684,6 +6687,11 @@ done:
     int pool_type;
     if (pool_type_str == "replicated") {
       pool_type = pg_pool_t::TYPE_REPLICATED;
+      if (!compression_type.empty()) {
+    	  ss << "compression cannot be used with replicated pools";
+    	  err = -EINVAL;
+    	  goto reply;
+      }
     } else if (pool_type_str == "erasure") {
       err = check_cluster_features(CEPH_FEATURE_CRUSH_V2 |
 				   CEPH_FEATURE_OSD_ERASURE_CODES,
@@ -6720,6 +6728,11 @@ done:
 	  err = osdmap.get_erasure_code_profile_default(g_ceph_context,
 						      profile_map,
 						      &ss);
+	  // set compression field in profile only to valid compressor
+	  // if no such field - no compression used
+	  if (!compression_type.empty()) {
+		  profile_map["compression"] = compression_type;
+	  }
 	  if (err)
 	    goto reply;
 	  dout(20) << "erasure code profile " << erasure_code_profile << " set" << dendl;
