@@ -13,6 +13,7 @@ libosd_la_SOURCES = \
 	osd/ReplicatedPG.cc \
 	osd/ReplicatedBackend.cc \
 	osd/ECBackend.cc \
+	osd/CompressionBackend.cc \
 	osd/ECMsgTypes.cc \
 	osd/ECTransaction.cc \
 	osd/PGBackend.cc \
@@ -55,6 +56,7 @@ noinst_HEADERS += \
 	osd/ECUtil.h \
 	osd/ECMsgTypes.h \
 	osd/ECTransaction.h \
+	osd/CompressionBackend.h \
 	osd/Watch.h \
 	osd/osd_types.h
 

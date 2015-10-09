@@ -372,7 +372,7 @@ void ECBackend::handle_recovery_read_complete(
     from[i->first.shard].claim(i->second);
   }
   dout(10) << __func__ << ": " << from << dendl;
-  ECUtil::decode(sinfo, ec_impl, from, target);
+  ECUtil::decode(sinfo, ec_impl, from, target); //FIXME: check if we need decompression here!!!
   if (attrs) {
     op.xattrs.swap(*attrs);
 
@@ -1049,6 +1049,7 @@ void ECBackend::complete_read_op(ReadOp &rop, RecoveryMessages *m)
     if (reqiter->second.cb) {
       pair<RecoveryMessages *, read_result_t &> arg(
 	m, resiter->second);
+
       reqiter->second.cb->complete(arg);
       reqiter->second.cb = NULL;
     }
@@ -1287,20 +1288,22 @@ void ECBackend::submit_transaction(
 	   << " context" << dendl;
       assert(0);
     }
-    ECUtil::CompressInfoRef ci_ref = get_compress_info(*i);
-    if (!ci_ref) {
-            derr << __func__ << ": get_compress_info(" << *i << ")"
-                    << " returned a null pointer and there is no "
-                    << " way to recover from such an error in this "
-                    << " context" << dendl;
-            assert(0);
-    }
 
     op->unstable_hash_infos.insert(
       make_pair(
 	*i,
 	ref));
-    op->compress_infos.insert(make_pair(*i, ci_ref));
+
+    ECUtil::CompressContextRef cinfo = get_compress_context_basic(*i);
+    if (!cinfo) {
+            derr << __func__ << ": get_compress_context_basic(" << *i << ")"
+                    << " returned a null pointer and there is no "
+                    << " way to recover from such an error in this "
+                    << " context" << dendl;
+            assert(0);
+    }
+    op->compress_infos.insert(make_pair(*i, cinfo));
+
   }
 
   for (vector<pg_log_entry_t>::iterator i = op->log_entries.begin();
@@ -1312,14 +1315,14 @@ void ECBackend::submit_transaction(
       dout(10) << __func__ << ": stashing HashInfo for "
 	       << i->soid << " for entry " << *i << dendl;
       assert(op->unstable_hash_infos.count(i->soid));
-      assert(op->compress_infos.count(i->soid));
+      //assert(op->compress_infos.count(i->soid));
       ObjectModDesc desc;
       map<string, boost::optional<bufferlist> > old_attrs;
       bufferlist old_hinfo;
       ::encode(*(op->unstable_hash_infos[i->soid]), old_hinfo);
       old_attrs[ECUtil::get_hinfo_key()] = old_hinfo;
 
-      op->compress_infos[i->soid]->flush(old_attrs);
+      //FIXME: check if we need something like that: op->compress_infos[i->soid]->flush(old_attrs);
 
       desc.setattrs(old_attrs);
       i->mod_desc.swap(desc);
@@ -1434,6 +1437,7 @@ void ECBackend::start_read_op(
     list<boost::tuple<
       uint64_t, uint64_t, map<pg_shard_t, bufferlist> > > &reslist =
       op.complete[i->first].returned;
+    
     bool need_attrs = i->second.want_attrs;
     for (set<pg_shard_t>::const_iterator j = i->second.need.begin();
 	 j != i->second.need.end();
@@ -1524,11 +1528,37 @@ ECUtil::HashInfoRef ECBackend::get_hash_info(
   return ref;
 }
 
-ECUtil::CompressInfoRef ECBackend::get_compress_info(
+ECUtil::CompressContextRef ECBackend::get_compress_context_basic(
         const hobject_t &hoid)
 {
-        ECUtil::CompressInfoRef ref(new ECUtil::CompressInfo);
-        dout(10) << __func__ << ": Getting attr on " << hoid << dendl;
+        ECUtil::CompressContextRef ref(new ECUtil::CompressContext);
+        dout(10) << __func__ << ": Getting basic CompressContext on " << hoid << dendl;
+        struct stat st;
+        int r = store->stat(
+                coll,
+                ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
+                &st);
+        if (r >= 0 && st.st_size > 0) {
+                dout(10) << __func__ << ": found on disk, size " << st.st_size << dendl;
+                
+                bufferlist bl;
+                r = store->getattr(
+                        coll,
+                        ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
+                        ECUtil::get_cinfo_key(),
+                        bl);
+                if (r >= 0)
+                        r = ref->setup_for_append(bl);
+                else {
+                        dout(0) << __func__ << ": failed to get attrs for basic CompressContext" << dendl;
+                }
+        }
+        return ref;
+}
+
+int ECBackend::load_attrs(const hobject_t &hoid, map<string, bufferlist>& attrset) const
+{
+        dout(10) << __func__ << ": Loading attrs on " << hoid << dendl;
         struct stat st;
         int r = store->stat(
                 coll,
@@ -1543,15 +1573,11 @@ ECUtil::CompressInfoRef ECBackend::get_compress_info(
                         coll,
                         ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
                         attrset);
-                if (r >= 0) {
-                        r = ref->setup(attrset, true);
-                        if (r < 0){
-                                dout(0) << __func__ << ": failed to retrieve CompressInfo" << dendl;
-                                ref->clear(); //FIXME: indicate error somehow, ref=NULL isn't a good idea since it asserts
-                        }
+                if (r < 0){
+                        dout(0) << __func__ << ": failed to load attrs" << dendl;
                 }
         }
-        return ref;
+        return r;
 }
 
 void ECBackend::check_op(Op *op)
@@ -1676,72 +1702,54 @@ struct CallClientContexts :
 		    pair<bufferlist*, Context*> > > &to_read)
     : ec(ec), status(status), to_read(to_read) {}
   void finish(pair<RecoveryMessages *, ECBackend::read_result_t &> &in) {
-    ECBackend::read_result_t &res = in.second;
-    assert(res.returned.size() == to_read.size());
-    assert(res.r == 0);
-    assert(res.errors.empty());
-    for (list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
-		   pair<bufferlist*, Context*> > >::iterator i = to_read.begin();
-	 i != to_read.end();
-	 to_read.erase(i++)) {
-      pair<uint64_t, uint64_t> adjusted =
-	ec->sinfo.offset_len_to_stripe_bounds(make_pair(i->first.get<0>(), i->first.get<1>()));
-      assert(res.returned.front().get<0>() == adjusted.first &&
-	     res.returned.front().get<1>() == adjusted.second);
-      map<int, bufferlist> to_decode;
-      bufferlist bl, cs_bl;
-      for (map<pg_shard_t, bufferlist>::iterator j = res.returned.front().get<2>().begin();
-	         j != res.returned.front().get<2>().end();
-	         ++j) {
-      	to_decode[j->first.shard].claim(j->second);
-      }
-      ECUtil::decode(
-	ec->sinfo,
-	ec->ec_impl,
-	to_decode,
-	&cs_bl);
-      std::string cinfo("None");
-      if( res.attrs )
-      {
-          std::map<string, bufferlist>::iterator it = res.attrs->find(ECUtil::get_cinfo_key());
-                 if( it != res.attrs->end())
-          {
-        bufferlist::iterator bp = it->second.begin();
-        ::decode(cinfo, bp);
+          ECBackend::read_result_t &res = in.second;
+          assert(res.returned.size() == to_read.size());
+          assert(res.r == 0);
+          assert(res.errors.empty());
+          for (list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
+                  pair<bufferlist*, Context*> > >::iterator i = to_read.begin();
+                  i != to_read.end();
+          to_read.erase(i++)) {
+                  pair<uint64_t, uint64_t> adjusted =
+                          ec->sinfo.offset_len_to_stripe_bounds(make_pair(i->first.get<0>(), i->first.get<1>()));
+                  assert(res.returned.front().get<0>() == adjusted.first &&
+                          res.returned.front().get<1>() == adjusted.second);
+                  map<int, bufferlist> to_decode;
+                  bufferlist bl;
+                  for (map<pg_shard_t, bufferlist>::iterator j =
+                          res.returned.front().get<2>().begin();
+                          j != res.returned.front().get<2>().end();
+                  ++j) {
+                          to_decode[j->first.shard].claim(j->second);
+                  }
+                  ECUtil::decode(
+                          ec->sinfo,
+                          ec->ec_impl,
+                          to_decode,
+                          &bl);
+                  assert(i->second.second);
+                  assert(i->second.first);
+                  i->second.first->substr_of(
+                          bl,
+                          i->first.get<0>() - adjusted.first,
+                          MIN(i->first.get<1>(), bl.length() - (i->first.get<0>() - adjusted.first)));
+                  if (i->second.second) {
+                          i->second.second->complete(i->second.first->length());
+                  }
+                  res.returned.pop_front();
           }
-      }
-      if (cinfo != "None") {
-        int del_pos = cinfo.rfind("/");
-        std::string origlen = cinfo.substr(del_pos + 1, cinfo.size() - del_pos - 1);
-        dout(10) << "!!!!! dec" << cs_bl.c_str() << " cinfo " << cinfo << dendl;
-        ECUtil::decompress(
-    ec->cs_impl,
-    std::stoi(origlen),
-    cs_bl,
-    &bl);
-      }
-      assert(i->second.second);
-      assert(i->second.first);
-      i->second.first->substr_of(
-	bl,
-	i->first.get<0>() - adjusted.first,
-	MIN(i->first.get<1>(), bl.length() - (i->first.get<0>() - adjusted.first)));
-      if (i->second.second) {
-	i->second.second->complete(i->second.first->length());
-      }
-      res.returned.pop_front();
-    }
-    status->complete = true;
-    list<ECBackend::ClientAsyncReadStatus> &ip =
-      ec->in_progress_client_reads;
-    while (ip.size() && ip.front().complete) {
-      if (ip.front().on_complete) {
-	ip.front().on_complete->complete(0);
-	ip.front().on_complete = NULL;
-      }
-      ip.pop_front();
-    }
+          status->complete = true;
+          list<ECBackend::ClientAsyncReadStatus> &ip =
+                  ec->in_progress_client_reads;
+          while (ip.size() && ip.front().complete) {
+                  if (ip.front().on_complete) {
+                          ip.front().on_complete->complete(0);
+                          ip.front().on_complete = NULL;
+                  }
+                  ip.pop_front();
+          }
   }
+
   ~CallClientContexts() {
     for (list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
 		   pair<bufferlist*, Context*> > >::iterator i = to_read.begin();
@@ -1753,56 +1761,56 @@ struct CallClientContexts :
 };
 
 void ECBackend::objects_read_async(
-  const hobject_t &hoid,
-  const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
-		  pair<bufferlist*, Context*> > > &to_read,
-  Context *on_complete)
+        const hobject_t &hoid,
+        const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
+        pair<bufferlist*, Context*> > > &to_read,
+        Context *on_complete)
 {
-  in_progress_client_reads.push_back(ClientAsyncReadStatus(on_complete));
-  CallClientContexts *c = new CallClientContexts(
-    this, &(in_progress_client_reads.back()), to_read);
+        in_progress_client_reads.push_back(ClientAsyncReadStatus(on_complete));
+        CallClientContexts *c = new CallClientContexts(
+                this, &(in_progress_client_reads.back()), to_read);
 
-  list<boost::tuple<uint64_t, uint64_t, uint32_t> > offsets;
-  pair<uint64_t, uint64_t> tmp;
-  for (list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
-		 pair<bufferlist*, Context*> > >::const_iterator i =
-	 to_read.begin();
-       i != to_read.end();
-       ++i) {
-    tmp = sinfo.offset_len_to_stripe_bounds(make_pair(i->first.get<0>(), i->first.get<1>()));
-    offsets.push_back(boost::make_tuple(tmp.first, tmp.second, i->first.get<2>()));
-  }
+        list<boost::tuple<uint64_t, uint64_t, uint32_t> > offsets;
+        pair<uint64_t, uint64_t> tmp;
+        for (list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
+                pair<bufferlist*, Context*> > >::const_iterator i =
+                to_read.begin();
+        i != to_read.end();
+        ++i) {
+                tmp = sinfo.offset_len_to_stripe_bounds(make_pair(i->first.get<0>(), i->first.get<1>()));
+                offsets.push_back(boost::make_tuple(tmp.first, tmp.second, i->first.get<2>()));
+        }
 
-  const vector<int> &chunk_mapping = ec_impl->get_chunk_mapping();
-  set<int> want_to_read;
-  for (int i = 0; i < (int)ec_impl->get_data_chunk_count(); ++i) {
-    int chunk = (int)chunk_mapping.size() > i ? chunk_mapping[i] : i;
-    want_to_read.insert(chunk);
-  }
-  set<pg_shard_t> shards;
-  int r = get_min_avail_to_read_shards(
-    hoid,
-    want_to_read,
-    false,
-    &shards);
-  assert(r == 0);
+        const vector<int> &chunk_mapping = ec_impl->get_chunk_mapping();
+        set<int> want_to_read;
+        for (int i = 0; i < (int)ec_impl->get_data_chunk_count(); ++i) {
+                int chunk = (int)chunk_mapping.size() > i ? chunk_mapping[i] : i;
+                want_to_read.insert(chunk);
+        }
+        set<pg_shard_t> shards;
+        int r = get_min_avail_to_read_shards(
+                hoid,
+                want_to_read,
+                false,
+                &shards);
+        assert(r == 0);
 
-  map<hobject_t, read_request_t, hobject_t::BitwiseComparator> for_read_op;
-  for_read_op.insert(
-    make_pair(
-      hoid,
-      read_request_t(
-	hoid,
-	offsets,
-	shards,
-	true, //retrieving attrs to learn if compression was applied
-	c)));
+        map<hobject_t, read_request_t> for_read_op;
+        for_read_op.insert(
+                make_pair(
+                hoid,
+                read_request_t(
+                hoid,
+                offsets,
+                shards,
+                false,
+                c)));
 
-  start_read_op(
-    cct->_conf->osd_client_op_priority,
-    for_read_op,
-    OpRequestRef());
-  return;
+        start_read_op(
+                cct->_conf->osd_client_op_priority,
+                for_read_op,
+                OpRequestRef());
+        return;
 }
 
 

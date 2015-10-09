@@ -44,6 +44,11 @@ namespace ceph {
       return _profile;
     }
 
+    virtual uint64_t get_block_size(uint64_t stripe_width) const
+    {
+            return stripe_width * 32; //FIXME: to make configurable or dependant from the compression method
+    }
+
     static int to_int(const std::string &name,
 		      CompressionProfile &profile,
 		      int *value,

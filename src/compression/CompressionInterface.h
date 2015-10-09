@@ -78,7 +78,8 @@ namespace ceph {
                        long unsigned int original_size,
                        bufferlist *decoded) = 0;
 
-
+    virtual uint64_t get_block_size(uint64_t stripe_width) const = 0;
+    virtual bool can_compress() const = 0;
   };
 
   typedef ceph::shared_ptr<CompressionInterface> CompressionInterfaceRef;

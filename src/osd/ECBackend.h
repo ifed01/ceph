@@ -265,18 +265,20 @@ public:
 	uint64_t, uint64_t, map<pg_shard_t, bufferlist> > > returned;
     read_result_t() : r(0) {}
   };
+
   struct read_request_t {
-    const list<boost::tuple<uint64_t, uint64_t, uint32_t> > to_read;
+    const list< uint64_t, uint64_t, uint32_t > to_read;
     const set<pg_shard_t> need;
     const bool want_attrs;
+
     GenContext<pair<RecoveryMessages *, read_result_t& > &> *cb;
     read_request_t(
       const hobject_t &hoid,
-      const list<boost::tuple<uint64_t, uint64_t, uint32_t> > &to_read,
+      const list<uint64_t, uint64_t, uint32_t> &to_read,
       const set<pg_shard_t> &need,
       bool want_attrs,
       GenContext<pair<RecoveryMessages *, read_result_t& > &> *cb)
-      : to_read(to_read), need(need), want_attrs(want_attrs),
+      : to_read(to_read), need(need), want_attrs(want_attrs)
 	cb(cb) {}
   };
   friend ostream &operator<<(ostream &lhs, const read_request_t &rhs);
@@ -346,7 +348,7 @@ public:
     set<pg_shard_t> pending_apply;
 
     map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> unstable_hash_infos;
-    map<hobject_t, ECUtil::CompressInfoRef, hobject_t::BitwiseComparator> compress_infos;
+    map<hobject_t, ECUtil::CompressContextRef, hobject_t::BitwiseComparator> compress_infos;
     ~Op() {
       delete t;
       delete on_local_applied_sync;
@@ -437,9 +439,7 @@ public:
   /// If modified, ensure that the ref is held until the update is applied
   SharedPtrRegistry<hobject_t, ECUtil::HashInfo, hobject_t::BitwiseComparator> unstable_hashinfo_registry;
   ECUtil::HashInfoRef get_hash_info(const hobject_t &hoid);
-  ECUtil::CompressInfoRef get_compress_info(const hobject_t &hoid);
-
-
+  
   friend struct ReadCB;
   void check_op(Op *op);
   void start_write(Op *op);
@@ -480,6 +480,11 @@ public:
   uint64_t be_get_ondisk_size(uint64_t logical_size) {
     return sinfo.logical_to_next_chunk_offset(logical_size);
   }
+
+protected:
+        int load_attrs(const hobject_t &hoid, map<string, bufferlist>& attrset) const
+        ECUtil::CompressContextRef get_compress_context_basic(const hobject_t &hoid);
+
 };
 
 #endif

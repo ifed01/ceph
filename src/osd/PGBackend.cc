@@ -18,6 +18,7 @@
 
 #include "common/errno.h"
 #include "ReplicatedBackend.h"
+#include "CompressBackend.h"
 #include "ECBackend.h"
 #include "PGBackend.h"
 #include "OSD.h"
@@ -306,7 +307,7 @@ PGBackend *PGBackend::build_pg_backend(
       &cs_impl,
       &ss);
     dout(10) << "!!!PGBackend::build_pg_backend" << ss.str() << dendl;
-    return new ECBackend(
+    return new CompressBackend(
       l,
       coll,
       store,

@@ -30,9 +30,8 @@ public:
     uint64_t off;
     bufferlist bl;
     uint32_t fadvise_flags;
-    bool is_copy_from_op;
-    AppendOp(const hobject_t &oid, uint64_t off, bufferlist &bl, uint32_t flags, bool is_copy_from_op_flag)
-            : oid(oid), off(off), bl(bl), fadvise_flags(flags), is_copy_from_op(is_copy_from_op_flag) {}
+    AppendOp(const hobject_t &oid, uint64_t off, bufferlist &bl, uint32_t flags)
+            : oid(oid), off(off), bl(bl), fadvise_flags(flags){}
   };
   struct CloneOp {
     hobject_t source;
@@ -201,7 +200,7 @@ public:
      set<hobject_t, hobject_t::BitwiseComparator> *out) const;
   void generate_transactions(
     map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
-    map<hobject_t, ECUtil::CompressInfoRef, hobject_t::BitwiseComparator> &compress_infos,
+    map<hobject_t, ECUtil::CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
     ErasureCodeInterfaceRef &ecimpl, CompressionInterfaceRef &csimpl,
     pg_t pgid,
     const ECUtil::stripe_info_t &sinfo,
