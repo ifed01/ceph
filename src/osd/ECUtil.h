@@ -164,75 +164,10 @@ public:
 };
 typedef ceph::shared_ptr<HashInfo> HashInfoRef;
 
-class CompressContext {
-public:
- 
-        struct BlockInfo
-        {
-                string method;
-                uint64_t target_offset;
-                BlockInfo() : target_offset(0){}
-                BlockInfo(const string& _method, uint64_t _target_offset)
-                        : method(_method), target_offset(_target_offset){}
-
-                void encode(bufferlist &bl) const;
-                void decode(bufferlist::iterator &bl);
-        };
-private:
-        uint64_t current_original_pos, current_compressed_pos;
-
-        typedef std::map<uint64_t, BlockInfo> BlockMap;
-        BlockMap blocks;
-
-        int do_compress(CompressionInterfaceRef cs_impl, const ECUtil::stripe_info_t& sinfo, const bufferlist& block2compress, stdstring& res_method, bufferlist& result_bl) const;
-
-public:
-        CompressContext() : current_original_pos, current_compressed_pos(0) {}
-        CompressContext(const CompressContext& from) : 
-                current_original_pos(from.current_original_pos), 
-                current_compressed_pos(from.current_compressed_pos), 
-                blocks(from.blocks) {}
-        void clear() {
-                current_original_pos = current_compressed_pos = 0;
-                blocks.clear();
-        }
-        uint64_t get_next_compressed_offset() const { return current_compressed_pos; }
-        uint64_t get_next_original_offset() const { return current_original_pos; }
-
-
-        void setup_for_append(const bufferlist& bl);
-        void setup_for_read(map<string, bufferlist>& attrset, uint64_t start_offset, uint64_t end_offset);
-        void flush(map<string, boost::optional<bufferlist> >& attrset);
-
-        void swap(CompressContext& other) { 
-                blocks.swap(other.blocks); 
-                std::swap(current_original_pos, other.current_original_pos); 
-                std::swap(current_compressed_pos, other.current_compressed_pos); 
-        }
-
-        void dump(Formatter *f) const;
-        //static void generate_test_instances(list<HashInfo*>& o);
-
-        void append_block(uint64_t original_offset, uint64_t original_size, const string& method, uint64_t new_block_size);
-        bool can_compress(uint64_t offs) { return (offs == 0 && current_compressed_pos == 0) || current_compressed_pos != 0; }
-
-        pair<uint64_t, uint64_t>  map_offset(uint64_t offs, bool next_block_flag) const; //returns <original block offset, compressed block_offset>
-
-        pair<uint64_t, uint64_t> offset_len_to_compressed_block(const pair<uint64_t, uint64_t> offs_len_pair) const;
-
-        int try_decompress(CompressionInterfaceRef cs_impl, const bufferlist& cs_bl, uint64_t orig_offs, uint64_t len, bufferlist& res_bl) const;
-        int try_compress(const hobject_t& oid, uint64_t off, const bufferlist& bl, CompressionInterfaceRef cs_impl, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl);
-
-
-};
-typedef ceph::shared_ptr<CompressContext> CompressContextRef;
-
 bool is_internal_key_string(const string &key);
 const string &get_hinfo_key();
 const string &get_cinfo_key();
 
 }
 WRITE_CLASS_ENCODER(ECUtil::HashInfo)
-//WRITE_CLASS_ENCODER(ECUtil::CompressContext)
-WRITE_CLASS_ENCODER(ECUtil::CompressContext::BlockInfo)
 #endif

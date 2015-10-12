@@ -1,4 +1,4 @@
-f// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
+// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 /*
  * Ceph - scalable distributed file system
@@ -64,7 +64,7 @@ void ECTransaction::get_append_objects(
 
 struct TransGenerator : public boost::static_visitor<void> {
   map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos;
-  map<hobject_t, ECUtil::CompressContextRef, hobject_t::BitwiseComparator> &compress_infos;
+  map<hobject_t, CompressContextRef, hobject_t::BitwiseComparator> &compress_infos;
 
   ErasureCodeInterfaceRef &ecimpl;
   CompressionInterfaceRef &csimpl;
@@ -77,7 +77,7 @@ struct TransGenerator : public boost::static_visitor<void> {
   stringstream *out;
   TransGenerator(
     map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
-    map<hobject_t, ECUtil::CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
+    map<hobject_t, CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
     ErasureCodeInterfaceRef &ecimpl, CompressionInterfaceRef &csimpl,
     pg_t pgid,
     const ECUtil::stripe_info_t &sinfo,
@@ -152,8 +152,8 @@ struct TransGenerator : public boost::static_visitor<void> {
     ECUtil::HashInfoRef hinfo = hash_infos[op.oid];
 
     assert(compress_infos.count(op.oid));
-    ECUtil::CompressContextRef cinfo = compress_infos[op.oid];
-    cinfo->try_compress( op.oid, op.off, op.bl, csimpl, sinfo, bl );
+    CompressContextRef cinfo = compress_infos[op.oid];
+    cinfo->try_compress( csimpl, op.oid, op.off, op.bl, sinfo, bl );
     cinfo->flush(attrset);
 
     // align
@@ -289,7 +289,7 @@ struct TransGenerator : public boost::static_visitor<void> {
 
 void ECTransaction::generate_transactions(
   map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
-  map<hobject_t, ECUtil::CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
+  map<hobject_t, CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
   ErasureCodeInterfaceRef &ecimpl, CompressionInterfaceRef &csimpl,
   pg_t pgid,
   const ECUtil::stripe_info_t &sinfo,

@@ -307,7 +307,7 @@ PGBackend *PGBackend::build_pg_backend(
       &cs_impl,
       &ss);
     dout(10) << "!!!PGBackend::build_pg_backend" << ss.str() << dendl;
-    return new CompressBackend(
+    return new CompressedECBackend(
       l,
       coll,
       store,

@@ -35,41 +35,38 @@
 // }
 
 
-pair<boost::tuple<uint64_t, uint64_t, uint32_t>, pair<bufferlist*, Context*> > ReadRangeCallParam;
+typedef pair<boost::tuple<uint64_t, uint64_t, uint32_t>, pair<bufferlist*, Context*> > ReadRangeCallParam;
 
-struct CompressionBackendReadCallContext : public Context {
+struct CompressBackendReadCallContext : public Context {
 
-        CompressedECBackend* cec_backend;
+        CompressionInterfaceRef cs_impl;
         CompressContextRef ccontext;
+        const hobject_t hoid;
         ReadRangeCallParam to_read;
-        bufferlist* intermediate_buffer;
+        bufferlist intermediate_buffer;
 
-        CompressionBackendReadCallContext(
-                CompressedECBackend* cec_backend,
+        CompressBackendReadCallContext(
+                CompressionInterfaceRef cs_impl,
                 const CompressContextRef& ccontext,
-                const ReadRangeCallParam& to_read,
-                bufferlist* intermediate_buffer)
-                : cec_backend(cec_backend), ccontext(ccontext), to_read(to_read), intermediate_buffer(intermediate_buffer)
+                const hobject_t& hoid,
+                const ReadRangeCallParam& to_read)
+                : cs_impl(cs_impl), ccontext(ccontext), hoid(hoid), to_read(to_read)
         {
-                assert(cec_backend != NULL);
+                assert(cs_impl != NULL);
                 assert(ccontext != NULL);
-                assert(intermediate_buffer != NULL);
         }
 
         virtual void finish(int r)
         {
-                assert(next_finished_cctx != ccontexts.end());
-                assert( next_finished_read != to_read.end();
-
                 if (r)
                 {
                         bufferlist bl;
-                        int res = cec_backend->try_decompress(cec_backend,
-                                        ccontext,
-                                        *intermediate_buffer,
-                                        to_read.first.get<0>,
-                                        to_read.first.get<1>,
-                                        to_read.second.first
+                        int res = ccontext->try_decompress(cs_impl,
+                                        hoid,
+                                        to_read.first.get<0>(),
+                                        to_read.first.get<1>(),
+                                        intermediate_buffer,
+                                        *to_read.second.first
                                         );
                         //FIXME: how to handle an error!!!!
                         if (to_read.second.second) {
@@ -78,12 +75,8 @@ struct CompressionBackendReadCallContext : public Context {
                 }
         }
 
-        ~CompressionBackendReadCallContext() {
-                for (ReadRequestParams::iterator i = to_read.begin();
-                        i != to_read.end();
-                        to_read.erase(i++)) {
-                        delete i->second.second;
-                }
+        ~CompressBackendReadCallContext() {
+                        delete to_read.second.second; //FIXME: IMHO that should be already destroyes due to complete call, needs verification
         }
 };
 
@@ -103,7 +96,7 @@ CompressedECBackend::CompressedECBackend(
 
 void CompressedECBackend::objects_read_async(
         const hobject_t &hoid,
-        const ReadRequestParams &to_read,
+        const ReadRangeCallParam &to_read,
         Context *on_complete)
 {
 
@@ -121,41 +114,38 @@ void CompressedECBackend::objects_read_async(
 
         pair<uint64_t, uint64_t> tmp;
 
-        ReadRequestParams to_read_from_ec;
-        for (ReadRequestParams::const_iterator i = to_read.begin(); i != to_read.end(); ++i) {
-                CompressContextRef cinfo = get_compress_context_on_read(attrset, i->first.get<0>(), i->first.get<0>() + i->first.get<1>());
+        list<ReadRangeCallParam> to_read_from_ec;
+                CompressContextRef cinfo = get_compress_context_on_read(attrset, to_read.first.get<0>(), to_read.first.get<0>() + to_read.first.get<1>());
                 if (!cinfo) {
-                        derr << __func__ << ": get_compress_context_on_read(" << *i << ")"
+                        derr << __func__ << ": get_compress_context_on_read(" << hoid << ")"
                                 << " returned a null pointer and there is no "
                                 << " way to recover from such an error in this "
                                 << " context" << dendl;
                         assert(0);
                 }
 
-                tmp = cinfo->offset_len_to_compressed_block(make_pair(i->first.get<0>(), i->first.get<1>()));
+                tmp = cinfo->offset_len_to_compressed_block(make_pair(to_read.first.get<0>(), to_read.first.get<1>()));
 
-                intermediate_buffer = new bufferlist; //to be destroyed by ECBackend when read op is completed ( see CallClientContexts dtor )
-                CompressionBackendReadCallContext* ctx = new CompressionBackendReadCallContext(this, cinfo, *i, intermediate_buffer);
+                CompressBackendReadCallContext* ctx = new CompressBackendReadCallContext(cs_impl, cinfo, hoid, to_read);
                 to_read_from_ec.push_back(
-                        boost::make_pair(
+                        std::make_pair(
                         boost::make_tuple(
                                 tmp.first, //new offset
                                 tmp.second, //new length
-                                i->first.get<2>()), //flags
-                        boost::make_pair(
-                                intermediate_buffer,
-                                ctx));
+                                to_read.first.get<2>()), //flags
+                        std::make_pair(
+                                &ctx->intermediate_buffer,
+                                ctx))
                         );
 
                 ECBackend::objects_read_async(hoid, to_read_from_ec, on_complete);
-        }
 }
 
-ECUtil::CompressContextRef CompressedECBackend::get_compress_context_on_read(
-        map<string, const bufferlist>& attrset, uint64_t offs, uint64_t offs_last)
+CompressContextRef CompressedECBackend::get_compress_context_on_read(
+        map<string, bufferlist>& attrset, uint64_t offs, uint64_t offs_last)
 {
         dout(10) << __func__ << ": Getting CompressContext [" << offs << ", " << offs_last << "]" << dendl;
-        ECUtil::CompressContextRef ref(new ECUtil::CompressContext);
+        CompressContextRef ref(new CompressContext);
         ref->setup_for_read(attrset, offs, offs_last);
         return ref;
 }

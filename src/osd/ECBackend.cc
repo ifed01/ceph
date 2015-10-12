@@ -1294,7 +1294,7 @@ void ECBackend::submit_transaction(
 	*i,
 	ref));
 
-    ECUtil::CompressContextRef cinfo = get_compress_context_basic(*i);
+    CompressContextRef cinfo = get_compress_context_basic(*i);
     if (!cinfo) {
             derr << __func__ << ": get_compress_context_basic(" << *i << ")"
                     << " returned a null pointer and there is no "
@@ -1528,10 +1528,10 @@ ECUtil::HashInfoRef ECBackend::get_hash_info(
   return ref;
 }
 
-ECUtil::CompressContextRef ECBackend::get_compress_context_basic(
+CompressContextRef ECBackend::get_compress_context_basic(
         const hobject_t &hoid)
 {
-        ECUtil::CompressContextRef ref(new ECUtil::CompressContext);
+        CompressContextRef ref(new CompressContext);
         dout(10) << __func__ << ": Getting basic CompressContext on " << hoid << dendl;
         struct stat st;
         int r = store->stat(
@@ -1548,7 +1548,7 @@ ECUtil::CompressContextRef ECBackend::get_compress_context_basic(
                         ECUtil::get_cinfo_key(),
                         bl);
                 if (r >= 0)
-                        r = ref->setup_for_append(bl);
+                        ref->setup_for_append(bl);
                 else {
                         dout(0) << __func__ << ": failed to get attrs for basic CompressContext" << dendl;
                 }
@@ -1795,7 +1795,7 @@ void ECBackend::objects_read_async(
                 &shards);
         assert(r == 0);
 
-        map<hobject_t, read_request_t> for_read_op;
+        map<hobject_t, read_request_t, hobject_t::BitwiseComparator> for_read_op;
         for_read_op.insert(
                 make_pair(
                 hoid,

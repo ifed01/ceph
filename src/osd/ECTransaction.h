@@ -19,9 +19,9 @@
 #include "PGBackend.h"
 #include "osd_types.h"
 #include "ECUtil.h"
+#include "CompressContext.h"
 #include <boost/optional/optional_io.hpp>
 #include "erasure-code/ErasureCodeInterface.h"
-#include "compression/CompressionInterface.h"
 
 class ECTransaction : public PGBackend::PGTransaction {
 public:
@@ -113,8 +113,7 @@ public:
     uint64_t off,
     uint64_t len,
     bufferlist &bl,
-    uint32_t fadvise_flags,
-    bool is_copy_from_op
+    uint32_t fadvise_flags
     ) {
     if (len == 0) {
       touch(hoid);
@@ -122,7 +121,7 @@ public:
     }
     written += len;
     assert(len == bl.length());
-    ops.push_back(AppendOp(hoid, off, bl, fadvise_flags, is_copy_from_op));
+    ops.push_back(AppendOp(hoid, off, bl, fadvise_flags));
   }
   void stash(
     const hobject_t &hoid,
@@ -200,7 +199,7 @@ public:
      set<hobject_t, hobject_t::BitwiseComparator> *out) const;
   void generate_transactions(
     map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
-    map<hobject_t, ECUtil::CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
+    map<hobject_t, CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
     ErasureCodeInterfaceRef &ecimpl, CompressionInterfaceRef &csimpl,
     pg_t pgid,
     const ECUtil::stripe_info_t &sinfo,

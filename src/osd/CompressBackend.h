@@ -23,13 +23,15 @@
 #include "ECTransaction.h"
 #include "ECMsgTypes.h"
 #include "ECUtil.h"
+#include "CompressContext.h"
+
 
 class CompressedECBackend : public ECBackend {
 
   CompressionInterfaceRef cs_impl;
 
 protected:
-   ECUtil::CompressContextRef get_compress_context_on_read(const hobject_t &hoid, uint64_t offs, uint64_t offs_last);
+   CompressContextRef get_compress_context_on_read(map<string, bufferlist>& attrset, uint64_t offs, uint64_t offs_last);
 
 public:
   CompressedECBackend(
@@ -41,12 +43,11 @@ public:
     CompressionInterfaceRef cs_impl,
     uint64_t stripe_width);
 
-  virtual int objects_read_sync(
+  virtual void objects_read_async(
                   const hobject_t &hoid,
-                  uint64_t off,
-                  uint64_t len,
-                  uint32_t op_flags,
-                  bufferlist *bl);
+                  const pair<boost::tuple<uint64_t, uint64_t, uint32_t>, 
+                    pair<bufferlist*, Context*> > &to_read,
+                  Context* on_complete );
 
   //virtual PGTransaction *get_transaction(); later we can override this method to create modified ECTransaction to handle compression
 
