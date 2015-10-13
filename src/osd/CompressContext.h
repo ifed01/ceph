@@ -76,14 +76,14 @@ public:
         //static void generate_test_instances(list<HashInfo*>& o);
 
         void append_block(uint64_t original_offset, uint64_t original_size, const string& method, uint64_t new_block_size);
-        bool can_compress(uint64_t offs) { return (offs == 0 && current_compressed_pos == 0) || current_compressed_pos != 0; }
+        bool can_compress(uint64_t offs) const;
 
         pair<uint64_t, uint64_t>  map_offset(uint64_t offs, bool next_block_flag) const; //returns <original block offset, compressed block_offset>
 
         pair<uint64_t, uint64_t> offset_len_to_compressed_block(const pair<uint64_t, uint64_t> offs_len_pair) const;
 
         int try_decompress(CompressionInterfaceRef cs_impl, const hobject_t& oid, uint64_t orig_offs, uint64_t len, bufferlist& cs_bl, bufferlist& res_bl) const;
-        int try_compress(CompressionInterfaceRef cs_impl, const hobject_t& oid, uint64_t off, const bufferlist& bl, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl);
+        int try_compress(CompressionInterfaceRef cs_impl, const hobject_t& oid, uint64_t& off, const bufferlist& bl, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl);
 
 
 };

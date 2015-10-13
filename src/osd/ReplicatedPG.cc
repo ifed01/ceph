@@ -4485,7 +4485,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	if (result < 0)
 	  break;
 	if (pool.info.require_rollback()) {
-	  t->append(soid, op.extent.offset, op.extent.length, osd_op.indata, op.flags, false);
+	  t->append(soid, op.extent.offset, op.extent.length, osd_op.indata, op.flags);
 	} else {
 	  t->write(soid, op.extent.offset, op.extent.length, osd_op.indata, op.flags);
 	}
@@ -4528,7 +4528,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	    }
 	  }
 	  ctx->mod_desc.create();
-	  t->append(soid, 0, op.extent.length, osd_op.indata, op.flags, false);
+	  t->append(soid, 0, op.extent.length, osd_op.indata, op.flags);
 	  if (obs.exists) {
 	    map<string, bufferlist> to_set = ctx->obc->attr_cache;
 	    map<string, boost::optional<bufferlist> > &overlay =
@@ -6766,8 +6766,7 @@ void ReplicatedPG::_write_copy_chunk(CopyOpRef cop, PGBackend::PGTransaction *t)
       cop->temp_cursor.data_offset,
       cop->data.length(),
       cop->data,
-      cop->dest_obj_fadvise_flags,
-      true);
+      cop->dest_obj_fadvise_flags);
     cop->data.clear();
   }
   if (pool.info.supports_omap()) {
@@ -10820,7 +10819,7 @@ void ReplicatedPG::hit_set_persist()
   bufferlist boi(sizeof(ctx->new_obs.oi));
   ::encode(ctx->new_obs.oi, boi);
 
-  ctx->op_t->append(oid, 0, bl.length(), bl, 0, false); //FIXME: check what's this
+  ctx->op_t->append(oid, 0, bl.length(), bl, 0); //FIXME: check what's this
   setattr_maybe_cache(ctx->obc, ctx, ctx->op_t, OI_ATTR, boi);
   setattr_maybe_cache(ctx->obc, ctx, ctx->op_t, SS_ATTR, bss);
   ctx->log.push_back(

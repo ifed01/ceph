@@ -28,11 +28,7 @@
 #define dout_subsys ceph_subsys_osd
 #define DOUT_PREFIX_ARGS this
 #undef dout_prefix
-//#define dout_prefix _prefix(_dout, this)
 #define dout_prefix *_dout
-// static ostream& _prefix(std::ostream *_dout, ECBackend *pgb) {
-//   return *_dout << pgb->get_parent()->gen_dbg_prefix();
-// }
 
 
 typedef pair<boost::tuple<uint64_t, uint64_t, uint32_t>, pair<bufferlist*, Context*> > ReadRangeCallParam;
@@ -71,11 +67,13 @@ struct CompressBackendReadCallContext : public Context {
                         //FIXME: how to handle an error!!!!
                         if (to_read.second.second) {
                                 to_read.second.second->complete(to_read.second.first->length());
+                                to_read.second.second=NULL;
                         }
                 }
         }
 
         ~CompressBackendReadCallContext() {
+//dout(1)<<__func__<<" ifed:"<<dendl;
                         delete to_read.second.second; //FIXME: IMHO that should be already destroyes due to complete call, needs verification
         }
 };
@@ -96,10 +94,9 @@ CompressedECBackend::CompressedECBackend(
 
 void CompressedECBackend::objects_read_async(
         const hobject_t &hoid,
-        const ReadRangeCallParam &to_read,
+        const list<ReadRangeCallParam> &to_read,
         Context *on_complete)
 {
-
         map<string, bufferlist> attrset;
         int r = load_attrs(hoid, attrset);
         if (r != 0)
@@ -111,11 +108,11 @@ void CompressedECBackend::objects_read_async(
                 assert(0);
         }
 
-
         pair<uint64_t, uint64_t> tmp;
 
         list<ReadRangeCallParam> to_read_from_ec;
-                CompressContextRef cinfo = get_compress_context_on_read(attrset, to_read.first.get<0>(), to_read.first.get<0>() + to_read.first.get<1>());
+        for( list<ReadRangeCallParam>::const_iterator it = to_read.begin(); it != to_read.end(); it++ ){
+                CompressContextRef cinfo = get_compress_context_on_read(attrset, it->first.get<0>(), it->first.get<0>() + it->first.get<1>());
                 if (!cinfo) {
                         derr << __func__ << ": get_compress_context_on_read(" << hoid << ")"
                                 << " returned a null pointer and there is no "
@@ -124,27 +121,30 @@ void CompressedECBackend::objects_read_async(
                         assert(0);
                 }
 
-                tmp = cinfo->offset_len_to_compressed_block(make_pair(to_read.first.get<0>(), to_read.first.get<1>()));
+                tmp = cinfo->offset_len_to_compressed_block(make_pair(it->first.get<0>(), it->first.get<1>()));
 
-                CompressBackendReadCallContext* ctx = new CompressBackendReadCallContext(cs_impl, cinfo, hoid, to_read);
+                CompressBackendReadCallContext* ctx = new CompressBackendReadCallContext(cs_impl, cinfo, hoid, *it);
+
+//dout(1)<<__func__<<" ifed: add to read from ec:"<< tmp.first<<","<<tmp.second <<dendl;
+
                 to_read_from_ec.push_back(
                         std::make_pair(
                         boost::make_tuple(
                                 tmp.first, //new offset
                                 tmp.second, //new length
-                                to_read.first.get<2>()), //flags
+                                it->first.get<2>()), //flags
                         std::make_pair(
                                 &ctx->intermediate_buffer,
                                 ctx))
                         );
-
-                ECBackend::objects_read_async(hoid, to_read_from_ec, on_complete);
+        }
+        ECBackend::objects_read_async(hoid, to_read_from_ec, on_complete);
 }
 
 CompressContextRef CompressedECBackend::get_compress_context_on_read(
         map<string, bufferlist>& attrset, uint64_t offs, uint64_t offs_last)
 {
-        dout(10) << __func__ << ": Getting CompressContext [" << offs << ", " << offs_last << "]" << dendl;
+        //dout(1) << __func__ << ": Getting CompressContext [" << offs << ", " << offs_last << "]" << dendl;
         CompressContextRef ref(new CompressContext);
         ref->setup_for_read(attrset, offs, offs_last);
         return ref;

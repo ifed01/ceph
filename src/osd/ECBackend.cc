@@ -1050,11 +1050,15 @@ void ECBackend::complete_read_op(ReadOp &rop, RecoveryMessages *m)
       pair<RecoveryMessages *, read_result_t &> arg(
 	m, resiter->second);
 
+dout(1)<<__func__<<"ifed:complete_read_op0"<<dendl;
+
       reqiter->second.cb->complete(arg);
       reqiter->second.cb = NULL;
+dout(1)<<__func__<<"ifed:complete_read_op1"<<dendl;
     }
   }
   tid_to_read_map.erase(rop.tid);
+dout(1)<<__func__<<"ifed:complete_read_op2"<<dendl;
 }
 
 struct FinishReadOp : public GenContext<ThreadPool::TPHandle&>  {
@@ -1497,10 +1501,10 @@ void ECBackend::start_read_op(
 ECUtil::HashInfoRef ECBackend::get_hash_info(
   const hobject_t &hoid)
 {
-  dout(10) << __func__ << ": Getting attr on " << hoid << dendl;
+  dout(1) << __func__ << ": Getting attr on " << hoid << dendl;
   ECUtil::HashInfoRef ref = unstable_hashinfo_registry.lookup(hoid);
   if (!ref) {
-    dout(10) << __func__ << ": not in cache " << hoid << dendl;
+    dout(1) << __func__ << ": not in cache " << hoid << dendl;
     struct stat st;
     int r = store->stat(
       coll,
@@ -1508,7 +1512,7 @@ ECUtil::HashInfoRef ECBackend::get_hash_info(
       &st);
     ECUtil::HashInfo hinfo(ec_impl->get_chunk_count());
     if (r >= 0 && st.st_size > 0) {
-      dout(10) << __func__ << ": found on disk, size " << st.st_size << dendl;
+      dout(1) << __func__ << ": found on disk, size " << st.st_size << dendl;
       bufferlist bl;
       r = store->getattr(
 	coll,
@@ -1518,6 +1522,7 @@ ECUtil::HashInfoRef ECBackend::get_hash_info(
       if (r >= 0) {
 	bufferlist::iterator bp = bl.begin();
 	::decode(hinfo, bp);
+      dout(1) << __func__ << ": hinfo decoded" << dendl;
 	//assert(hinfo.get_total_chunk_size() == (uint64_t)st.st_size);
       } else {
 	return ECUtil::HashInfoRef();
@@ -1568,7 +1573,6 @@ int ECBackend::load_attrs(const hobject_t &hoid, map<string, bufferlist>& attrse
                 dout(10) << __func__ << ": found on disk, size " << st.st_size << dendl;
                 bufferlist bl;
 
-                map<string, bufferlist> attrset;
                 r = store->getattrs(
                         coll,
                         ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
@@ -1756,6 +1760,7 @@ struct CallClientContexts :
 	 i != to_read.end();
 	 to_read.erase(i++)) {
       delete i->second.second;
+dout(1)<<__func__<<"ifed: dtor complete"<<dendl;
     }
   }
 };
@@ -1766,6 +1771,7 @@ void ECBackend::objects_read_async(
         pair<bufferlist*, Context*> > > &to_read,
         Context *on_complete)
 {
+
         in_progress_client_reads.push_back(ClientAsyncReadStatus(on_complete));
         CallClientContexts *c = new CallClientContexts(
                 this, &(in_progress_client_reads.back()), to_read);

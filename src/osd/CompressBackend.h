@@ -45,8 +45,8 @@ public:
 
   virtual void objects_read_async(
                   const hobject_t &hoid,
-                  const pair<boost::tuple<uint64_t, uint64_t, uint32_t>, 
-                    pair<bufferlist*, Context*> > &to_read,
+                  const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>, 
+                    pair<bufferlist*, Context*> > > &to_read,
                   Context* on_complete );
 
   //virtual PGTransaction *get_transaction(); later we can override this method to create modified ECTransaction to handle compression

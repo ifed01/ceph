@@ -153,8 +153,11 @@ struct TransGenerator : public boost::static_visitor<void> {
 
     assert(compress_infos.count(op.oid));
     CompressContextRef cinfo = compress_infos[op.oid];
-    cinfo->try_compress( csimpl, op.oid, op.off, op.bl, sinfo, bl );
+    cinfo->try_compress( csimpl, op.oid, offset, op.bl, sinfo, bl );
     cinfo->flush(attrset);
+
+    assert(bl.length());
+    assert(offset % sinfo.get_stripe_width() == 0); //offset has changed - check again
 
     // align
     if (bl.length() % sinfo.get_stripe_width())
@@ -166,7 +169,7 @@ struct TransGenerator : public boost::static_visitor<void> {
       sinfo, ecimpl, bl, want, &buffers);
 
     hinfo->append(
-      sinfo.aligned_logical_offset_to_chunk_offset(op.off),
+      sinfo.aligned_logical_offset_to_chunk_offset(offset),
       buffers);
     ::encode(
       *hinfo,

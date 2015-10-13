@@ -66,7 +66,7 @@ int CompressionZlib::decode(const bufferlist &in,
   unsigned char *c_out = new unsigned char [original_size];
 
   int ret = uncompress(c_out, &original_size, c_in, len);
-  dout(10) << "ret " << ret << " new_len " << original_size << dendl;
+  dout(1) << "ret " << ret << " new_len " << original_size<<" "<<in.length() << dendl;
 
   assert(ret == Z_OK);
 
