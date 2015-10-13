@@ -1,5 +1,6 @@
 include test/erasure-code/Makefile.am
 include test/messenger/Makefile.am
+include test/compressor/Makefile.am
 
 if ENABLE_CLIENT
 include test/Makefile-client.am
