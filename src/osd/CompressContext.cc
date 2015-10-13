@@ -329,7 +329,7 @@ int CompressContext::try_compress(CompressionInterfaceRef cs_impl, const hobject
                                 uint64_t block_size = cs_impl->get_block_size(sinfo.get_stripe_width());
                                 bufferlist block2compress, compressed_block;
                                 uint64_t prev_len = bl.length();
-                                it.copy(block_size, block2compress); //FIXME: check for other options instead of copy!!!!
+                                it.copy(block_size, block2compress);
 
                                 std::string cmethod;
                                 int r0 = do_compress(cs_impl, sinfo, block2compress, cmethod, bl);

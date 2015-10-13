@@ -1704,7 +1704,9 @@ struct CallClientContexts :
     ECBackend::ClientAsyncReadStatus *status,
     const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
 		    pair<bufferlist*, Context*> > > &to_read)
-    : ec(ec), status(status), to_read(to_read) {}
+    : ec(ec), status(status), to_read(to_read) {
+          dout(1) << __func__ << "ifed: " << dendl;
+  }
   void finish(pair<RecoveryMessages *, ECBackend::read_result_t &> &in) {
           ECBackend::read_result_t &res = in.second;
           assert(res.returned.size() == to_read.size());
