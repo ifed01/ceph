@@ -13,7 +13,7 @@
  */
 
 #include "Compressor.h"
- #include "CompressionPlugin.h"
+#include "CompressionPlugin.h"
 
 
 CompressorRef Compressor::create(const string &type)
