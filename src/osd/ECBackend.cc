@@ -1530,31 +1530,21 @@ ECUtil::HashInfoRef ECBackend::get_hash_info(
   return ref;
 }
 
-CompressContextRef ECBackend::get_compress_context_basic(
-        const hobject_t &hoid)
+CompressContextRef ECBackend::get_compress_context_basic(const hobject_t &hoid)
 {
-        CompressContextRef ref(new CompressContext);
-        dout(10) << __func__ << ": Getting basic CompressContext on " << hoid << dendl;
-        struct stat st;
-        int r = store->stat(
-                coll,
-                ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-                &st);
-        if (r >= 0 && st.st_size > 0) {
-                dout(10) << __func__ << ": found on disk, size " << st.st_size << dendl;
-                
-                bufferlist bl;
-                r = store->getattr(
-                        coll,
-                        ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-                        ECUtil::get_cinfo_key(),
-                        bl);
-                if (r >= 0)
-                        ref->setup_for_append(bl);
-                else {
-                        dout(0) << __func__ << ": failed to get attrs for basic CompressContext" << dendl;
-                }
+        map<string, bufferlist> attrset;
+        int r = load_attrs(hoid, attrset);
+        if (r != 0)
+        {
+                derr << __func__ << ": load_attrs(" << hoid << ")"
+                        << " returned a null pointer and there is no "
+                        << " way to recover from such an error in this "
+                        << " context" << dendl;
+                assert(0);
         }
+
+        CompressContextRef ref(new CompressContext);
+        ref->setup_for_append(attrset);
         return ref;
 }
 

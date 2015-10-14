@@ -206,6 +206,7 @@ void ECUtil::HashInfo::generate_test_instances(list<HashInfo*>& o)
 }
 
 const string HINFO_KEY = "hinfo_key";
+const string CINFO_MASTER_KEY = "@ci_master@";
 const string CINFO_KEY = "@ci@";
 
 bool ECUtil::is_internal_key_string(const string &key)
@@ -221,4 +222,9 @@ const string &ECUtil::get_hinfo_key()
 const string &ECUtil::get_cinfo_key()
 {
   return CINFO_KEY;
+}
+
+const string &ECUtil::get_cinfo_master_key()
+{
+        return CINFO_MASTER_KEY;
 }

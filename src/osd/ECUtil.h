@@ -166,6 +166,7 @@ typedef ceph::shared_ptr<HashInfo> HashInfoRef;
 
 bool is_internal_key_string(const string &key);
 const string &get_hinfo_key();
+const string &get_cinfo__master_key();
 const string &get_cinfo_key();
 
 }

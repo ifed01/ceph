@@ -27,39 +27,91 @@
 
 class CompressContext {
 public:
-        struct BlockInfo
+        struct BlockInfoRecord
         {
-                string method;
-                uint64_t target_offset;
-                BlockInfo() : target_offset(0){}
-                BlockInfo(const string& _method, uint64_t _target_offset)
-                        : method(_method), target_offset(_target_offset){}
+                uint8_t method_idx;
+                uint32_t original_length, compressed_length;
+                BlockInfoRecord() : method_idx(0), original_length(0), compressed_length(0){}
+                BlockInfoRecord(const BlockInfoRecord& from) : method_idx(from.method_idx), original_length(from.original_length), compressed_length(from.compressed_length){}
+                BlockInfoRecord(uint8_t idx, uint32_t olen, uint32_t clen) : method_idx(idx), original_length(olen), compressed_length(clen){}
+                //size_t getEncodedSize() const;
 
                 void encode(bufferlist &bl) const;
                 void decode(bufferlist::iterator &bl);
         };
+        struct BlockInfoRecordSetHeader
+        {
+                uint64_t start_offset, compressed_offset;
+                BlockInfoRecordSetHeader(uint64_t offset = 0, uint64_t coffs = 0) : start_offset(offset), compressed_offset(coffs){}
+                //size_t getEncodedSize() const;
+
+                void encode(bufferlist &bl) const;
+                void decode(bufferlist::iterator &bl);
+        };
+
+        struct MasterRecord
+        {
+                uint64_t current_original_pos, current_compressed_pos;
+                uin32_t block_info_record_length, block_info_recordset_header_length;
+                typedef vector<string>  MethodList;
+                MethodList methods;
+
+                MasterRecord() : current_original_pos(0), current_compressed_pos(0), block_info_record_length(0), block_info_recordset_header_length{0) {}
+
+                void clear() { current_original_pos = current_compressed_pos = 0; block_info_record_length = block_info_recordset_header_length = 0; }
+
+                string get_method_name(uint8_t index) const;
+                uint8_t add_get_method(const string& method);
+
+                void encode(bufferlist &bl) const;
+                void decode(bufferlist::iterator &bl);
+        };
+
 private:
-        uint64_t current_original_pos, current_compressed_pos;
+        enum {
+                RECS_PER_RECORDSET = 32;
+        }
+        struct BlockInfo
+        {
+                uint8_t method_idx;
+                uint64_t target_offset;
+                BlockInfo() : target_offset(0){}
+                BlockInfo(uint8_t _method, uint64_t _target_offset)
+                        : method_idx(_method), target_offset(_target_offset){}
+
+        };
+
+        //uint64_t current_original_pos, current_compressed_pos;
+        MasterRecord masterRec;
 
         typedef std::map<uint64_t, BlockInfo> BlockMap;
         BlockMap blocks;
+        
+        bufferlist prev_blocks_encoded;
+        uint64_t prev_original_pos, prev_compressed_pos;
+
+
         static bool less_upper(  const uint64_t&, const BlockMap::value_type& );
         static bool less_lower(  const BlockMap::value_type&, const uint64_t& );
 
         int do_compress(CompressionInterfaceRef cs_impl, const ECUtil::stripe_info_t& sinfo, bufferlist& block2compress, string& res_method, bufferlist& result_bl) const;
 
 public:
-        CompressContext() : current_original_pos(0), current_compressed_pos(0) {}
+        CompressContext() : prev_original_pos(0), prev_compressed_pos(0) {}
         CompressContext(const CompressContext& from) : 
-                current_original_pos(from.current_original_pos), 
-                current_compressed_pos(from.current_compressed_pos), 
+                masterRec (from.masterRec.), 
+                prev_original_pos(from.prev_original_pos),
+                prev_compressed_pos(from.prev_compressed_pos), 
+                prev_blocks_encoded(from.prev_blocks_encoded),
                 blocks(from.blocks) {}
         void clear() {
-                current_original_pos = current_compressed_pos = 0;
+                masterRec.clear()
                 blocks.clear();
+                prev_blocks_encoded.clear();
+                prev_original_pos = prev_compressed_pos = 0;
         }
-        uint64_t get_next_compressed_offset() const { return current_compressed_pos; }
-        uint64_t get_next_original_offset() const { return current_original_pos; }
+        /*uint64_t get_next_compressed_offset() const { return current_compressed_pos; }
+        uint64_t get_next_original_offset() const { return current_original_pos; }*/
 
 
         void setup_for_append(bufferlist& bl);
@@ -86,8 +138,11 @@ public:
         int try_compress(CompressionInterfaceRef cs_impl, const hobject_t& oid, uint64_t& off, const bufferlist& bl, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl);
 
 
+
 };
 typedef ceph::shared_ptr<CompressContext> CompressContextRef;
 
-WRITE_CLASS_ENCODER(CompressContext::BlockInfo)
+WRITE_CLASS_ENCODER(CompressContext::BlockInfoRecord)
+WRITE_CLASS_ENCODER(CompressContext::BlockInfoRecordSetHeader)
+WRITE_CLASS_ENCODER(CompressContext::MasterRecord)
 #endif
