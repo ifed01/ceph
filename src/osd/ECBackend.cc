@@ -1050,15 +1050,12 @@ void ECBackend::complete_read_op(ReadOp &rop, RecoveryMessages *m)
       pair<RecoveryMessages *, read_result_t &> arg(
 	m, resiter->second);
 
-dout(1)<<__func__<<"ifed:complete_read_op0"<<dendl;
 
       reqiter->second.cb->complete(arg);
       reqiter->second.cb = NULL;
-dout(1)<<__func__<<"ifed:complete_read_op1"<<dendl;
     }
   }
   tid_to_read_map.erase(rop.tid);
-dout(1)<<__func__<<"ifed:complete_read_op2"<<dendl;
 }
 
 struct FinishReadOp : public GenContext<ThreadPool::TPHandle&>  {
@@ -1705,7 +1702,6 @@ struct CallClientContexts :
     const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
 		    pair<bufferlist*, Context*> > > &to_read)
     : ec(ec), status(status), to_read(to_read) {
-          dout(1) << __func__ << "ifed: " << dendl;
   }
   void finish(pair<RecoveryMessages *, ECBackend::read_result_t &> &in) {
           ECBackend::read_result_t &res = in.second;
@@ -1762,7 +1758,6 @@ struct CallClientContexts :
 	 i != to_read.end();
 	 to_read.erase(i++)) {
       delete i->second.second;
-dout(1)<<__func__<<"ifed: dtor complete"<<dendl;
     }
   }
 };

@@ -48,7 +48,6 @@ struct CompressBackendReadCallContext : public Context {
                 const ReadRangeCallParam& to_read)
                 : cs_impl(cs_impl), ccontext(ccontext), hoid(hoid), to_read(to_read)
         {
-                dout(1) << __func__ << " ifed:" << dendl;
                 assert(cs_impl != NULL);
                 assert(ccontext != NULL);
         }
@@ -74,8 +73,7 @@ struct CompressBackendReadCallContext : public Context {
         }
 
         ~CompressBackendReadCallContext() {
-               dout(1)<<__func__<<" ifed:"<<dendl;
-                        delete to_read.second.second; //FIXME: IMHO that should be already destroyes due to complete call, needs verification
+                        delete to_read.second.second;
         }
 };
 
