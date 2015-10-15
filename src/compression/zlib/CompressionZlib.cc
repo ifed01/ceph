@@ -51,6 +51,7 @@ int CompressionZlib::encode(const bufferlist &in,
 
   encoded->append((char*)c_out, new_len);
   dout(10) << "encoded len " << encoded->length() << dendl;
+  delete c_out;
   return 0;
 }
 
@@ -72,6 +73,7 @@ int CompressionZlib::decode(const bufferlist &in,
 
   decoded->append((char*)c_out, original_size);
   dout(10) << "decoded len " << decoded->length() << dendl;
+  delete c_out;
   
   return 0;
 }

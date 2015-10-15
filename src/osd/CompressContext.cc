@@ -299,6 +299,15 @@ dout(1)<<__func__<<" ifed: cinfo:"<<attrset[ECUtil::get_cinfo_master_key()].leng
         }
 }
 
+void CompressContext::flush_for_rollback(map<string, bufferlist>& attrset) const
+{
+        attrset[ECUtil::get_cinfo_key()] = prev_blocks_encoded;
+
+        ::encode(masterRec,
+                attrset[ECUtil::get_cinfo_master_key()]);
+}
+
+
 void CompressContext::dump(Formatter *f) const
 {
         f->dump_unsigned("current_original_pos", masterRec.current_original_pos);

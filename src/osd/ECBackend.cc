@@ -1316,14 +1316,14 @@ void ECBackend::submit_transaction(
       dout(10) << __func__ << ": stashing HashInfo for "
 	       << i->soid << " for entry " << *i << dendl;
       assert(op->unstable_hash_infos.count(i->soid));
-      //assert(op->compress_infos.count(i->soid));
+      assert(op->compress_infos.count(i->soid));
       ObjectModDesc desc;
       map<string, boost::optional<bufferlist> > old_attrs;
       bufferlist old_hinfo;
       ::encode(*(op->unstable_hash_infos[i->soid]), old_hinfo);
       old_attrs[ECUtil::get_hinfo_key()] = old_hinfo;
 
-      //FIXME: check if we need something like that: op->compress_infos[i->soid]->flush(old_attrs);
+      op->compress_infos[i->soid]->flush_for_rollback(old_attrs);
 
       desc.setattrs(old_attrs);
       i->mod_desc.swap(desc);
