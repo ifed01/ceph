@@ -1533,7 +1533,9 @@ ECUtil::HashInfoRef ECBackend::get_hash_info(
 CompressContextRef ECBackend::get_compress_context_basic(const hobject_t &hoid)
 {
         map<string, bufferlist> attrset;
-        int r = load_attrs(hoid, attrset);
+        load_attrs(hoid, attrset);
+        /*int r = 
+load_attrs(hoid, attrset);
         if (r != 0)
         {
                 derr << __func__ << ": load_attrs(" << hoid << ")"
@@ -1541,7 +1543,7 @@ CompressContextRef ECBackend::get_compress_context_basic(const hobject_t &hoid)
                         << " way to recover from such an error in this "
                         << " context" << dendl;
                 assert(0);
-        }
+        }*/
 
         CompressContextRef ref(new CompressContext);
         ref->setup_for_append(attrset);
@@ -1568,6 +1570,8 @@ int ECBackend::load_attrs(const hobject_t &hoid, map<string, bufferlist>& attrse
                         dout(0) << __func__ << ": failed to load attrs" << dendl;
                 }
         }
+        else if( st.st_size == 0 )
+               r=0;
         return r;
 }
 

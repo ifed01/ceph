@@ -226,5 +226,5 @@ const string &ECUtil::get_cinfo_key()
 
 const string &ECUtil::get_cinfo_master_key()
 {
-        return CINFO_MASTER_KEY;
+  return CINFO_MASTER_KEY;
 }
