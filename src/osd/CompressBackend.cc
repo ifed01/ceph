@@ -48,7 +48,7 @@ struct CompressBackendReadCallContext : public Context {
                 const ReadRangeCallParam& to_read)
                 : cs_impl(cs_impl), ccontext(ccontext), hoid(hoid), to_read(to_read)
         {
-                assert(cs_impl != NULL);
+                //assert(cs_impl != NULL);
                 assert(ccontext != NULL);
         }
 

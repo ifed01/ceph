@@ -189,6 +189,7 @@ ECBackend::ECBackend(
 
 PGBackend::RecoveryHandle *ECBackend::open_recovery_op()
 {
+  dout(1) << __func__ <<" ifed:"<< dendl;
   return new ECRecoveryHandle;
 }
 
@@ -248,6 +249,8 @@ void ECBackend::handle_recovery_push(
   RecoveryMessages *m)
 {
   assert(m->t);
+
+  dout(1) << __func__ <<" ifed:"<< op.soid << dendl;
 
   bool oneshot = op.before_progress.first && op.after_progress.data_complete;
   ghobject_t tobj;
@@ -350,7 +353,7 @@ void ECBackend::handle_recovery_read_complete(
   boost::optional<map<string, bufferlist> > attrs,
   RecoveryMessages *m)
 {
-  dout(10) << __func__ << ": returned " << hoid << " "
+  dout(1) << __func__ <<" ifed:"<< ": returned " << hoid << " "
 	   << "(" << to_read.get<0>()
 	   << ", " << to_read.get<1>()
 	   << ", " << to_read.get<2>()
@@ -537,7 +540,7 @@ void ECBackend::continue_recovery_op(
 	pop.soid = op.hoid;
 	pop.version = op.v;
 	pop.data = op.returned_data[mi->shard];
-	dout(10) << __func__ << ": before_progress=" << op.recovery_progress
+	dout(1) << __func__ << ": before_progress=" << op.recovery_progress
 		 << ", after_progress=" << after_progress
 		 << ", pop.data.length()=" << pop.data.length()
 		 << ", size=" << op.obc->obs.oi.size << dendl;

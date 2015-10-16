@@ -456,6 +456,7 @@ int CompressContext::try_decompress(CompressionInterfaceRef cs_impl, const hobje
                                         appended += len2splice;
                                 }
                                 else {
+                                        assert( cs_impl != NULL);
                                         cs_bl1.substr_of(cs_bl, cs_bl_pos, MIN(cs_bl.length() - cs_bl_pos, cur_block_clen));
                                         int r = ECUtil::decompress(
                                                 cs_impl,
@@ -574,8 +575,7 @@ int CompressContext::try_compress(CompressionInterfaceRef cs_impl, const hobject
         if (!compressed) //the whole block wasn't compressed or there is no benefit in compression
         {
                 res_bl = bl0;
-                if( off != 0 ) //we can omit adding dummy compression attrs if this is the first append
-                   append_block(off, res_bl.length(), "", res_bl.length());
+                append_block(off, res_bl.length(), "", res_bl.length());
         }
         else
         {
