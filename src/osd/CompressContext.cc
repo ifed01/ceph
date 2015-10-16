@@ -299,12 +299,13 @@ dout(1)<<__func__<<" ifed: cinfo:"<<attrset[ECUtil::get_cinfo_master_key()].leng
         }
 }
 
-void CompressContext::flush_for_rollback(map<string, bufferlist>& attrset) const
+void CompressContext::flush_for_rollback(map<string, boost::optional<bufferlist> >& attrset) const
 {
         attrset[ECUtil::get_cinfo_key()] = prev_blocks_encoded;
 
-        ::encode(masterRec,
-                attrset[ECUtil::get_cinfo_master_key()]);
+        bufferlist bl;
+        ::encode(masterRec,bl);
+        attrset[ECUtil::get_cinfo_master_key()] = bl;
 }
 
 

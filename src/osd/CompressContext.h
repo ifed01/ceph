@@ -117,7 +117,7 @@ public:
         void setup_for_append(map<string, bufferlist>& attrset);
         void setup_for_read(map<string, bufferlist>& attrset, uint64_t start_offset, uint64_t end_offset);
         void flush(map<string, bufferlist>& attrset);
-        void flush_for_rollback(map<string, bufferlist>& attrset) const;
+        void flush_for_rollback(map<string, boost::optional<bufferlist> >& attrset) const;
 
         void swap(CompressContext& other) { 
                 blocks.swap(other.blocks); 
