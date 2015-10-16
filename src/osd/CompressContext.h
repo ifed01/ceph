@@ -34,7 +34,6 @@ public:
                 BlockInfoRecord() : method_idx(0), original_length(0), compressed_length(0){}
                 BlockInfoRecord(const BlockInfoRecord& from) : method_idx(from.method_idx), original_length(from.original_length), compressed_length(from.compressed_length){}
                 BlockInfoRecord(uint8_t idx, uint32_t olen, uint32_t clen) : method_idx(idx), original_length(olen), compressed_length(clen){}
-                //size_t getEncodedSize() const;
 
                 void encode(bufferlist &bl) const;
                 void decode(bufferlist::iterator &bl);
@@ -43,7 +42,6 @@ public:
         {
                 uint64_t start_offset, compressed_offset;
                 BlockInfoRecordSetHeader(uint64_t offset = 0, uint64_t coffs = 0) : start_offset(offset), compressed_offset(coffs){}
-                //size_t getEncodedSize() const;
 
                 void encode(bufferlist &bl) const;
                 void decode(bufferlist::iterator &bl);
@@ -57,6 +55,12 @@ public:
                 MethodList methods;
 
                 MasterRecord() : current_original_pos(0), current_compressed_pos(0), block_info_record_length(0), block_info_recordset_header_length(0) {}
+                MasterRecord( const MasterRecord& other) : 
+                  current_original_pos(other.current_original_pos), 
+                  current_compressed_pos(other.current_compressed_pos), 
+                  block_info_record_length(other.block_info_record_length), 
+                  block_info_recordset_header_length(other.block_info_recordset_header_length),
+                  methods(other.methods) {}
 
                 void clear() { current_original_pos = current_compressed_pos = 0; block_info_record_length = block_info_recordset_header_length = 0; }
 
@@ -65,7 +69,14 @@ public:
 
                 void encode(bufferlist &bl) const;
                 void decode(bufferlist::iterator &bl);
-        };
+                void swap( MasterRecord& other ){
+                  std::swap( current_original_pos, other.current_original_pos);
+                  std::swap( current_compressed_pos, other.current_compressed_pos);
+                  std::swap( block_info_record_length, other.block_info_record_length);
+                  std::swap( block_info_recordset_header_length, other.block_info_recordset_header_length);
+                  methods.swap( other.methods);
+                }
+    };
 
 private:
         enum {
@@ -81,13 +92,12 @@ private:
 
         };
 
-        //uint64_t current_original_pos, current_compressed_pos;
         MasterRecord masterRec;
 
         typedef std::map<uint64_t, BlockInfo> BlockMap;
         BlockMap blocks;
         
-        uint64_t prev_original_pos, prev_compressed_pos;
+        MasterRecord prevMasterRec;
         bufferlist prev_blocks_encoded;
 
 
@@ -97,22 +107,18 @@ private:
         int do_compress(CompressionInterfaceRef cs_impl, const ECUtil::stripe_info_t& sinfo, bufferlist& block2compress, string& res_method, bufferlist& result_bl) const;
 
 public:
-        CompressContext() : prev_original_pos(0), prev_compressed_pos(0) {}
+        CompressContext() {}
         CompressContext(const CompressContext& from) : 
                 masterRec (from.masterRec),
                 blocks(from.blocks),
-                prev_original_pos(from.prev_original_pos),
-                prev_compressed_pos(from.prev_compressed_pos), 
+                prevMasterRec(from.prevMasterRec),
                 prev_blocks_encoded(from.prev_blocks_encoded) {}
         void clear() {
                 masterRec.clear();
                 blocks.clear();
                 prev_blocks_encoded.clear();
-                prev_original_pos = prev_compressed_pos = 0;
+                prevMasterRec.clear();
         }
-        /*uint64_t get_next_compressed_offset() const { return current_compressed_pos; }
-        uint64_t get_next_original_offset() const { return current_original_pos; }*/
-
 
         void setup_for_append(map<string, bufferlist>& attrset);
         void setup_for_read(map<string, bufferlist>& attrset, uint64_t start_offset, uint64_t end_offset);
@@ -121,11 +127,9 @@ public:
 
         void swap(CompressContext& other) { 
                 blocks.swap(other.blocks); 
-                std::swap(masterRec.current_original_pos, other.masterRec.current_original_pos); 
-                std::swap(masterRec.current_compressed_pos, other.masterRec.current_compressed_pos); 
+                masterRec.swap(other.masterRec); 
                 std::swap( prev_blocks_encoded, other.prev_blocks_encoded);
-                std::swap(prev_original_pos, prev_original_pos);
-                std::swap(prev_compressed_pos, prev_compressed_pos);
+                prevMasterRec.swap(other.prevMasterRec);
         }
 
         void dump(Formatter *f) const;

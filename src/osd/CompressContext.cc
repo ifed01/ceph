@@ -112,8 +112,7 @@ void CompressContext::setup_for_append(map<string, bufferlist>& attrset)
         if (it_attrs != attrset.end()){
                 bufferlist::iterator it = it_attrs->second.begin();
                 ::decode(masterRec, it);
-                prev_original_pos = masterRec.current_original_pos;
-                prev_compressed_pos = masterRec.current_compressed_pos;
+                prevMasterRec = masterRec;
         }
 
         it_attrs = attrset.find(ECUtil::get_cinfo_key());
@@ -253,14 +252,14 @@ dout(0)<<__func__<<" ifed:"<<found_start_offset<<"==("<<(int)found_bi.method_idx
 
 void CompressContext::flush( map<string, bufferlist> & attrset)
 {
-        if (prev_original_pos != masterRec.current_original_pos){ //some changes have been made
+        if (prevMasterRec.current_original_pos != masterRec.current_original_pos){ //some changes have been made
                 bufferlist bl(prev_blocks_encoded);
 
                 size_t record_set_size = masterRec.block_info_record_length*RECS_PER_RECORDSET + masterRec.block_info_recordset_header_length;
                 assert((bl.length() == 0 && record_set_size == 0) || (bl.length() != 0 && record_set_size != 0));
 
-                uint64_t offs = prev_original_pos;
-                uint64_t coffs = prev_compressed_pos;
+                uint64_t offs = prevMasterRec.current_original_pos;
+                uint64_t coffs = prevMasterRec.current_compressed_pos;
 
                 for (CompressContext::BlockMap::const_iterator it = blocks.begin(); it != blocks.end(); it++) {
                         BlockInfoRecordSetHeader header(offs, coffs);
@@ -301,11 +300,18 @@ dout(1)<<__func__<<" ifed: cinfo:"<<attrset[ECUtil::get_cinfo_master_key()].leng
 
 void CompressContext::flush_for_rollback(map<string, boost::optional<bufferlist> >& attrset) const
 {
-        attrset[ECUtil::get_cinfo_key()] = prev_blocks_encoded;
+        if( prev_blocks_encoded.length() > 0)
+          attrset[ECUtil::get_cinfo_key()] = prev_blocks_encoded;
+        else
+          attrset[ECUtil::get_cinfo_key()] = boost::optional<bufferlist>(); //to trigger record removal on rollback
 
-        bufferlist bl;
-        ::encode(masterRec,bl);
-        attrset[ECUtil::get_cinfo_master_key()] = bl;
+        if( prevMasterRec.current_original_pos != 0 ){
+          bufferlist bl;
+          ::encode(prevMasterRec,bl);
+          attrset[ECUtil::get_cinfo_master_key()] = bl;
+        }
+        else
+          attrset[ECUtil::get_cinfo_master_key()] = boost::optional<bufferlist>(); //to trigger record removal on rollback
 }
 
 
