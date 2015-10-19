@@ -120,7 +120,7 @@ public:
                 prevMasterRec.clear();
         }
 
-        void setup_for_append(map<string, bufferlist>& attrset);
+        void setup_for_append_or_recovery(map<string, bufferlist>& attrset);
         void setup_for_read(map<string, bufferlist>& attrset, uint64_t start_offset, uint64_t end_offset);
         void flush(map<string, bufferlist>& attrset);
         void flush_for_rollback(map<string, boost::optional<bufferlist> >& attrset) const;
@@ -145,7 +145,7 @@ public:
         int try_decompress(CompressionInterfaceRef cs_impl, const hobject_t& oid, uint64_t orig_offs, uint64_t len, bufferlist& cs_bl, bufferlist& res_bl) const;
         int try_compress(CompressionInterfaceRef cs_impl, const hobject_t& oid, uint64_t& off, const bufferlist& bl, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl);
 
-
+        uint64_t get__compressed_size() const { return masterRec.current_compressed_pos; }
 
 };
 typedef ceph::shared_ptr<CompressContext> CompressContextRef;

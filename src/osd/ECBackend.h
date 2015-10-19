@@ -227,10 +227,17 @@ private:
 
     // valid in state READING
     pair<uint64_t, uint64_t> extent_requested;
+    boost::optional<uint64_t> compressed_object_size;
 
     void dump(Formatter *f) const;
 
     RecoveryOp() : pending_read(false), state(IDLE) {}
+    void set_recovered_object_size(uint64_t sz) { compressed_object_size = sz; }
+    uint64_t get_recovered_object_size() const {
+            return compressed_object_size ? compressed_object_size->get() : 
+                   obc ? obc->obs.oi.size : 0;
+    }
+
   };
   friend ostream &operator<<(ostream &lhs, const RecoveryOp &rhs);
   map<hobject_t, RecoveryOp, hobject_t::BitwiseComparator> recovery_ops;

@@ -392,6 +392,11 @@ void ECBackend::handle_recovery_read_complete(
       ::decode(hinfo, bp);
     }
     op.hinfo = unstable_hashinfo_registry.lookup_or_create(hoid, hinfo);
+
+    CompressContext cctx;
+    cctx.setup_for_append_or_recovery(op.xattrs);
+    if (ctx.get_compressed_size() < op.obc->obs.oi)
+            op.set_recovered_object_size(ctx.get_compressed_size());
   }
   assert(op.xattrs.size());
   assert(op.obc);
@@ -525,10 +530,10 @@ void ECBackend::continue_recovery_op(
       ObjectRecoveryProgress after_progress = op.recovery_progress;
       after_progress.data_recovered_to += op.extent_requested.second;
       after_progress.first = false;
-      if (after_progress.data_recovered_to >= op.obc->obs.oi.size) {
+      if (after_progress.data_recovered_to >= op.get_recovered_object_size()) {
 	after_progress.data_recovered_to =
 	  sinfo.logical_to_next_stripe_offset(
-	    op.obc->obs.oi.size);
+          op.get_recovered_object_size());
 	after_progress.data_complete = true;
       }
       for (set<pg_shard_t>::iterator mi = op.missing_on.begin();
@@ -543,7 +548,7 @@ void ECBackend::continue_recovery_op(
 	dout(1) << __func__ << ": before_progress=" << op.recovery_progress
 		 << ", after_progress=" << after_progress
 		 << ", pop.data.length()=" << pop.data.length()
-		 << ", size=" << op.obc->obs.oi.size << dendl;
+                 << ", size=" << op.get_recovered_object_size() << "(" << op.obc->obs.oi.size << ")" << dendl;
 	assert(
 	  pop.data.length() ==
 	  sinfo.aligned_logical_offset_to_chunk_offset(
@@ -1549,7 +1554,7 @@ load_attrs(hoid, attrset);
         }*/
 
         CompressContextRef ref(new CompressContext);
-        ref->setup_for_append(attrset);
+        ref->setup_for_append_or_recovery(attrset);
         return ref;
 }
 

@@ -104,7 +104,7 @@ bool  CompressContext::can_compress( uint64_t offs ) const
         return (offs == 0 && masterRec.current_compressed_pos == 0) || masterRec.current_compressed_pos != 0;
 }
 
-void CompressContext::setup_for_append(map<string, bufferlist>& attrset)
+void CompressContext::setup_for_append_or_recovery(map<string, bufferlist>& attrset)
 {
         clear();
         
