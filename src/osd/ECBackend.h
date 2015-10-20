@@ -446,6 +446,8 @@ public:
   const ECUtil::stripe_info_t sinfo;
   /// If modified, ensure that the ref is held until the update is applied
   SharedPtrRegistry<hobject_t, ECUtil::HashInfo, hobject_t::BitwiseComparator> unstable_hashinfo_registry;
+  SharedPtrRegistry<hobject_t, CompressContext, hobject_t::BitwiseComparator> unstable_compressinfo_registry;
+
   ECUtil::HashInfoRef get_hash_info(const hobject_t &hoid);
   
   friend struct ReadCB;

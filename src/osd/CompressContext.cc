@@ -117,11 +117,6 @@ void CompressContext::setup_for_append_or_recovery(map<string, bufferlist>& attr
                 bufferlist::iterator it = it_attrs->second.begin();
                 ::decode(masterRec, it);
                 prevMasterRec = masterRec;
-
-//stringstream sstr;
-//it_attrs->second.hexdump(sstr);
-//dout(1)<<__func__<<" ifed: cinfodump:"<<sstr.str()<<dendl;
-
         }
 
         it_attrs = attrset.find(ECUtil::get_cinfo_key());
@@ -301,15 +296,8 @@ assert( rec.original_length != 0 );
 
                 attrset[ECUtil::get_cinfo_key()]=bl;
 
-		bl.clear();
                 ::encode(masterRec,
-                        bl);
-                attrset[ECUtil::get_cinfo_master_key()]=bl;
-                
-/*stringstream sstr;
-bl.hexdump(sstr);
-dout(1)<<__func__<<" ifed: cinfodump:"<<sstr.str()<<dendl;*/
-
+                        attrset[ECUtil::get_cinfo_master_key()]);
 dout(1)<<__func__<<" ifed: cinfo:"<<attrset[ECUtil::get_cinfo_master_key()].length()<<","<<
     bl.length()<<","<<masterRec.block_info_record_length<<","<<masterRec.block_info_recordset_header_length<<","<<masterRec.current_original_pos<<","<<masterRec.current_compressed_pos<<
       ","<<prevMasterRec.current_original_pos<<","<<prevMasterRec.current_compressed_pos<<dendl;

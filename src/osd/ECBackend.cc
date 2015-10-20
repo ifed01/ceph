@@ -1541,21 +1541,15 @@ ECUtil::HashInfoRef ECBackend::get_hash_info(
 
 CompressContextRef ECBackend::get_compress_context_basic(const hobject_t &hoid)
 {
-        map<string, bufferlist> attrset;
-        load_attrs(hoid, attrset);
-        /*int r = 
-load_attrs(hoid, attrset);
-        if (r != 0)
-        {
-                derr << __func__ << ": load_attrs(" << hoid << ")"
-                        << " returned a null pointer and there is no "
-                        << " way to recover from such an error in this "
-                        << " context" << dendl;
-                assert(0);
-        }*/
-
-        CompressContextRef ref(new CompressContext);
-        ref->setup_for_append_or_recovery(attrset);
+        CompressContextRef ref = unstable_compressinfo_registry.lookup(hoid);
+        if (!ref) {
+                dout(10) << __func__ << ": not in cache " << hoid << dendl;
+                map<string, bufferlist> attrset;
+                load_attrs(hoid, attrset);
+                CompressContext ccxt;;
+                cctx.setup_for_append_or_recovery(attrset);
+                ref = unstable_compressinfo_registry.lookup_or_create(hoid, cctx);
+        }
         return ref;
 }
 
