@@ -198,7 +198,10 @@ struct TransGenerator : public boost::static_visitor<void> {
   void operator()(const ECTransaction::CloneOp &op) {
     assert(hash_infos.count(op.source));
     assert(hash_infos.count(op.target));
+    assert(compress_infos.count(op.source));
+    assert(compress_infos.count(op.target));
     *(hash_infos[op.target]) = *(hash_infos[op.source]);
+    *(compress_info[op.target]) = *(compress_info[op.source]);
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
 	 i != trans->end();
 	 ++i) {
@@ -211,8 +214,12 @@ struct TransGenerator : public boost::static_visitor<void> {
   void operator()(const ECTransaction::RenameOp &op) {
     assert(hash_infos.count(op.source));
     assert(hash_infos.count(op.destination));
+    assert(compress_infos.count(op.source));
+    assert(compress_infos.count(op.destination));
     *(hash_infos[op.destination]) = *(hash_infos[op.source]);
+    *(compress_infos[op.destination]) = *(compress_infos[op.source]);
     hash_infos[op.source]->clear();
+    compress_infos[op.source]->clear();
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
 	 i != trans->end();
 	 ++i) {
@@ -225,7 +232,9 @@ struct TransGenerator : public boost::static_visitor<void> {
   }
   void operator()(const ECTransaction::StashOp &op) {
     assert(hash_infos.count(op.oid));
+    assert(compress_infos.count(op.oid));
     hash_infos[op.oid]->clear();
+    compress_infos[op.oid]->clear();
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
 	 i != trans->end();
 	 ++i) {
@@ -239,7 +248,10 @@ struct TransGenerator : public boost::static_visitor<void> {
   }
   void operator()(const ECTransaction::RemoveOp &op) {
     assert(hash_infos.count(op.oid));
+    assert(compress_infos.count(op.oid));
+
     hash_infos[op.oid]->clear();
+    compress_infos[op.oid]->clear();
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
 	 i != trans->end();
 	 ++i) {
