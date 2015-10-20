@@ -113,6 +113,7 @@ public:
                 blocks(from.blocks),
                 prevMasterRec(from.prevMasterRec),
                 prev_blocks_encoded(from.prev_blocks_encoded) {}
+        virtual ~CompressContext();
         void clear() {
                 masterRec.clear();
                 blocks.clear();
@@ -145,7 +146,7 @@ public:
         int try_decompress(CompressionInterfaceRef cs_impl, const hobject_t& oid, uint64_t orig_offs, uint64_t len, bufferlist& cs_bl, bufferlist& res_bl) const;
         int try_compress(CompressionInterfaceRef cs_impl, const hobject_t& oid, uint64_t& off, const bufferlist& bl, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl);
 
-        uint64_t get__compressed_size() const { return masterRec.current_compressed_pos; }
+        uint64_t get_compressed_size() const { return masterRec.current_compressed_pos; }
 
 };
 typedef ceph::shared_ptr<CompressContext> CompressContextRef;

@@ -395,8 +395,9 @@ void ECBackend::handle_recovery_read_complete(
 
     CompressContext cctx;
     cctx.setup_for_append_or_recovery(op.xattrs);
-    if (ctx.get_compressed_size() < op.obc->obs.oi)
-            op.set_recovered_object_size(ctx.get_compressed_size());
+    uint64_t compressed_size = cctx.get_compressed_size();
+    if (compressed_size && compressed_size < op.obc->obs.oi.size )
+            op.set_recovered_object_size(compressed_size);
   }
   assert(op.xattrs.size());
   assert(op.obc);

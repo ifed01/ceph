@@ -95,8 +95,12 @@ void CompressContext::MasterRecord::decode(bufferlist::iterator &bl)
         ::decode(block_info_record_length, bl);
         ::decode(block_info_recordset_header_length, bl);
         ::decode(methods, bl);
-
         DECODE_FINISH(bl);
+}
+
+CompressContext::~CompressContext()
+{
+dout(1)<<__func__<<" ifed:"<<dendl;
 }
 
 bool  CompressContext::can_compress( uint64_t offs ) const
@@ -113,6 +117,11 @@ void CompressContext::setup_for_append_or_recovery(map<string, bufferlist>& attr
                 bufferlist::iterator it = it_attrs->second.begin();
                 ::decode(masterRec, it);
                 prevMasterRec = masterRec;
+
+//stringstream sstr;
+//it_attrs->second.hexdump(sstr);
+//dout(1)<<__func__<<" ifed: cinfodump:"<<sstr.str()<<dendl;
+
         }
 
         it_attrs = attrset.find(ECUtil::get_cinfo_key());
@@ -155,7 +164,7 @@ void CompressContext::setup_for_read(map<string, bufferlist>& attrset, uint64_t 
                                         {
                                                 it_bl_next.advance(record_set_size);
                                                 ::decode(recset_header_next, it_bl_next);
-
+dout(0)<<__func__<<" ifed:"<<recset_header_next.start_offset<<dendl;
                                                 found = recset_header_next.start_offset > start_offset;
                                                 if (!found)
                                                 {
@@ -195,6 +204,7 @@ dout(1)<<__func__<<cur_pos<<dendl;
 dout(0)<<__func__<<" ifed:"<<cur_pos<<"=("<<(int)rec.method_idx<<","<<cur_cpos<<")"<<dendl;
                                 }
 
+assert( rec.original_length != 0 );
                                 cur_pos += rec.original_length;
                                 cur_cpos += rec.compressed_length;
                         }
@@ -270,7 +280,7 @@ void CompressContext::flush( map<string, bufferlist> & attrset)
                                 rec = BlockInfoRecord(it->second.method_idx, masterRec.current_original_pos - it->first, masterRec.current_compressed_pos - it->second.target_offset);
                         else
                                 rec = BlockInfoRecord(it->second.method_idx, it_next->first - it->first, it_next->second.target_offset - it->second.target_offset);
-
+assert( rec.original_length != 0 );
                         if (record_set_size == 0){ //first record to be added - need to measure rec sizes
                                 size_t old_len = bl.length();
                                 ::encode(header, bl);
@@ -291,10 +301,18 @@ void CompressContext::flush( map<string, bufferlist> & attrset)
 
                 attrset[ECUtil::get_cinfo_key()]=bl;
 
+		bl.clear();
                 ::encode(masterRec,
-                        attrset[ECUtil::get_cinfo_master_key()]);
+                        bl);
+                attrset[ECUtil::get_cinfo_master_key()]=bl;
+                
+/*stringstream sstr;
+bl.hexdump(sstr);
+dout(1)<<__func__<<" ifed: cinfodump:"<<sstr.str()<<dendl;*/
+
 dout(1)<<__func__<<" ifed: cinfo:"<<attrset[ECUtil::get_cinfo_master_key()].length()<<","<<
-    bl.length()<<","<<masterRec.block_info_record_length<<","<<masterRec.block_info_recordset_header_length<<dendl;
+    bl.length()<<","<<masterRec.block_info_record_length<<","<<masterRec.block_info_recordset_header_length<<","<<masterRec.current_original_pos<<","<<masterRec.current_compressed_pos<<
+      ","<<prevMasterRec.current_original_pos<<","<<prevMasterRec.current_compressed_pos<<dendl;
         }
 }
 
@@ -338,7 +356,12 @@ void CompressContext::append_block(uint64_t original_offset,
         uint8_t method_idx = masterRec.add_get_method(method);
 
         blocks[original_offset] = BlockInfo(method_idx, masterRec.current_compressed_pos);
+//dout(0)<<__func__<<" ifed:"<<original_offset<<" "<<original_size<<dendl;
+assert(original_size != 0 );
+if( original_offset != masterRec.current_original_pos )
+  dout(0)<<__func__<<" ifed:"<<original_offset<<" "<<original_size<<" "<<masterRec.current_original_pos<<" "<<masterRec.current_compressed_pos<<dendl;
 
+assert(original_offset == masterRec.current_original_pos );
         masterRec.current_original_pos += original_size;
 
         masterRec.current_compressed_pos += new_block_size;
