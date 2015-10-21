@@ -316,6 +316,7 @@ private:
 		       const string &crush_ruleset_name,
                        unsigned pg_num, unsigned pgp_num,
 		       const string &erasure_code_profile,
+           const string &compression_type,
                        const unsigned pool_type,
                        const uint64_t expected_num_objects,
                        FastReadType fast_read,
