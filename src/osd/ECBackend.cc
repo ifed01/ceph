@@ -189,7 +189,6 @@ ECBackend::ECBackend(
 
 PGBackend::RecoveryHandle *ECBackend::open_recovery_op()
 {
-  dout(1) << __func__ <<" ifed:"<< dendl;
   return new ECRecoveryHandle;
 }
 
@@ -249,8 +248,6 @@ void ECBackend::handle_recovery_push(
   RecoveryMessages *m)
 {
   assert(m->t);
-
-  dout(1) << __func__ <<" ifed:"<< op.soid << dendl;
 
   bool oneshot = op.before_progress.first && op.after_progress.data_complete;
   ghobject_t tobj;
@@ -353,12 +350,12 @@ void ECBackend::handle_recovery_read_complete(
   boost::optional<map<string, bufferlist> > attrs,
   RecoveryMessages *m)
 {
-  dout(1) << __func__ <<" ifed:"<< ": returned " << hoid << " "
+  /*dout(1) << __func__ <<" ifed:"<< ": returned " << hoid << " "
 	   << "(" << to_read.get<0>()
 	   << ", " << to_read.get<1>()
 	   << ", " << to_read.get<2>()
 	   << ")"
-	   << dendl;
+	   << dendl;*/
   assert(recovery_ops.count(hoid));
   RecoveryOp &op = recovery_ops[hoid];
   assert(op.returned_data.empty());
@@ -375,7 +372,7 @@ void ECBackend::handle_recovery_read_complete(
     from[i->first.shard].claim(i->second);
   }
   dout(10) << __func__ << ": " << from << dendl;
-  ECUtil::decode(sinfo, ec_impl, from, target); //FIXME: check if we need decompression here!!!
+  ECUtil::decode(sinfo, ec_impl, from, target);
   if (attrs) {
     op.xattrs.swap(*attrs);
 
