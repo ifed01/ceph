@@ -1546,7 +1546,7 @@ CompressContextRef ECBackend::get_compress_context_basic(const hobject_t &hoid)
                 dout(10) << __func__ << ": not in cache " << hoid << dendl;
                 map<string, bufferlist> attrset;
                 load_attrs(hoid, attrset);
-                CompressContext ccxt;;
+                CompressContext cctx;
                 cctx.setup_for_append_or_recovery(attrset);
                 ref = unstable_compressinfo_registry.lookup_or_create(hoid, cctx);
         }

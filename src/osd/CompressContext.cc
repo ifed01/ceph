@@ -298,9 +298,14 @@ assert( rec.original_length != 0 );
 
                 ::encode(masterRec,
                         attrset[ECUtil::get_cinfo_master_key()]);
+
 dout(1)<<__func__<<" ifed: cinfo:"<<attrset[ECUtil::get_cinfo_master_key()].length()<<","<<
     bl.length()<<","<<masterRec.block_info_record_length<<","<<masterRec.block_info_recordset_header_length<<","<<masterRec.current_original_pos<<","<<masterRec.current_compressed_pos<<
       ","<<prevMasterRec.current_original_pos<<","<<prevMasterRec.current_compressed_pos<<dendl;
+
+                prev_blocks_encoded.swap(bl);
+                prevMasterRec = masterRec;
+
         }
 }
 

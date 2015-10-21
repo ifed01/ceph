@@ -201,7 +201,7 @@ struct TransGenerator : public boost::static_visitor<void> {
     assert(compress_infos.count(op.source));
     assert(compress_infos.count(op.target));
     *(hash_infos[op.target]) = *(hash_infos[op.source]);
-    *(compress_info[op.target]) = *(compress_info[op.source]);
+    *(compress_infos[op.target]) = *(compress_infos[op.source]);
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
 	 i != trans->end();
 	 ++i) {
