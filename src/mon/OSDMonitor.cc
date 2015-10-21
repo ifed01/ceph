@@ -4160,12 +4160,12 @@ int OSDMonitor::prepare_new_pool(MonOpRequestRef op)
   if (m->auid)
     return prepare_new_pool(m->name, m->auid, m->crush_rule, ruleset_name,
 			    0, 0,
-                            erasure_code_profile,
+                            erasure_code_profile, "none",
 			    pg_pool_t::TYPE_REPLICATED, 0, FAST_READ_OFF, &ss);
   else
     return prepare_new_pool(m->name, session->auid, m->crush_rule, ruleset_name,
 			    0, 0,
-                            erasure_code_profile,
+                            erasure_code_profile, "none",
 			    pg_pool_t::TYPE_REPLICATED, 0, FAST_READ_OFF, &ss);
 }
 
@@ -4548,6 +4548,7 @@ int OSDMonitor::get_crush_ruleset(const string &ruleset_name,
  * @param pg_num The pg_num to use. If set to 0, will use the system default
  * @param pgp_num The pgp_num to use. If set to 0, will use the system default
  * @param erasure_code_profile The profile name in OSDMap to be used for erasure code
+ * @param compression_type The compression plugin to be used with erasure pool
  * @param pool_type TYPE_ERASURE, or TYPE_REP
  * @param expected_num_objects expected number of objects on the pool
  * @param fast_read fast read type. 
@@ -4560,6 +4561,7 @@ int OSDMonitor::prepare_new_pool(string& name, uint64_t auid,
 				 const string &crush_ruleset_name,
                                  unsigned pg_num, unsigned pgp_num,
 				 const string &erasure_code_profile,
+         const string &compression_type,
                                  const unsigned pool_type,
                                  const uint64_t expected_num_objects,
                                  FastReadType fast_read,
@@ -4684,6 +4686,7 @@ int OSDMonitor::prepare_new_pool(string& name, uint64_t auid,
     g_conf->osd_pool_default_cache_target_full_ratio * 1000000;
   pi->cache_min_flush_age = g_conf->osd_pool_default_cache_min_flush_age;
   pi->cache_min_evict_age = g_conf->osd_pool_default_cache_min_evict_age;
+  pi->properties["compression_type"] = compression_type;
   pending_inc.new_pool_names[pool] = name;
   return 0;
 }
@@ -4867,6 +4870,12 @@ int OSDMonitor::prepare_command_pool_set(map<string,cmd_vartype> &cmdmap,
        }
     }
     p.min_size = n;
+  } else if (var == "compression_type") {
+    if (p.type != pg_pool_t::TYPE_ERASURE) {
+      ss << "compression can be used with erasure pools only";
+      return -EINVAL;
+    }
+    p.properties["compression_type"] = val;
   } else if (var == "auid") {
     if (interr.length()) {
       ss << "error parsing integer value '" << val << "': " << interr;
@@ -6728,11 +6737,6 @@ done:
 	  err = osdmap.get_erasure_code_profile_default(g_ceph_context,
 						      profile_map,
 						      &ss);
-	  // set compression field in profile only to valid compressor
-	  // if no such field - no compression used
-	  if (!compression_type.empty()) {
-		  profile_map["compression"] = compression_type;
-	  }
 	  if (err)
 	    goto reply;
 	  dout(20) << "erasure code profile " << erasure_code_profile << " set" << dendl;
@@ -6786,7 +6790,7 @@ done:
 			   -1, // default crush rule
 			   ruleset_name,
 			   pg_num, pgp_num,
-			   erasure_code_profile, pool_type,
+			   erasure_code_profile, compression_type, pool_type,
                            (uint64_t)expected_num_objects,
                            fast_read,
 			   &ss);
