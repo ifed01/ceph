@@ -1,7 +1,7 @@
 include Makefile-env.am
 
-SUBDIRS += ocf java tracing
-DIST_SUBDIRS += gmock ocf java tracing
+SUBDIRS += ocf java
+DIST_SUBDIRS += gmock ocf java
 
 if NO_GIT_VERSION
 export NO_VERSION="yes"
