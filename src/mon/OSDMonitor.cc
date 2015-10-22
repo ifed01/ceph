@@ -4251,6 +4251,16 @@ int OSDMonitor::crush_ruleset_create_erasure(const string &name,
   }
 }
 
+int OSDMonitor::get_compressor(const string &compression_type,
+         CompressorRef *compressor,
+         ostream *ss) const
+{
+  CompressionPluginRegistry &instance = CompressionPluginRegistry::instance();
+  return instance.factory(compression_type,
+        g_conf->compression_dir,
+        compressor, ss);
+}
+
 int OSDMonitor::get_erasure_code(const string &erasure_code_profile,
 				 ErasureCodeInterfaceRef *erasure_code,
 				 ostream *ss) const
@@ -4620,6 +4630,11 @@ int OSDMonitor::prepare_new_pool(string& name, uint64_t auid,
   if (r) {
     dout(10) << " prepare_pool_stripe_width returns " << r << dendl;
     return r;
+  }
+
+  if (!compression_type.empty() && compression_type != "none") {
+    CompressorRef cs;
+    r = get_compressor(compression_type, cs, ss);
   }
 
   for (map<int64_t,string>::iterator p = pending_inc.new_pool_names.begin();
