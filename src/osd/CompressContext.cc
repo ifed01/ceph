@@ -136,6 +136,7 @@ void CompressContext::setup_for_read(map<string, bufferlist>& attrset, uint64_t 
                 ::decode(masterRec, it_val);
 
                 assert(end_offset <= masterRec.current_original_pos);
+                dout(1)<<__func__<<masterRec.current_original_pos<<","<<masterRec.current_compressed_pos<<dendl;
 
 
                 it = attrset.find(ECUtil::get_cinfo_key());
@@ -191,7 +192,7 @@ void CompressContext::setup_for_read(map<string, bufferlist>& attrset, uint64_t 
                                         blocks[cur_pos] = BlockInfo(rec.method_idx, cur_cpos);
                                         if( cur_pos >= end_offset )
                                             stop=true;
-                                        //dout(0)<<__func__<<" ifed:"<<cur_pos<<"=("<<(int)rec.method_idx<<","<<cur_cpos<<")"<<dendl;
+                                        dout(0)<<__func__<<" ifed:"<<cur_pos<<"=("<<(int)rec.method_idx<<","<<cur_cpos<<")"<<dendl;
                                 }
 
                                 cur_pos += rec.original_length;
@@ -200,7 +201,7 @@ void CompressContext::setup_for_read(map<string, bufferlist>& attrset, uint64_t 
 
                         if ( start_found){
                                 blocks[found_start_offset] = found_bi;
-                                //dout(0)<<__func__<<" ifed:"<<found_start_offset<<"==("<<(int)found_bi.method_idx<<","<<found_bi.target_offset<<")"<<dendl;
+                                dout(0)<<__func__<<" ifed:"<<found_start_offset<<"==("<<(int)found_bi.method_idx<<","<<found_bi.target_offset<<")"<<dendl;
                         }
                 }
         }
@@ -217,9 +218,9 @@ void CompressContext::flush( map<string, bufferlist> & attrset)
                 uint64_t offs = prevMasterRec.current_original_pos;
                 uint64_t coffs = prevMasterRec.current_compressed_pos;
 
+                BlockInfoRecord rec;
                 for (CompressContext::BlockMap::const_iterator it = blocks.begin(); it != blocks.end(); it++) {
                         BlockInfoRecordSetHeader header(offs, coffs);
-                        BlockInfoRecord rec;
                         CompressContext::BlockMap::const_iterator it_next = it;
                         ++it_next;
                         if (it_next == blocks.end())
@@ -250,10 +251,10 @@ void CompressContext::flush( map<string, bufferlist> & attrset)
                 ::encode(masterRec,
                         attrset[ECUtil::get_cinfo_master_key()]);
 
-                /*dout(1)<<__func__<<" ifed: cinfo:"<<attrset[ECUtil::get_cinfo_master_key()].length()<<","<<
+                dout(1)<<__func__<<" ifed: cinfo:"<<attrset[ECUtil::get_cinfo_master_key()].length()<<","<<
                         bl.length()<<","<<masterRec.block_info_record_length<<","<<masterRec.block_info_recordset_header_length<<","<<masterRec.current_original_pos<<","<<masterRec.current_compressed_pos<<
                         ","<<prevMasterRec.current_original_pos<<","<<prevMasterRec.current_compressed_pos<<dendl;
-                        */
+                        
 
                 prev_blocks_encoded.swap(bl);
                 prevMasterRec = masterRec;
@@ -323,7 +324,7 @@ pair<uint64_t, uint64_t> CompressContext::offset_len_to_compressed_block(const p
         uint64_t res_start_offs = masterRec.current_original_pos != 0 ? map_offset(start_offs, false).second : start_offs;
         uint64_t res_end_offs = masterRec.current_original_pos != 0 ? map_offset(end_offs, true).second : end_offs + 1;
 
-        //dout(1)<<__func__<<current_original_pos<<","<<current_compressed_pos<<","<<blocks.size()<<dendl;
+        dout(1)<<__func__<<masterRec.current_original_pos<<","<<masterRec.current_compressed_pos<<","<<blocks.size()<<dendl;
         return std::pair<uint64_t, uint64_t>(res_start_offs, res_end_offs - res_start_offs);
 }
 
@@ -425,6 +426,9 @@ int CompressContext::try_decompress(CompressionInterfaceRef cs_impl, const hobje
                                 }
                                 else {
                                         assert( cs_impl != NULL);
+
+                                        dout(0) << __func__ << ": prepare decompress:" << cs_bl_pos << ","
+                                                        << cs_bl.length()<<","<<cur_block_clen<<dendl;
                                         cs_bl1.substr_of(cs_bl, cs_bl_pos, MIN(cs_bl.length() - cs_bl_pos, cur_block_clen));
                                         int r = ECUtil::decompress(
                                                 cs_impl,

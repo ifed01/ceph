@@ -124,7 +124,7 @@ void CompressedECBackend::objects_read_async(
 
                 CompressBackendReadCallContext* ctx = new CompressBackendReadCallContext(cs_impl, cinfo, hoid, *it);
 
-//dout(1)<<__func__<<" ifed: add to read from ec:"<< tmp.first<<","<<tmp.second <<dendl;
+                dout(1)<<__func__<<" ifed: add to read from ec:"<< tmp.first<<","<<tmp.second <<dendl;
 
                 to_read_from_ec.push_back(
                         std::make_pair(

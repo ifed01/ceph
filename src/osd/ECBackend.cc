@@ -1716,6 +1716,7 @@ struct CallClientContexts :
                           res.returned.front().get<2>().begin();
                           j != res.returned.front().get<2>().end();
                   ++j) {
+dout(0)<<__func__<<" ifed:aaa:"<<j->first.shard<<","<<j->second.length()<<dendl;
                           to_decode[j->first.shard].claim(j->second);
                   }
                   ECUtil::decode(
