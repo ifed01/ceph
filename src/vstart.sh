@@ -418,11 +418,7 @@ if [ "$start_mon" -eq 1 ]; then
         rgw dns name = localhost
         filestore fd cache size = 32
         run dir = $CEPH_OUT_DIR
-<<<<<<< HEAD
-        ;enable experimental unrecoverable data corrupting features = newstore rocksdb
-=======
-        enable experimental unrecoverable data corrupting features = *
->>>>>>> 14f9ec5c4ee943e7ad9554c434675780f6b60b89
+       ;enable experimental unrecoverable data corrupting features = newstore rocksdb
 EOF
 if [ "$cephx" -eq 1 ] ; then
 cat <<EOF >> $conf_fn

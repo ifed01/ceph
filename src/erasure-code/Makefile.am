@@ -12,7 +12,7 @@ include erasure-code/isa/Makefile.am
 endif # WITH_BETTER_YASM_ELF64
 
 liberasure_code_la_SOURCES = \
-	erasure-code/ErasureCodePlugin.cc 
+	erasure-code/ErasureCodePlugin.cc
 erasure-code/ErasureCodePlugin.cc: ./ceph_ver.h
 liberasure_code_la_DEPENDENCIES = $(erasure_codelib_LTLIBRARIES)
 if LINUX

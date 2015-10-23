@@ -28,11 +28,10 @@
 #define dout_subsys ceph_subsys_osd
 #define DOUT_PREFIX_ARGS this
 #undef dout_prefix
-#define dout_prefix *_dout
-// #define dout_prefix _prefix(_dout, this)
-// static ostream& _prefix(std::ostream *_dout, PGBackend *pgb) {
-//   return *_dout << pgb->get_parent()->gen_dbg_prefix();
-// }
+#define dout_prefix _prefix(_dout, this)
+static ostream& _prefix(std::ostream *_dout, PGBackend *pgb) {
+  return *_dout << pgb->get_parent()->gen_dbg_prefix();
+}
 
 // -- ObjectModDesc --
 struct RollbackVisitor : public ObjectModDesc::Visitor {

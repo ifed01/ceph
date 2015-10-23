@@ -59,7 +59,7 @@ check_TESTPROGRAMS += unittest_compression_zlib
 
 unittest_compression_plugin_zlib_SOURCES = \
 	compressor/CompressionPlugin.cc \
-	test/compressor/test_compression_plugin_zlib.cc
+	test/compressor/test_compression_plugin_zlib.cc \
 	$(zlib_sources)
 unittest_compression_plugin_zlib_CXXFLAGS = ${AM_CXXFLAGS} ${UNITTEST_CXXFLAGS}
 unittest_compression_plugin_zlib_LDADD = $(LIBOSD) $(LIBCOMMON) $(UNITTEST_LDADD) $(CEPH_GLOBAL) $(LIBCOMPRESSOR)
