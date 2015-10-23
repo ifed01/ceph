@@ -200,7 +200,7 @@ public:
   void generate_transactions(
     map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
     map<hobject_t, CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
-    ErasureCodeInterfaceRef &ecimpl, CompressionInterfaceRef &csimpl,
+    ErasureCodeInterfaceRef &ecimpl, CompressorRef &csimpl,
     pg_t pgid,
     const ECUtil::stripe_info_t &sinfo,
     map<shard_id_t, ObjectStore::Transaction> *transactions,

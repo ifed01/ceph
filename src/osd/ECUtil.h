@@ -20,7 +20,6 @@
 
 #include "include/memory.h"
 #include "erasure-code/ErasureCodeInterface.h"
-#include "compression/CompressionInterface.h"
 #include "include/buffer.h"
 #include "include/assert.h"
 #include "include/encoding.h"
@@ -103,17 +102,6 @@ int decode(
   ErasureCodeInterfaceRef &ec_impl,
   map<int, bufferlist> &to_decode,
   map<int, bufferlist*> &out);
-
-int decompress(
-  CompressionInterfaceRef &cs_impl,
-  int original_size,
-  bufferlist &in,
-  bufferlist *out);
-
-int compress(
-  CompressionInterfaceRef &cs_impl,
-  bufferlist &in,
-  bufferlist *out);
 
 int encode(
   const stripe_info_t &sinfo,

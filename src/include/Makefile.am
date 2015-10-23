@@ -61,6 +61,7 @@ noinst_HEADERS += \
 	include/cmp.h \
 	include/color.h \
 	include/compat.h \
+	include/sock_compat.h \
 	include/crc32c.h \
 	include/encoding.h \
 	include/err.h \
@@ -113,4 +114,5 @@ noinst_HEADERS += \
 	include/memory.h \
 	include/rados/memory.h \
 	include/unordered_set.h \
-	include/unordered_map.h
+	include/unordered_map.h \
+	include/timegm.h

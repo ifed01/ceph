@@ -18,7 +18,7 @@
 #include <map>
 
 #include "include/memory.h"
-#include "compression/CompressionInterface.h"
+#include "compressor/Compressor.h"
 #include "include/buffer.h"
 #include "include/assert.h"
 #include "include/encoding.h"
@@ -104,7 +104,7 @@ private:
         static bool less_upper(  const uint64_t&, const BlockMap::value_type& );
         static bool less_lower(  const BlockMap::value_type&, const uint64_t& );
 
-        int do_compress(CompressionInterfaceRef cs_impl, const ECUtil::stripe_info_t& sinfo, bufferlist& block2compress, string& res_method, bufferlist& result_bl) const;
+        int do_compress(CompressorRef cs_impl, const ECUtil::stripe_info_t& sinfo, bufferlist& block2compress, string& res_method, bufferlist& result_bl) const;
 
 public:
         CompressContext() {}
@@ -143,10 +143,11 @@ public:
 
         pair<uint64_t, uint64_t> offset_len_to_compressed_block(const pair<uint64_t, uint64_t> offs_len_pair) const;
 
-        int try_decompress(CompressionInterfaceRef cs_impl, const hobject_t& oid, uint64_t orig_offs, uint64_t len, bufferlist& cs_bl, bufferlist& res_bl) const;
-        int try_compress(CompressionInterfaceRef cs_impl, const hobject_t& oid, uint64_t& off, const bufferlist& bl, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl);
+        int try_decompress(CompressorRef cs_impl, const hobject_t& oid, uint64_t orig_offs, uint64_t len, bufferlist& cs_bl, bufferlist& res_bl) const;
+        int try_compress(CompressorRef cs_impl, const hobject_t& oid, uint64_t& off, const bufferlist& bl, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl);
 
         uint64_t get_compressed_size() const { return masterRec.current_compressed_pos; }
+        uint64_t get_block_size( uint64_t stripe_width ) const;
 
 };
 typedef ceph::shared_ptr<CompressContext> CompressContextRef;

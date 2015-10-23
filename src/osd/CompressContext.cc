@@ -107,6 +107,11 @@ bool  CompressContext::can_compress( uint64_t offs ) const
         return (offs == 0 && masterRec.current_compressed_pos == 0) || masterRec.current_compressed_pos != 0;
 }
 
+uint64_t CompressContext::get_block_size(uint64_t stripe_width) const
+{
+    return 32*stripe_width; //FIXME: make confifurable?
+}
+
 void CompressContext::setup_for_append_or_recovery(map<string, bufferlist>& attrset)
 {
         clear();
@@ -365,7 +370,7 @@ pair<uint64_t, uint64_t> CompressContext::map_offset(uint64_t offs, bool next_bl
 }
 
 const int CompressContextDebugLevel = 1;
-int CompressContext::try_decompress(CompressionInterfaceRef cs_impl, const hobject_t& oid, uint64_t orig_offs, uint64_t len, bufferlist& cs_bl, bufferlist& res_bl) const
+int CompressContext::try_decompress(CompressorRef cs_impl, const hobject_t& oid, uint64_t orig_offs, uint64_t len, bufferlist& cs_bl, bufferlist& res_bl) const
 {
         int res = 0;
         uint64_t appended = 0;
@@ -430,11 +435,9 @@ int CompressContext::try_decompress(CompressionInterfaceRef cs_impl, const hobje
                                         dout(0) << __func__ << ": prepare decompress:" << cs_bl_pos << ","
                                                         << cs_bl.length()<<","<<cur_block_clen<<dendl;
                                         cs_bl1.substr_of(cs_bl, cs_bl_pos, MIN(cs_bl.length() - cs_bl_pos, cur_block_clen));
-                                        int r = ECUtil::decompress(
-                                                cs_impl,
-                                                cur_block_len,
+                                        int r = cs_impl->decompress(
                                                 cs_bl1,
-                                                &tmp_bl); //FIXME: apply decompression method depending on the indicated one
+                                                tmp_bl); //FIXME: apply decompression method depending on the indicated one
                                         if (r< 0)
                                         {
                                                 dout(0) << __func__ << ": decompress(" << cur_block_method << ")"
@@ -465,11 +468,11 @@ int CompressContext::try_decompress(CompressionInterfaceRef cs_impl, const hobje
 }
 
 
-int CompressContext::do_compress(CompressionInterfaceRef cs_impl, const ECUtil::stripe_info_t& sinfo, bufferlist& block2compress, std::string& res_method, bufferlist& result_bl) const
+int CompressContext::do_compress(CompressorRef cs_impl, const ECUtil::stripe_info_t& sinfo, bufferlist& block2compress, std::string& res_method, bufferlist& result_bl) const
 {
         int res = -1;
         bufferlist tmp_bl;
-        int r = ECUtil::compress(cs_impl, block2compress, &tmp_bl);
+        int r = cs_impl->compress(block2compress, tmp_bl);
         if (r == 0) {
                 if (sinfo.pad_to_stripe_width(tmp_bl.length()) < sinfo.pad_to_stripe_width(block2compress.length())) {
                         // align
@@ -478,7 +481,7 @@ int CompressContext::do_compress(CompressionInterfaceRef cs_impl, const ECUtil::
                                 sinfo.get_stripe_width() -
                                 tmp_bl.length() % sinfo.get_stripe_width());
 
-                        res_method = cs_impl->get_profile().at("plugin"); //FIXME: add a method to access compression method directly
+                        res_method = cs_impl->get_method_name(); //FIXME: add a method to access compression method directly
                         result_bl.append(tmp_bl);
                 }
                 else {
@@ -490,7 +493,7 @@ int CompressContext::do_compress(CompressionInterfaceRef cs_impl, const ECUtil::
         return res;
 }
 
-int CompressContext::try_compress(CompressionInterfaceRef cs_impl, const hobject_t& oid, uint64_t& off, const bufferlist& bl0, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl)
+int CompressContext::try_compress(CompressorRef cs_impl, const hobject_t& oid, uint64_t& off, const bufferlist& bl0, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl)
 {
         bufferlist bl_cs(bl0);
         bufferlist bl;
@@ -509,7 +512,7 @@ int CompressContext::try_compress(CompressionInterfaceRef cs_impl, const hobject
 
                         uint64_t cur_offs = off;
                         while (!it.end() && !failure){
-                                uint64_t block_size = MIN( it.get_remaining(), cs_impl->get_block_size(sinfo.get_stripe_width()));
+                                uint64_t block_size = MIN( it.get_remaining(), get_block_size(sinfo.get_stripe_width()));
                                 bufferlist block2compress, compressed_block;
                                 uint64_t prev_len = bl.length();
                                 it.copy(block_size, block2compress);

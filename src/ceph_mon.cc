@@ -46,7 +46,6 @@ using namespace std;
 #include "include/assert.h"
 
 #include "erasure-code/ErasureCodePlugin.h"
-#include "compression/CompressionPlugin.h"
 
 #define dout_subsys ceph_subsys_mon
 
@@ -192,15 +191,6 @@ int preload_erasure_code()
   string plugins = g_conf->osd_erasure_code_plugins;
   stringstream ss;
   int r = ErasureCodePluginRegistry::instance().preload(
-    plugins,
-    g_conf->erasure_code_dir,
-    &ss);
-  if (r)
-    derr << ss.str() << dendl;
-  else
-    dout(10) << ss.str() << dendl;
-  plugins = g_conf->osd_compression_plugins;
-  r = CompressionPluginRegistry::instance().preload(
     plugins,
     g_conf->erasure_code_dir,
     &ss);

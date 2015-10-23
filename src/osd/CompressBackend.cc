@@ -12,8 +12,6 @@
  *
  */
 
-//FIXME: check if we need decompress on Recovery!!!!
-
 #include <boost/variant.hpp>
 #include <boost/optional/optional_io.hpp>
 #include <iostream>
@@ -35,14 +33,14 @@ typedef pair<boost::tuple<uint64_t, uint64_t, uint32_t>, pair<bufferlist*, Conte
 
 struct CompressBackendReadCallContext : public Context {
 
-        CompressionInterfaceRef cs_impl;
+        CompressorRef cs_impl;
         CompressContextRef ccontext;
         const hobject_t hoid;
         ReadRangeCallParam to_read;
         bufferlist intermediate_buffer;
 
         CompressBackendReadCallContext(
-                CompressionInterfaceRef cs_impl,
+                CompressorRef cs_impl,
                 const CompressContextRef& ccontext,
                 const hobject_t& hoid,
                 const ReadRangeCallParam& to_read)
@@ -83,7 +81,7 @@ CompressedECBackend::CompressedECBackend(
                         ObjectStore *store,
                         CephContext *cct,
                         ErasureCodeInterfaceRef ec_impl,
-                        CompressionInterfaceRef cs_impl,
+                        CompressorRef cs_impl,
                         uint64_t stripe_width) : 
         ECBackend( pg, coll, store, cct, ec_impl, cs_impl, stripe_width),
         cs_impl(cs_impl)
@@ -94,7 +92,8 @@ CompressedECBackend::CompressedECBackend(
 void CompressedECBackend::objects_read_async(
         const hobject_t &hoid,
         const list<ReadRangeCallParam> &to_read,
-        Context *on_complete)
+        Context *on_complete,
+        bool fast_read)
 {
         map<string, bufferlist> attrset;
         int r = load_attrs(hoid, attrset);
@@ -137,7 +136,7 @@ void CompressedECBackend::objects_read_async(
                                 ctx))
                         );
         }
-        ECBackend::objects_read_async(hoid, to_read_from_ec, on_complete);
+        ECBackend::objects_read_async(hoid, to_read_from_ec, on_complete, fast_read);
 }
 
 CompressContextRef CompressedECBackend::get_compress_context_on_read(

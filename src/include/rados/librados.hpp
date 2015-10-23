@@ -265,6 +265,10 @@ namespace librados
     OPERATION_IGNORE_CACHE       = LIBRADOS_OPERATION_IGNORE_CACHE,
     OPERATION_SKIPRWLOCKS        = LIBRADOS_OPERATION_SKIPRWLOCKS,
     OPERATION_IGNORE_OVERLAY     = LIBRADOS_OPERATION_IGNORE_OVERLAY,
+    // send requests to cluster despite the cluster or pool being
+    // marked full; ops will either succeed (e.g., delete) or return
+    // EDQUOT or ENOSPC
+    OPERATION_FULL_TRY           = LIBRADOS_OPERATION_FULL_TRY,
   };
 
   /*
@@ -418,7 +422,9 @@ namespace librados
      * @param src_fadvise_flags the fadvise flags for source object
      */
     void copy_from(const std::string& src, const IoCtx& src_ioctx,
-		   uint64_t src_version, uint32_t src_fadvise_flags);
+		   uint64_t src_version);
+    void copy_from2(const std::string& src, const IoCtx& src_ioctx,
+                    uint64_t src_version, uint32_t src_fadvise_flags);
 
     /**
      * undirty an object
@@ -771,10 +777,12 @@ namespace librados
 
 
     /// Start enumerating objects for a pool
-    NObjectIterator nobjects_begin(const bufferlist &filter=bufferlist());
+    NObjectIterator nobjects_begin();
+    NObjectIterator nobjects_begin(const bufferlist &filter);
     /// Start enumerating objects for a pool starting from a hash position
+    NObjectIterator nobjects_begin(uint32_t start_hash_position);
     NObjectIterator nobjects_begin(uint32_t start_hash_position,
-                                   const bufferlist &filter=bufferlist());
+                                   const bufferlist &filter);
     /// Iterator indicating the end of a pool
     const NObjectIterator& nobjects_end() const;
 
