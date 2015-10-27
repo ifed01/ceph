@@ -29,7 +29,7 @@ class Compressor {
   virtual int decompress(bufferlist &in, bufferlist &out) = 0;
   virtual const char* get_method_name() = 0;
 
-  static CompressorRef create(const string &type);
+  static CompressorRef create(const string &compression_dir, const string &type);
 };
 
 

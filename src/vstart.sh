@@ -27,11 +27,13 @@ if [ -z "$CEPH_BUILD_ROOT" ]; then
         [ -z "$CEPH_BIN" ] && CEPH_BIN=.
         [ -z "$CEPH_LIB" ] && CEPH_LIB=.libs
         [ -z $EC_PATH ] && EC_PATH=$CEPH_LIB
+        [ -z $CS_PATH ] && CS_PATH=$CEPH_LIB
         [ -z $OBJCLASS_PATH ] && OBJCLASS_PATH=$CEPH_LIB
 else
         [ -z $CEPH_BIN ] && CEPH_BIN=$CEPH_BUILD_ROOT/bin
         [ -z $CEPH_LIB ] && CEPH_LIB=$CEPH_BUILD_ROOT/lib
         [ -z $EC_PATH ] && EC_PATH=$CEPH_LIB/erasure-code
+        [ -z $CS_PATH ] && CS_PATH=$CEPH_LIB/compressor
         [ -z $OBJCLASS_PATH ] && OBJCLASS_PATH=$CEPH_LIB/rados-classes
 fi
 
@@ -413,6 +415,7 @@ if [ "$start_mon" -eq 1 ]; then
         mon data avail warn = 10
         mon data avail crit = 1
         erasure code dir = $EC_PATH
+        compression dir = $CS_PATH
         osd pool default erasure code profile = plugin=jerasure technique=reed_sol_van k=2 m=1 ruleset-failure-domain=osd
         rgw frontends = fastcgi, civetweb port=$CEPH_RGW_PORT
         rgw dns name = localhost

@@ -23,7 +23,7 @@
 #include "PGBackend.h"
 #include "OSD.h"
 #include "erasure-code/ErasureCodePlugin.h"
-#include "compressor/CompressionPlugin.h"
+#include "compressor/Compressor.h"
 
 #define dout_subsys ceph_subsys_osd
 #define DOUT_PREFIX_ARGS this
@@ -296,13 +296,13 @@ PGBackend *PGBackend::build_pg_backend(
       &ss);
     assert(ec_impl);
     // Compression* cs = (Compression*)(new CompressionFake());
-    CompressorRef cs_impl;// = CompressionInterfaceRef(cs);
-    CompressionPluginRegistry::instance().factory(
-      "snappy",
-//      "zlib",
-      g_conf->compression_dir,
-      &cs_impl,
-      &ss);
+    CompressorRef cs_impl = Compressor::create(g_conf->compression_dir, "zlib");// = CompressionInterfaceRef(cs);
+//     CompressionPluginRegistry::instance().factory(
+// //      "snappy",
+//       "zlib",
+//       g_conf->compression_dir,
+//       &cs_impl,
+//       &ss);
     assert( cs_impl ); 
 /*    CompressionProfile cp;
     cp["plugin"] = "zlib";

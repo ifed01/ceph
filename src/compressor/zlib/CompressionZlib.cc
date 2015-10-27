@@ -54,7 +54,7 @@ int CompressionZlib::compress(bufferlist &in, bufferlist &out)
     future_len = new_len;
     c_in = (unsigned char*)(*i).c_str();
     len = (*i).length();
-    int ret = ::compress(c_out,
+    int ret = ::compress(c_out, 
                          &future_len,
                          c_in,
                          len);

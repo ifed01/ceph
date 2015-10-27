@@ -575,6 +575,7 @@ OPTION(osd_erasure_code_plugins, OPT_STR,
        ) // list of erasure code plugins
 OPTION(osd_compression_plugins, OPT_STR,
        "zlib"
+       " snappy"
        ) // list of compression plugins
 
 // Allows the "peered" state for recovery and backfill below min_size
