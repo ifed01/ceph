@@ -16,13 +16,13 @@
  #include "CompressionPlugin.h"
 
 
-CompressorRef Compressor::create(const string &type)
+CompressorRef Compressor::create(const string &compression_dir, const string &type)
 {
   CompressorRef cs_impl = NULL;
   stringstream ss;
   ceph::CompressionPluginRegistry::instance().factory(
       type,
-      g_conf->compression_dir,
+      compression_dir,
       &cs_impl,
       &ss);
   assert(cs_impl != NULL);
