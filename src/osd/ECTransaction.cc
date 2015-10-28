@@ -67,7 +67,7 @@ struct TransGenerator : public boost::static_visitor<void> {
   map<hobject_t, CompressContextRef, hobject_t::BitwiseComparator> &compress_infos;
 
   ErasureCodeInterfaceRef &ecimpl;
-  CompressorRef &csimpl;
+  std::string compression_method;
   const pg_t pgid;
   const ECUtil::stripe_info_t sinfo;
   map<shard_id_t, ObjectStore::Transaction> *trans;
@@ -78,7 +78,8 @@ struct TransGenerator : public boost::static_visitor<void> {
   TransGenerator(
     map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
     map<hobject_t, CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
-    ErasureCodeInterfaceRef &ecimpl, CompressorRef &csimpl,
+    ErasureCodeInterfaceRef &ecimpl, 
+    const char* compression_method,
     pg_t pgid,
     const ECUtil::stripe_info_t &sinfo,
     map<shard_id_t, ObjectStore::Transaction> *trans,
@@ -87,7 +88,7 @@ struct TransGenerator : public boost::static_visitor<void> {
     stringstream *out)
     : hash_infos(hash_infos),
       compress_infos(compress_infos),
-      ecimpl(ecimpl), csimpl(csimpl), pgid(pgid),
+      ecimpl(ecimpl), compression_method(compression_method), pgid(pgid),
       sinfo(sinfo),
       trans(trans),
       temp_added(temp_added), temp_removed(temp_removed),
@@ -153,7 +154,7 @@ struct TransGenerator : public boost::static_visitor<void> {
 
     assert(compress_infos.count(op.oid));
     CompressContextRef cinfo = compress_infos[op.oid];
-    cinfo->try_compress( csimpl, op.oid, offset, op.bl, sinfo, bl );
+    cinfo->try_compress( compression_method, op.oid, offset, op.bl, sinfo, bl );
     cinfo->flush(attrset);
 
     assert(bl.length());
@@ -305,7 +306,8 @@ struct TransGenerator : public boost::static_visitor<void> {
 void ECTransaction::generate_transactions(
   map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
   map<hobject_t, CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
-  ErasureCodeInterfaceRef &ecimpl, CompressorRef &csimpl,
+  ErasureCodeInterfaceRef &ecimpl, 
+  const char* compression_method,
   pg_t pgid,
   const ECUtil::stripe_info_t &sinfo,
   map<shard_id_t, ObjectStore::Transaction> *transactions,
@@ -317,7 +319,7 @@ void ECTransaction::generate_transactions(
     hash_infos,
     compress_infos,
     ecimpl,
-    csimpl,
+    compression_method,
     pgid,
     sinfo,
     transactions,

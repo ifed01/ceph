@@ -23,15 +23,11 @@
 #include "PGBackend.h"
 #include "OSD.h"
 #include "erasure-code/ErasureCodePlugin.h"
-//#include "compressor/Compressor.h"
-#include "compressor/CompressionPlugin.h"
 
 #define dout_subsys ceph_subsys_osd
-//#define DOUT_PREFIX_ARGS this //FIXME: uncomment
+#define DOUT_PREFIX_ARGS this
 #undef dout_prefix
-//#define dout_prefix _prefix(_dout, this) //FIXME: uncomment
-//FIXME: remove below line
-#define dout_prefix *_dout
+#define dout_prefix _prefix(_dout, this)
 
 static ostream& _prefix(std::ostream *_dout, PGBackend *pgb) {
   return *_dout << pgb->get_parent()->gen_dbg_prefix();
@@ -299,25 +295,12 @@ PGBackend *PGBackend::build_pg_backend(
       &ec_impl,
       &ss);
     assert(ec_impl);
-    CompressorRef cs_impl;// = CompressionInterfaceRef(cs);
-    int r = CompressionPluginRegistry::instance().factory(
-      //"snappy",
-      "zlib",
-      g_conf->compression_dir,
-      &cs_impl,
-      &ss);
-    if( r != 0 )
-    dout(1)<<ss.str()<<dendl; 
-    assert( cs_impl ); 
-
-//    dout(10) << "!!!PGBackend::build_pg_backend" << ss.str() << dendl;
     return new CompressedECBackend(
       l,
       coll,
       store,
       cct,
       ec_impl,
-      cs_impl,
       pool.stripe_width);
   }
   default:

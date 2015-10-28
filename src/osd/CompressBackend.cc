@@ -33,20 +33,19 @@ typedef pair<boost::tuple<uint64_t, uint64_t, uint32_t>, pair<bufferlist*, Conte
 
 struct CompressBackendReadCallContext : public Context {
 
-        CompressorRef cs_impl;
+        std::string compressor_method;
         CompressContextRef ccontext;
         const hobject_t hoid;
         ReadRangeCallParam to_read;
         bufferlist intermediate_buffer;
 
         CompressBackendReadCallContext(
-                CompressorRef cs_impl,
+                const char* compressor_method,
                 const CompressContextRef& ccontext,
                 const hobject_t& hoid,
                 const ReadRangeCallParam& to_read)
-                : cs_impl(cs_impl), ccontext(ccontext), hoid(hoid), to_read(to_read)
+                : compressor_method(compressor_method), ccontext(ccontext), hoid(hoid), to_read(to_read)
         {
-                //assert(cs_impl != NULL);
                 assert(ccontext != NULL);
         }
 
@@ -55,7 +54,7 @@ struct CompressBackendReadCallContext : public Context {
                 if (r)
                 {
                         bufferlist bl;
-                        int res = ccontext->try_decompress(cs_impl,
+                        int res = ccontext->try_decompress(
                                         hoid,
                                         to_read.first.get<0>(),
                                         to_read.first.get<1>(),
@@ -81,10 +80,8 @@ CompressedECBackend::CompressedECBackend(
                         ObjectStore *store,
                         CephContext *cct,
                         ErasureCodeInterfaceRef ec_impl,
-                        CompressorRef cs_impl,
                         uint64_t stripe_width) : 
-        ECBackend( pg, coll, store, cct, ec_impl, cs_impl, stripe_width),
-        cs_impl(cs_impl)
+        ECBackend( pg, coll, store, cct, ec_impl, stripe_width)
 {
 }
 
@@ -121,7 +118,7 @@ void CompressedECBackend::objects_read_async(
 
                 tmp = cinfo->offset_len_to_compressed_block(make_pair(it->first.get<0>(), it->first.get<1>()));
 
-                CompressBackendReadCallContext* ctx = new CompressBackendReadCallContext(cs_impl, cinfo, hoid, *it);
+                CompressBackendReadCallContext* ctx = new CompressBackendReadCallContext(get_pool().get_compression_type(), cinfo, hoid, *it);
 
                 dout(1)<<__func__<<" ifed: add to read from ec:"<< tmp.first<<","<<tmp.second <<dendl;
 

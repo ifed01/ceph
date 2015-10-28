@@ -20,7 +20,6 @@
 #include "osd_types.h"
 #include <boost/optional/optional_io.hpp>
 #include "erasure-code/ErasureCodeInterface.h"
-#include "compressor/Compressor.h"
 #include "ECTransaction.h"
 #include "ECMsgTypes.h"
 #include "ECUtil.h"
@@ -413,8 +412,6 @@ public:
 
   CephContext *cct;
   ErasureCodeInterfaceRef ec_impl;
-  CompressorRef cs_impl;
-
 
   /**
    * ECRecPred
@@ -483,7 +480,6 @@ public:
     ObjectStore *store,
     CephContext *cct,
     ErasureCodeInterfaceRef ec_impl,
-    CompressorRef cs_impl,
     uint64_t stripe_width);
 
   /// Returns to_read replicas sufficient to reconstruct want

@@ -19,7 +19,6 @@
 #include "ECBackend.h"
 #include "osd_types.h"
 #include <boost/optional/optional_io.hpp>
-#include "compressor/Compressor.h"
 #include "ECTransaction.h"
 #include "ECMsgTypes.h"
 #include "ECUtil.h"
@@ -28,7 +27,6 @@
 
 class CompressedECBackend : public ECBackend {
 
-  CompressorRef cs_impl;
 
 protected:
    CompressContextRef get_compress_context_on_read(map<string, bufferlist>& attrset, uint64_t offs, uint64_t offs_last);
@@ -40,7 +38,6 @@ public:
     ObjectStore *store,
     CephContext *cct,
     ErasureCodeInterfaceRef ec_impl,
-    CompressorRef cs_impl,
     uint64_t stripe_width);
 
   virtual void objects_read_async(

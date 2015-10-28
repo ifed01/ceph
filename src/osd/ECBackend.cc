@@ -175,12 +175,10 @@ ECBackend::ECBackend(
   ObjectStore *store,
   CephContext *cct,
   ErasureCodeInterfaceRef ec_impl,
-  CompressorRef cs_impl,
   uint64_t stripe_width)
   : PGBackend(pg, store, coll),
     cct(cct),
     ec_impl(ec_impl),
-    cs_impl(cs_impl),
     sinfo(ec_impl->get_data_chunk_count(), stripe_width) {
   assert((ec_impl->get_data_chunk_count() *
 	  ec_impl->get_chunk_size(stripe_width)) == stripe_width);
@@ -1844,7 +1842,7 @@ void ECBackend::start_write(Op *op) {
     op->unstable_hash_infos,
     op->compress_infos,
     ec_impl,
-    cs_impl,
+    get_pool().get_compression_type(),
     get_parent()->get_info().pgid.pgid,
     sinfo,
     &trans,

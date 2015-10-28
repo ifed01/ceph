@@ -1048,7 +1048,7 @@ public:
   string erasure_code_profile; ///< name of the erasure code profile in OSDMap
   epoch_t last_change;      ///< most recent epoch changed, exclusing snapshot changes
   epoch_t last_force_op_resend; ///< last epoch that forced clients to resend
-  snapid_t snap_seq;        ///< seq for per-pool snapshot
+  snapid_t snap_seq;        ///< seq for p      er-pool snapshot
   epoch_t snap_epoch;       ///< osdmap epoch of last snap
   uint64_t auid;            ///< who owns the pg
   __u32 crash_replay_interval; ///< seconds to allow clients to replay ACKed but unCOMMITted requests
@@ -1254,6 +1254,8 @@ public:
   uint64_t get_quota_max_objects() {
     return quota_max_objects;
   }
+
+  const char* get_compression_type() const;
 
   static int calc_bits_of(int t);
   void calc_pg_masks();

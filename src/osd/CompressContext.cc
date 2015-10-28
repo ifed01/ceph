@@ -4,6 +4,8 @@
 #include "include/encoding.h"
 #include "ECUtil.h"
 #include "CompressContext.h"
+#include "compressor/Compressor.h"
+#include "compressor/CompressionPlugin.h"
 #include "common/debug.h"
 
 
@@ -370,7 +372,7 @@ pair<uint64_t, uint64_t> CompressContext::map_offset(uint64_t offs, bool next_bl
 }
 
 const int CompressContextDebugLevel = 1;
-int CompressContext::try_decompress(CompressorRef cs_impl, const hobject_t& oid, uint64_t orig_offs, uint64_t len, bufferlist& cs_bl, bufferlist& res_bl) const
+int CompressContext::try_decompress(const hobject_t& oid, uint64_t orig_offs, uint64_t len, bufferlist& cs_bl, bufferlist& res_bl) const
 {
         int res = 0;
         uint64_t appended = 0;
@@ -467,8 +469,7 @@ int CompressContext::try_decompress(CompressorRef cs_impl, const hobject_t& oid,
         return res;
 }
 
-
-int CompressContext::do_compress(CompressorRef cs_impl, const ECUtil::stripe_info_t& sinfo, bufferlist& block2compress, std::string& res_method, bufferlist& result_bl) const
+int CompressContext::do_compress(const std::string& compression_method, const ECUtil::stripe_info_t& sinfo, bufferlist& block2compress, bufferlist& result_bl) const
 {
         int res = -1;
         bufferlist tmp_bl;
@@ -481,19 +482,18 @@ int CompressContext::do_compress(CompressorRef cs_impl, const ECUtil::stripe_inf
                                 sinfo.get_stripe_width() -
                                 tmp_bl.length() % sinfo.get_stripe_width());
 
-                        res_method = cs_impl->get_method_name(); //FIXME: add a method to access compression method directly
                         result_bl.append(tmp_bl);
+                        res = 1;
                 }
                 else {
-                        res_method.clear();
                         result_bl.append(block2compress);
+                        res = 0;
                 }
-                res = 0;
         }
         return res;
 }
 
-int CompressContext::try_compress(CompressorRef cs_impl, const hobject_t& oid, uint64_t& off, const bufferlist& bl0, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl)
+int CompressContext::try_compress(const std::string& compression_method0, const hobject_t& oid, uint64_t& off, const bufferlist& bl0, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl)
 {
         bufferlist bl_cs(bl0);
         bufferlist bl;
@@ -503,6 +503,15 @@ int CompressContext::try_compress(CompressorRef cs_impl, const hobject_t& oid, u
 
         bool compressed = false, failure = false;
         uint64_t prev_compressed_pos = masterRec.current_compressed_pos;
+        CompressorRef cs_impl;
+        stringstream ss;
+        int r = CompressionPluginRegistry::instance().factory(
+                compression_method,
+                g_conf->compression_dir,
+                &cs_impl,
+                &ss);
+        if( r != 0 )
+                dout(1)<<"Failed to create compression engine:"<<ss.str()<<dendl;
 
         //apply compression if that's a first block or it's been already applied to previous blocks
         if (can_compress(off) && cs_impl!=NULL) {
@@ -517,14 +526,13 @@ int CompressContext::try_compress(CompressorRef cs_impl, const hobject_t& oid, u
                                 uint64_t prev_len = bl.length();
                                 it.copy(block_size, block2compress);
 
-                                std::string cmethod;
-                                int r0 = do_compress(cs_impl, sinfo, block2compress, cmethod, bl);
-                                if (r0 != 0) {
+                                int r0 = do_compress(compression_method0, cs_impl, sinfo, block2compress, bl);
+                                if (r0 < 0) {
                                         dout(CompressContextDebugLevel) << "ifed: block compression failed, left uncompressed, oid=" << oid << dendl;
                                         failure = true;
                                 }
                                 else{
-                                        new_cinfo.append_block(cur_offs, block2compress.length(), cmethod, bl.length() - prev_len);
+                                        new_cinfo.append_block(cur_offs, block2compress.length(), r0 ? compression_method : "", bl.length() - prev_len);
                                 }
                                 cur_offs += block2compress.length();
                         }
