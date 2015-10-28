@@ -15,18 +15,9 @@
 
 // -----------------------------------------------------------------------------
 #include "ceph_ver.h"
-#include "common/debug.h"
 #include "compressor/CompressionPlugin.h"
 #include "SnappyCompressor.h"
 // -----------------------------------------------------------------------------
-#define dout_subsys ceph_subsys_osd
-#undef dout_prefix
-#define dout_prefix _prefix(_dout)
-
-static ostream& _prefix(std::ostream* _dout)
-{
-  return *_dout << "CompressionPluginSnappy: ";
-}
 
 class CompressionPluginSnappy : public CompressionPlugin {
 public:
@@ -35,8 +26,11 @@ public:
                       CompressorRef *cs,
                       ostream *ss)
   {
-    SnappyCompressor *interface = new SnappyCompressor();
-    *cs = CompressorRef(interface);
+    if (compressor == 0) {
+      SnappyCompressor *interface = new SnappyCompressor();
+      *cs = CompressorRef(interface);
+    } else 
+      cs = &compressor;
     return 0;
   }
 };
