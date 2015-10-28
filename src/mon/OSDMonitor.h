@@ -43,6 +43,7 @@ class PGMap;
 #include "messages/MPoolOp.h"
 
 #include "erasure-code/ErasureCodeInterface.h"
+#include "compressor/Compressor.h"
 
 #include "common/TrackedOp.h"
 #include "mon/MonOpRequest.h"
