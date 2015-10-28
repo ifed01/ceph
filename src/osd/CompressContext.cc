@@ -412,8 +412,19 @@ int CompressContext::try_decompress(const hobject_t& oid, uint64_t orig_offs, ui
                         if (cur_block_offs+cur_block_len >= orig_offs) //skipping map entries for data ranges prior to the desired one.
                         {
                                 bufferlist cs_bl1, tmp_bl;
-                                if (cur_block_method.empty()) //block not compressed, doing data copy directly
-                                {
+                                CompressorRef cs_impl;
+                                stringstream ss;
+                                int r = cur_block_method.empty() ? 0 :
+                                            CompressionPluginRegistry::instance().factory(
+                                              cur_block_method,
+                                              g_conf->compression_dir,
+                                              &cs_impl,
+                                              &ss);
+                                if( r != 0 ){
+                                    dout(1)<<"Failed to create decompression engine for "<<cur_block_method<<":"<<ss.str()<<dendl;
+                                    res = -1;
+                                }
+                                else if (cs_impl == NULL){
                                         uint64_t offs2splice = cur_block_offs < orig_offs ? orig_offs - cur_block_offs : 0;
 
                                         uint64_t len2splice = cur_block_len-offs2splice;
@@ -432,16 +443,13 @@ int CompressContext::try_decompress(const hobject_t& oid, uint64_t orig_offs, ui
                                         appended += len2splice;
                                 }
                                 else {
-                                        assert( cs_impl != NULL);
-
                                         dout(0) << __func__ << ": prepare decompress:" << cs_bl_pos << ","
-                                                        << cs_bl.length()<<","<<cur_block_clen<<dendl;
+                                                        << cs_bl.length()<<","<<cur_block_clen<<","<<cur_block_method<<dendl;
                                         cs_bl1.substr_of(cs_bl, cs_bl_pos, MIN(cs_bl.length() - cs_bl_pos, cur_block_clen));
                                         int r = cs_impl->decompress(
                                                 cs_bl1,
-                                                tmp_bl); //FIXME: apply decompression method depending on the indicated one
-                                        if (r< 0)
-                                        {
+                                                tmp_bl);
+                                        if (r< 0){
                                                 dout(0) << __func__ << ": decompress(" << cur_block_method << ")"
                                                         << " returned an error: "<< r << dendl;
                                                 res = -1;
@@ -469,12 +477,13 @@ int CompressContext::try_decompress(const hobject_t& oid, uint64_t orig_offs, ui
         return res;
 }
 
-int CompressContext::do_compress(const std::string& compression_method, const ECUtil::stripe_info_t& sinfo, bufferlist& block2compress, bufferlist& result_bl) const
+int CompressContext::do_compress(CompressorRef cs_impl, const ECUtil::stripe_info_t& sinfo, bufferlist& block2compress, bufferlist& result_bl) const
 {
         int res = -1;
         bufferlist tmp_bl;
         int r = cs_impl->compress(block2compress, tmp_bl);
         if (r == 0) {
+dout(1)<<__func__<<" ifed:"<<tmp_bl.length()<<dendl;
                 if (sinfo.pad_to_stripe_width(tmp_bl.length()) < sinfo.pad_to_stripe_width(block2compress.length())) {
                         // align
                         if (tmp_bl.length() % sinfo.get_stripe_width())
@@ -493,23 +502,24 @@ int CompressContext::do_compress(const std::string& compression_method, const EC
         return res;
 }
 
-int CompressContext::try_compress(const std::string& compression_method0, const hobject_t& oid, uint64_t& off, const bufferlist& bl0, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl)
+int CompressContext::try_compress(const std::string& compression_method, const hobject_t& oid, uint64_t& off, const bufferlist& bl0, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl)
 {
         bufferlist bl_cs(bl0);
         bufferlist bl;
         CompressContext new_cinfo(*this);
 
-        dout(CompressContextDebugLevel) << __func__ <<"ifed: compressing oid="<<oid<<" (" << off << ", " << bl0.length() << ")" << dendl;
+        dout(CompressContextDebugLevel) << __func__ <<"ifed: compressing oid="<<oid<<" (" << off << ", " << bl0.length() << ", " << compression_method << ")" << dendl;
 
         bool compressed = false, failure = false;
         uint64_t prev_compressed_pos = masterRec.current_compressed_pos;
         CompressorRef cs_impl;
         stringstream ss;
-        int r = CompressionPluginRegistry::instance().factory(
-                compression_method,
-                g_conf->compression_dir,
-                &cs_impl,
-                &ss);
+        int r = compression_method.empty() ? 0 :
+                   CompressionPluginRegistry::instance().factory(
+                       compression_method,
+                       g_conf->compression_dir,
+                       &cs_impl,
+                       &ss);
         if( r != 0 )
                 dout(1)<<"Failed to create compression engine:"<<ss.str()<<dendl;
 
@@ -526,7 +536,7 @@ int CompressContext::try_compress(const std::string& compression_method0, const 
                                 uint64_t prev_len = bl.length();
                                 it.copy(block_size, block2compress);
 
-                                int r0 = do_compress(compression_method0, cs_impl, sinfo, block2compress, bl);
+                                int r0 = do_compress(cs_impl, sinfo, block2compress, bl);
                                 if (r0 < 0) {
                                         dout(CompressContextDebugLevel) << "ifed: block compression failed, left uncompressed, oid=" << oid << dendl;
                                         failure = true;

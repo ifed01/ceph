@@ -118,7 +118,7 @@ void CompressedECBackend::objects_read_async(
 
                 tmp = cinfo->offset_len_to_compressed_block(make_pair(it->first.get<0>(), it->first.get<1>()));
 
-                CompressBackendReadCallContext* ctx = new CompressBackendReadCallContext(get_pool().get_compression_type(), cinfo, hoid, *it);
+                CompressBackendReadCallContext* ctx = new CompressBackendReadCallContext(get_parent()->get_pool().get_compression_type(), cinfo, hoid, *it);
 
                 dout(1)<<__func__<<" ifed: add to read from ec:"<< tmp.first<<","<<tmp.second <<dendl;
 

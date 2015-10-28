@@ -23,6 +23,7 @@
 #include "include/encoding.h"
 #include "common/Formatter.h"
 #include "common/hobject.h"
+#include "compressor/Compressor.h"
 
 class CompressContext {
 public:
@@ -103,7 +104,7 @@ private:
         static bool less_upper(  const uint64_t&, const BlockMap::value_type& );
         static bool less_lower(  const BlockMap::value_type&, const uint64_t& );
 
-        int do_compress(const std::string& compression_method, ECUtil::stripe_info_t& sinfo, bufferlist& block2compress, string& res_method, bufferlist& result_bl) const;
+        int do_compress(CompressorRef csimpl, const ECUtil::stripe_info_t& sinfo, bufferlist& block2compress, bufferlist& result_bl) const;
 
 public:
         CompressContext() {}

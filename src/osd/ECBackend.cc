@@ -1842,7 +1842,7 @@ void ECBackend::start_write(Op *op) {
     op->unstable_hash_infos,
     op->compress_infos,
     ec_impl,
-    get_pool().get_compression_type(),
+    get_parent()->get_pool().get_compression_type(),
     get_parent()->get_info().pgid.pgid,
     sinfo,
     &trans,
