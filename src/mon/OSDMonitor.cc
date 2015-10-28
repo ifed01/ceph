@@ -55,6 +55,7 @@
 #include "common/errno.h"
 
 #include "erasure-code/ErasureCodePlugin.h"
+#include "compressor/CompressionPlugin.h"
 
 #include "include/compat.h"
 #include "include/assert.h"
@@ -4634,7 +4635,7 @@ int OSDMonitor::prepare_new_pool(string& name, uint64_t auid,
 
   if (!compression_type.empty() && compression_type != "none") {
     CompressorRef cs;
-    r = get_compressor(compression_type, cs, ss);
+    r = get_compressor(compression_type, &cs, ss);
   }
 
   for (map<int64_t,string>::iterator p = pending_inc.new_pool_names.begin();
