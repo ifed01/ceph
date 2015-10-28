@@ -23,7 +23,8 @@
 #include "PGBackend.h"
 #include "OSD.h"
 #include "erasure-code/ErasureCodePlugin.h"
-#include "compressor/Compressor.h"
+//#include "compressor/Compressor.h"
+#include "compressor/CompressionPlugin.h"
 
 #define dout_subsys ceph_subsys_osd
 //#define DOUT_PREFIX_ARGS this //FIXME: uncomment
