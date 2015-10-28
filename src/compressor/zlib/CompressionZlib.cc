@@ -31,6 +31,8 @@ _prefix(std::ostream* _dout)
 }
 // -----------------------------------------------------------------------------
 
+const long unsigned int max_len = 2048;
+
 const char* CompressionZlib::get_method_name()
 {
 	return "zlib";
@@ -38,81 +40,109 @@ const char* CompressionZlib::get_method_name()
 
 int CompressionZlib::compress(bufferlist &in, bufferlist &out)
 {
+  int ret, flush;
+  unsigned have;
+  z_stream strm;
   unsigned char* c_in;
-  // compute max len to avoid reallocation
-  long unsigned int new_len = compressBound(in.length());
-  long unsigned int future_len, len;
+  int level = 5;
 
-  unsigned char *c_out = new unsigned char [new_len];
-  // here not good to use ptr, because real len will be
-  // less than new_len value
-  //buffer::ptr c_out(new_len);
-
-  for (std::list<buffer::ptr>::const_iterator i = in.buffers().begin();
-          i != in.buffers().end(); ++i) {
-
-    future_len = new_len;
-    c_in = (unsigned char*)(*i).c_str();
-    len = (*i).length();
-    int ret = ::compress(c_out, 
-                         &future_len,
-                         c_in,
-                         len);
-    if (ret != Z_OK) {
-      dout(10) << "Compression error: compress return "
-           << ret << "instead of Z_OK" << dendl;
-      return 1;
-    }
-
-    buffer::ptr pc_out(new_len + sizeof(len) + 1);
-    pc_out.set_length(0);
-    // we need save original data len
-    char* blen = (char*)&len;
-    pc_out.append(version);
-    pc_out.append(blen, sizeof(len));
-
-    pc_out.append((char*)c_out, new_len);
-    out.append(pc_out);
+  /* allocate deflate state */
+  strm.zalloc = Z_NULL;
+  strm.zfree = Z_NULL;
+  strm.opaque = Z_NULL;
+  ret = deflateInit(&strm, level);
+  if (ret != Z_OK) {
+    dout(1) << "Compression init error: init return "
+         << ret << " instead of Z_OK" << dendl;
+    return -1;
   }
 
-  delete [] c_out;
+   unsigned char c_out [max_len];
+
+  for (std::list<buffer::ptr>::const_iterator i = in.buffers().begin();
+      i != in.buffers().end();) {
+
+    c_in = (unsigned char*) (*i).c_str();
+    long unsigned int len = (*i).length();
+    ++i;
+
+    strm.avail_in = len;
+    flush = i != in.buffers().end() ? Z_NO_FLUSH : Z_FINISH;
+
+    strm.next_in = c_in;
+
+    do {
+      strm.avail_out = max_len;
+      strm.next_out = c_out;
+      ret = deflate(&strm, flush);    /* no bad return value */
+      if (ret == Z_STREAM_ERROR) {
+         dout(1) << "Compression error: compress return Z_STREAM_ERROR("
+              << ret << ")" << dendl;
+         deflateEnd(&strm);
+         return -1;
+      }
+      have = max_len - strm.avail_out;
+      out.append((char*)c_out, have);
+    } while (strm.avail_out == 0);
+    if (strm.avail_in != 0) {
+      dout(10) << "Compression error: unused input" << dendl;
+      deflateEnd(&strm);
+      return -1;
+    }
+  }
+
+  deflateEnd(&strm);
   return 0;
 }
 
 int CompressionZlib::decompress(bufferlist &in, bufferlist &out)
 {
-  long unsigned int original_size = 0, len = 0;
+  int ret;
+  unsigned have;
+  z_stream strm;
   unsigned char* c_in;
 
-  for (std::list<buffer::ptr>::const_iterator i = in.buffers().begin();
-          i != in.buffers().end(); ++i) {
-
-    c_in = (unsigned char*)(*i).c_str();
-    len = (*i).length();
-
-    //get original data len from prefix
-    char saved_version = c_in[0];
-    if (saved_version != version) {
-      dout(10) << "Decompression error: other compressor version used" << dendl;
-      return 1;
-    }
-
-    original_size = *((long unsigned int*)(c_in+1));
-    c_in = c_in + sizeof(long unsigned int) + 1;
-
-    buffer::ptr c_out(original_size);
-
-    int ret = uncompress((unsigned char *)c_out.c_str(),
-                          &original_size,
-                          c_in,
-                          len);
-     if (ret != Z_OK) {
-      dout(10) << "Decompression error: uncompress return " << ret << "instead of Z_OK" << dendl;
-      return 1;
-    }
-
-    out.append(c_out);
+  /* allocate inflate state */
+  strm.zalloc = Z_NULL;
+  strm.zfree = Z_NULL;
+  strm.opaque = Z_NULL;
+  strm.avail_in = 0;
+  strm.next_in = Z_NULL;
+  ret = inflateInit(&strm);
+  if (ret != Z_OK) {
+    dout(1) << "Decompression init error: init return "
+         << ret << " instead of Z_OK" << dendl;
+    return -1;
   }
 
+  unsigned char c_out[max_len];
+
+  for (std::list<buffer::ptr>::const_iterator i = in.buffers().begin();
+      i != in.buffers().end(); ++i) {
+
+    c_in = (unsigned char*) (*i).c_str();
+    long unsigned int len = (*i).length();
+
+    strm.avail_in = len;
+    strm.next_in = c_in;
+
+    do {
+      strm.avail_out = max_len;
+      strm.next_out = c_out;
+      ret = inflate(&strm, Z_NO_FLUSH);
+      if (ret != Z_OK && ret != Z_STREAM_END) {
+       dout(1) << "Decompression error: decompress return "
+            << ret << dendl;
+       inflateEnd(&strm);
+       return -1;
+      }
+      have = max_len - strm.avail_out;
+      out.append((char*)c_out, have);
+    } while (strm.avail_out == 0);
+
+  }
+
+  /* clean up and return */
+  (void)inflateEnd(&strm);
   return 0;
 }

@@ -13,7 +13,6 @@
 #define CEPH_COMPRESSION_ZLIB_H
 
 // -----------------------------------------------------------------------------
-#include "common/Mutex.h"
 #include "compressor/Compressor.h"
 // -----------------------------------------------------------------------------
 #include <list>

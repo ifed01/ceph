@@ -43,6 +43,7 @@ class PGMap;
 #include "messages/MPoolOp.h"
 
 #include "erasure-code/ErasureCodeInterface.h"
+#include "compressor/Compressor.h"
 
 #include "common/TrackedOp.h"
 #include "mon/MonOpRequest.h"
@@ -292,6 +293,9 @@ private:
   int get_erasure_code(const string &erasure_code_profile,
 		       ErasureCodeInterfaceRef *erasure_code,
 		       ostream *ss) const;
+  int get_compressor(const string &compression_type,
+           CompressorRef *compressor,
+           ostream *ss) const;
   int prepare_pool_crush_ruleset(const unsigned pool_type,
 				 const string &erasure_code_profile,
 				 const string &ruleset_name,

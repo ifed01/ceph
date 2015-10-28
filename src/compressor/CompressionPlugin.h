@@ -31,9 +31,10 @@ namespace ceph {
   class CompressionPlugin {
   public:
     void *library;
+    CompressorRef compressor;
 
     CompressionPlugin() :
-      library(0) {}
+      library(0), compressor(0) {}
     virtual ~CompressionPlugin() {}
 
     virtual int factory(const std::string &directory,

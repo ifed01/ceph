@@ -52,11 +52,9 @@ TEST(CompressionZlib, compress_decompress_chunk)
   in.append(test2);
   int res = sp.compress(in, out);
   EXPECT_EQ(res, 0);
-  EXPECT_EQ(out.buffers().size(), 2);
   bufferlist after;
   res = sp.decompress(out, after);
   EXPECT_EQ(res, 0);
-  EXPECT_EQ(after.buffers().size(), 2);
   EXPECT_STREQ("This is test text1234567890", after.c_str());
 }
 

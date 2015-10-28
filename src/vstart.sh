@@ -21,6 +21,13 @@ if [ -e CMakeCache.txt ]; then
     ln -sf ../${file} ec_plugins/`basename $file`
   done
   [ -z "$EC_PATH" ] && EC_PATH=./ec_plugins
+  # check for compression plugins
+  mkdir -p cs_plugins
+  for file in ./src/compressor/*/libcs_*.so*;
+  do
+    ln -sf ../${file} cs_plugins/`basename $file`
+  done
+  [ -z "$CS_PATH" ] && CS_PATH=./cs_plugins
 fi
 
 if [ -z "$CEPH_BUILD_ROOT" ]; then

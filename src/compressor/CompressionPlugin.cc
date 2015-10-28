@@ -89,15 +89,12 @@ int CompressionPluginRegistry::factory(const std::string &plugin_name,
 				       ostream *ss)
 {
   CompressionPlugin *plugin;
-*ss<<__func__<<" ifed:"<<directory<<"plugin count:"<<plugins.size()<<std::endl;
   {
     Mutex::Locker l(lock);
     plugin = get(plugin_name);
     if (plugin == 0) {
-*ss<<__func__<<" ifed:plugin not found"<<std::endl;
       loading = true;
       int r = load(plugin_name, directory, &plugin, ss);
-*ss<<__func__<<" ifed:load="<<r<<std::endl;
       loading = false;
       if (r != 0)
 	return r;

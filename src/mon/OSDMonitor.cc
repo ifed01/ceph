@@ -54,6 +54,7 @@
 #include "common/errno.h"
 
 #include "erasure-code/ErasureCodePlugin.h"
+#include "compressor/CompressionPlugin.h"
 
 #include "include/compat.h"
 #include "include/assert.h"
@@ -4176,6 +4177,16 @@ int OSDMonitor::crush_ruleset_create_erasure(const string &name,
   }
 }
 
+int OSDMonitor::get_compressor(const string &compression_type,
+         CompressorRef *compressor,
+         ostream *ss) const
+{
+  CompressionPluginRegistry &instance = CompressionPluginRegistry::instance();
+  return instance.factory(compression_type,
+        g_conf->compression_dir,
+        compressor, ss);
+}
+
 int OSDMonitor::get_erasure_code(const string &erasure_code_profile,
 				 ErasureCodeInterfaceRef *erasure_code,
 				 ostream *ss) const
@@ -4547,6 +4558,15 @@ int OSDMonitor::prepare_new_pool(string& name, uint64_t auid,
     return r;
   }
 
+  if (!compression_type.empty() && compression_type != "none") {
+    CompressorRef cs;
+    r = get_compressor(compression_type, &cs, ss);
+    if (r) {
+      dout(10) << " compressor " << compression_type << " failed to load" << dendl;
+      return r;
+    }
+  }
+
   for (map<int64_t,string>::iterator p = pending_inc.new_pool_names.begin();
        p != pending_inc.new_pool_names.end();
        ++p) {
@@ -4611,7 +4631,7 @@ int OSDMonitor::prepare_new_pool(string& name, uint64_t auid,
     g_conf->osd_pool_default_cache_target_full_ratio * 1000000;
   pi->cache_min_flush_age = g_conf->osd_pool_default_cache_min_flush_age;
   pi->cache_min_evict_age = g_conf->osd_pool_default_cache_min_evict_age;
-  pi->properties["compression_type"] = compression_type;
+  pi->compression_type = compression_type;
   pending_inc.new_pool_names[pool] = name;
   return 0;
 }
@@ -4800,7 +4820,15 @@ int OSDMonitor::prepare_command_pool_set(map<string,cmd_vartype> &cmdmap,
       ss << "compression can be used with erasure pools only";
       return -EINVAL;
     }
-    p.properties["compression_type"] = val;
+    CompressorRef cs;
+    stringstream tmp;
+    int err = get_compressor(val, &cs, &tmp);
+    if (err) {
+      ss << __func__ << " compressor " <<  val
+         << " failed to load: " << tmp.rdbuf();
+      return err;
+    }
+    p.compression_type = val;
   } else if (var == "auid") {
     if (interr.length()) {
       ss << "error parsing integer value '" << val << "': " << interr;
