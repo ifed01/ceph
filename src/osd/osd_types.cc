@@ -965,8 +965,7 @@ void pg_pool_t::convert_to_pg_shards(const vector<int> &from, set<pg_shard_t>* t
 
 const char* pg_pool_t::get_compression_type() const
 {
-  map<string, string>::const_iterator it = properties.find("compression_type");
-  return it != properties.end() ? it->second.c_str() : "";
+  return compression_type.c_str();
 }
 
 int pg_pool_t::calc_bits_of(int t)
