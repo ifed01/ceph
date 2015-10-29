@@ -4827,13 +4827,15 @@ int OSDMonitor::prepare_command_pool_set(map<string,cmd_vartype> &cmdmap,
       ss << "compression can be used with erasure pools only";
       return -EINVAL;
     }
-    CompressorRef cs;
-    stringstream tmp;
-    int err = get_compressor(val, &cs, &tmp);
-    if (err) {
-      ss << __func__ << " compressor " <<  val
-         << " failed to load: " << tmp.rdbuf();
-      return err;
+    if (val != "none") {
+      CompressorRef cs;
+      stringstream tmp;
+      int err = get_compressor(val, &cs, &tmp);
+      if (err) {
+        ss << __func__ << " compressor " <<  val
+           << " failed to load: " << tmp.rdbuf();
+        return err;
+      }
     }
     p.compression_type = val;
   } else if (var == "auid") {
