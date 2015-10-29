@@ -459,7 +459,7 @@ int CompressContext::try_decompress(const hobject_t& oid, uint64_t orig_offs, ui
                                                 uint64_t len2splice = tmp_bl.length()-offs2splice;
                                                 len2splice -= cur_block_offs + cur_block_len > orig_offs + len ? cur_block_offs + cur_block_len - orig_offs - len : 0;
 
-                                                dout(CompressContextDebugLevel) << __func__ <<"ifed: decompressed: oid="<<oid <<" (" << cur_block_offs << "," << cur_block_len << "," << offs2splice << "," << len2splice << "," << tmp_bl.length() << ")" << dendl;
+                                                dout(CompressContextDebugLevel) << __func__ <<"ifed: decompressed: oid="<<oid <<" ("<<r<<","<< cur_block_offs << "," << cur_block_len << "," << offs2splice << "," << len2splice << "," << tmp_bl.length() << ")" << dendl;
 
                                                 if (offs2splice == 0 && len2splice == tmp_bl.length()) //decompressed block is completely within the requested range
                                                         res_bl.append(tmp_bl);

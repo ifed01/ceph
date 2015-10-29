@@ -1838,9 +1838,6 @@ void ECBackend::start_write(Op *op) {
   ObjectStore::Transaction empty;
   empty.set_use_tbl(parent->transaction_use_tbl());
 
-  dout(1) << " ifed:"<< get_parent()->get_pool().get_compression_type()<< " "<<
-    get_parent()->get_pool().get_type_name()<<dendl;
-
   op->t->generate_transactions(
     op->unstable_hash_infos,
     op->compress_infos,
