@@ -494,7 +494,12 @@ int CompressContext::do_compress(CompressorRef cs_impl, const ECUtil::stripe_inf
                 uint32_t real_len = tmp_bl.length();
                 ::encode( real_len, tmp_bl0);
                 unsigned block_len = tmp_bl.length() + tmp_bl0.length();
-                if (sinfo.pad_to_stripe_width(block_len) < sinfo.pad_to_stripe_width(block2compress.length())) {
+                if (block_len < block2compress.length()) {
+                        result_bl.append(tmp_bl0);
+                        result_bl.append(tmp_bl);
+                        res = 1;
+                }
+                /*if (sinfo.pad_to_stripe_width(block_len) < sinfo.pad_to_stripe_width(block2compress.length())) {
                         // align
                         if (block_len % sinfo.get_stripe_width())
                                 tmp_bl.append_zero(
@@ -504,7 +509,7 @@ int CompressContext::do_compress(CompressorRef cs_impl, const ECUtil::stripe_inf
                         result_bl.append(tmp_bl0);
                         result_bl.append(tmp_bl);
                         res = 1;
-                }
+                }*/
                 else {
                         result_bl.append(block2compress);
                         res = 0;
@@ -553,13 +558,18 @@ int CompressContext::try_compress(const std::string& compression_method, const h
                                         failure = true;
                                 }
                                 else{
+                                        if( it.end()){
+                                            unsigned padded_size = sinfo.pad_to_stripe_width(bl.length());
+                                            if (padded_size > bl.length())
+                                                bl.append_zero(padded_size - bl.length() );
+                                        }
                                         new_cinfo.append_block(cur_offs, block2compress.length(), r0 ? compression_method : "", bl.length() - prev_len);
                                 }
                                 cur_offs += block2compress.length();
                         }
-                        if (!failure && sinfo.pad_to_stripe_width(bl.length()) < sinfo.pad_to_stripe_width(bl_cs.length())) {
-                                //There is some benefit from compression after data alignment
+                        if (!failure && bl.length() < sinfo.pad_to_stripe_width(bl_cs.length())) {
                                 compressed = true;
+
                                 dout(CompressContextDebugLevel) << "ifed: block compressed, oid=" << oid << ", ratio = " << (float)bl_cs.length() / bl.length() << dendl;
                         }
                         else if (failure)
