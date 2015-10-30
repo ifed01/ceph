@@ -490,18 +490,18 @@ int CompressContext::do_compress(CompressorRef cs_impl, const ECUtil::stripe_inf
         bufferlist tmp_bl;
         int r = cs_impl->compress(block2compress, tmp_bl);
         if (r == 0) {
-                if (sinfo.pad_to_stripe_width(tmp_bl.length()) < sinfo.pad_to_stripe_width(block2compress.length())) {
-                        uint32_t real_len = tmp_bl.length();
-                        unsigned prev_len = result_bl.length();
-                        ::encode( real_len, result_bl);
-                        unsigned block_len = tmp_bl.length() + result_bl.length()-prev_len;
-
+                bufferlist tmp_bl0;
+                uint32_t real_len = tmp_bl.length();
+                ::encode( real_len, tmp_bl0);
+                unsigned block_len = tmp_bl.length() + tmp_bl0.length();
+                if (sinfo.pad_to_stripe_width(block_len) < sinfo.pad_to_stripe_width(block2compress.length())) {
                         // align
                         if (block_len % sinfo.get_stripe_width())
                                 tmp_bl.append_zero(
                                   sinfo.get_stripe_width() -
                                   block_len % sinfo.get_stripe_width());
 
+                        result_bl.append(tmp_bl0);
                         result_bl.append(tmp_bl);
                         res = 1;
                 }
