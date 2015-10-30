@@ -111,7 +111,7 @@ bool  CompressContext::can_compress( uint64_t offs ) const
 
 uint64_t CompressContext::get_block_size(uint64_t stripe_width) const
 {
-    return 32*stripe_width; //FIXME: make confifurable?
+    return 32*stripe_width;
 }
 
 void CompressContext::setup_for_append_or_recovery(map<string, bufferlist>& attrset)
@@ -155,7 +155,7 @@ void CompressContext::setup_for_read(map<string, bufferlist>& attrset, uint64_t 
                         BlockInfoRecordSetHeader recset_header;
                         { //searching for the record set that contains desired data range
                                 BlockInfoRecordSetHeader recset_header_next;
-                                bufferlist::iterator it_bl_next = it_bl_next;
+                                bufferlist::iterator it_bl_next = it_bl;
                                 ::decode(recset_header, it_bl);
 
                                 bool found = false;
@@ -163,7 +163,8 @@ void CompressContext::setup_for_read(map<string, bufferlist>& attrset, uint64_t 
                                         if (it_bl_next.get_remaining() >= record_set_size)
                                         {
                                                 it_bl_next.advance(record_set_size);
-                                                ::decode(recset_header_next, it_bl_next);
+                                                bufferlist::iterator tmp_it = it_bl_next;
+                                                ::decode(recset_header_next, tmp_it);
                                                 found = recset_header_next.start_offset > start_offset;
                                                 if (!found)
                                                 {
@@ -171,13 +172,15 @@ void CompressContext::setup_for_read(map<string, bufferlist>& attrset, uint64_t 
                                                         recset_header = recset_header_next;
                                                 }
                                         }
-                                        else
+                                        else{
                                                 found = true;
+                                        }
                                 } while (!found);
                         }
 
                         uint64_t cur_pos = recset_header.start_offset;
                         uint64_t cur_cpos = recset_header.compressed_offset;
+                        dout(0)<<__func__<<" ifed:found recordset:"<<cur_pos<<"."<<cur_cpos<<dendl;
                         uint64_t found_start_offset = 0;
                         BlockInfo found_bi;
                         bool start_found = false;
@@ -204,6 +207,8 @@ void CompressContext::setup_for_read(map<string, bufferlist>& attrset, uint64_t 
 
                                 cur_pos += rec.original_length;
                                 cur_cpos += rec.compressed_length;
+assert( cur_pos <= masterRec.current_original_pos );
+assert( cur_cpos <= masterRec.current_compressed_pos );
                         }
 
                         if ( start_found){
@@ -222,12 +227,11 @@ void CompressContext::flush( map<string, bufferlist> & attrset)
                 size_t record_set_size = masterRec.block_info_record_length*RECS_PER_RECORDSET + masterRec.block_info_recordset_header_length;
                 assert((bl.length() == 0 && record_set_size == 0) || (bl.length() != 0 && record_set_size != 0));
 
-                uint64_t offs = prevMasterRec.current_original_pos;
-                uint64_t coffs = prevMasterRec.current_compressed_pos;
+                /*uint64_t offs = prevMasterRec.current_original_pos;
+                uint64_t coffs = prevMasterRec.current_compressed_pos;*/
 
                 BlockInfoRecord rec;
                 for (CompressContext::BlockMap::const_iterator it = blocks.begin(); it != blocks.end(); it++) {
-                        BlockInfoRecordSetHeader header(offs, coffs);
                         CompressContext::BlockMap::const_iterator it_next = it;
                         ++it_next;
                         if (it_next == blocks.end())
@@ -236,6 +240,7 @@ void CompressContext::flush( map<string, bufferlist> & attrset)
                                 rec = BlockInfoRecord(it->second.method_idx, it_next->first - it->first, it_next->second.target_offset - it->second.target_offset);
 
                         if (record_set_size == 0){ //first record to be added - need to measure rec sizes
+                                BlockInfoRecordSetHeader header(it->first, it->second.target_offset);
                                 size_t old_len = bl.length();
                                 ::encode(header, bl);
                                 masterRec.block_info_recordset_header_length = bl.length() - old_len;
@@ -247,8 +252,10 @@ void CompressContext::flush( map<string, bufferlist> & attrset)
                                 assert(record_set_size != 0);
                         }
                         else{
-                                if ((bl.length() % record_set_size) == 0)
+                                if ((bl.length() % record_set_size) == 0){
+                                    BlockInfoRecordSetHeader header(it->first, it->second.target_offset);
                                     ::encode(header, bl);
+                                }
                                 ::encode(rec, bl);
                         }
                 }
@@ -261,11 +268,10 @@ void CompressContext::flush( map<string, bufferlist> & attrset)
                 dout(1)<<__func__<<" ifed: cinfo:"<<attrset[ECUtil::get_cinfo_master_key()].length()<<","<<
                         bl.length()<<","<<masterRec.block_info_record_length<<","<<masterRec.block_info_recordset_header_length<<","<<masterRec.current_original_pos<<","<<masterRec.current_compressed_pos<<
                         ","<<prevMasterRec.current_original_pos<<","<<prevMasterRec.current_compressed_pos<<dendl;
-                        
 
                 prev_blocks_encoded.swap(bl);
                 prevMasterRec = masterRec;
-
+                blocks.clear();
         }
 }
 
@@ -312,10 +318,6 @@ void CompressContext::append_block(uint64_t original_offset,
         uint8_t method_idx = masterRec.add_get_method(method);
 
         blocks[original_offset] = BlockInfo(method_idx, masterRec.current_compressed_pos);
-
-        /*if( original_offset != masterRec.current_original_pos )
-                dout(0)<<__func__<<" ifed:"<<original_offset<<" "<<original_size<<" "<<masterRec.current_original_pos<<" "<<masterRec.current_compressed_pos<<dendl;
-                */
 
         masterRec.current_original_pos += original_size;
         masterRec.current_compressed_pos += new_block_size;
@@ -367,7 +369,6 @@ pair<uint64_t, uint64_t> CompressContext::map_offset(uint64_t offs, bool next_bl
                 }
                 res = std::pair<uint64_t, uint64_t>(it->first, it->second.target_offset);
         }
-        //dout(1)<<__func__<<res.first<<","<<res.second<<dendl;
         return res;
 }
 
@@ -392,7 +393,8 @@ int CompressContext::try_decompress(const hobject_t& oid, uint64_t orig_offs, ui
                 string cur_block_method;
                 BlockMap::const_iterator it = blocks.begin();
 
-                uint64_t cs_bl_pos = 0;
+                bufferlist::iterator cs_bl_pos = cs_bl.begin();
+
 
                 do{
                         cur_block_offs = it->first;
@@ -429,23 +431,28 @@ int CompressContext::try_decompress(const hobject_t& oid, uint64_t orig_offs, ui
 
                                         uint64_t len2splice = cur_block_len-offs2splice;
                                         len2splice -= cur_block_offs + cur_block_len > orig_offs + len ? cur_block_offs + cur_block_len - orig_offs - len :0 ;
-                                        //len2splice = MIN(len2splice, cur_block_len-offs2splice);
 
-                                        offs2splice += cs_bl_pos;
+                                        offs2splice += cs_bl_pos.get_off();
                                         dout(CompressContextDebugLevel) << __func__ <<"ifed: uncompressed: oid="<<oid<< " (" << cur_block_offs << "," << cur_block_len << "," << offs2splice << "," << len2splice << "," << cs_bl.length() << ")" << dendl;
                                         if (offs2splice == 0 && len2splice == cs_bl.length()) //current block is completely within the requested range
                                                 res_bl.append(cs_bl);
                                         else{
                                                 tmp_bl.substr_of( cs_bl, offs2splice, len2splice);
                                                 res_bl.append(tmp_bl);
-                                                //cs_bl.splice(offs2splice, len2splice, &res_bl);
                                         }
                                         appended += len2splice;
                                 }
                                 else {
-                                        dout(0) << __func__ << ": prepare decompress:" << cs_bl_pos << ","
+                                        dout(0) << __func__ << ": prepare decompress:" << cs_bl_pos.get_off() << ","
                                                         << cs_bl.length()<<","<<cur_block_clen<<","<<cur_block_method<<dendl;
-                                        cs_bl1.substr_of(cs_bl, cs_bl_pos, MIN(cs_bl.length() - cs_bl_pos, cur_block_clen));
+
+                                        uint32_t real_len= 0;
+                                        bufferlist::iterator it = cs_bl_pos;
+                                        ::decode( real_len, it);
+                                        assert( cur_block_clen>= real_len );
+                                        assert( it.get_remaining()>=real_len);
+                                        cs_bl1.substr_of(cs_bl, it.get_off(), real_len);
+
                                         int r = cs_impl->decompress(
                                                 cs_bl1,
                                                 tmp_bl);
@@ -470,7 +477,7 @@ int CompressContext::try_decompress(const hobject_t& oid, uint64_t orig_offs, ui
                                 }
                         }
 
-                        cs_bl_pos += cur_block_clen;
+                        cs_bl_pos.advance(cur_block_clen);
                 } while (it != blocks.end() && appended < len && res == 0);
         }
         assert(res != 0 || (res == 0 && appended == len));
@@ -483,13 +490,17 @@ int CompressContext::do_compress(CompressorRef cs_impl, const ECUtil::stripe_inf
         bufferlist tmp_bl;
         int r = cs_impl->compress(block2compress, tmp_bl);
         if (r == 0) {
-dout(1)<<__func__<<" ifed:"<<tmp_bl.length()<<dendl;
                 if (sinfo.pad_to_stripe_width(tmp_bl.length()) < sinfo.pad_to_stripe_width(block2compress.length())) {
+                        uint32_t real_len = tmp_bl.length();
+                        unsigned prev_len = result_bl.length();
+                        ::encode( real_len, result_bl);
+                        unsigned block_len = tmp_bl.length() + result_bl.length()-prev_len;
+
                         // align
-                        if (tmp_bl.length() % sinfo.get_stripe_width())
+                        if (block_len % sinfo.get_stripe_width())
                                 tmp_bl.append_zero(
-                                sinfo.get_stripe_width() -
-                                tmp_bl.length() % sinfo.get_stripe_width());
+                                  sinfo.get_stripe_width() -
+                                  block_len % sinfo.get_stripe_width());
 
                         result_bl.append(tmp_bl);
                         res = 1;
