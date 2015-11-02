@@ -2876,7 +2876,7 @@ void OSDMonitor::dump_info(Formatter *f)
 
 namespace {
   enum osd_pool_get_choices {
-    COMPRESSION_TYPE, SIZE, MIN_SIZE, CRASH_REPLAY_INTERVAL,
+    SIZE, MIN_SIZE, CRASH_REPLAY_INTERVAL,
     PG_NUM, PGP_NUM, CRUSH_RULESET, HASHPSPOOL,
     NODELETE, NOPGCHANGE, NOSIZECHANGE,
     WRITE_FADVISE_DONTNEED, NOSCRUB, NODEEP_SCRUB,
@@ -2886,7 +2886,7 @@ namespace {
     CACHE_TARGET_FULL_RATIO,
     CACHE_MIN_FLUSH_AGE, CACHE_MIN_EVICT_AGE,
     ERASURE_CODE_PROFILE, MIN_READ_RECENCY_FOR_PROMOTE,
-    MIN_WRITE_RECENCY_FOR_PROMOTE, FAST_READ};
+    MIN_WRITE_RECENCY_FOR_PROMOTE, FAST_READ, COMPRESSION_TYPE };
 
   std::set<osd_pool_get_choices>
     subtract_second_from_first(const std::set<osd_pool_get_choices>& first,
@@ -3339,7 +3339,6 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 
     typedef std::map<std::string, osd_pool_get_choices> choices_map_t;
     const choices_map_t ALL_CHOICES = boost::assign::map_list_of
-      ("compression_type", COMPRESSION_TYPE)
       ("size", SIZE)
       ("min_size", MIN_SIZE)
       ("crash_replay_interval", CRASH_REPLAY_INTERVAL)
@@ -3361,7 +3360,8 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
       ("erasure_code_profile", ERASURE_CODE_PROFILE)
       ("min_read_recency_for_promote", MIN_READ_RECENCY_FOR_PROMOTE)
       ("min_write_recency_for_promote", MIN_WRITE_RECENCY_FOR_PROMOTE)
-      ("fast_read", FAST_READ);
+      ("fast_read", FAST_READ)
+      ("compression_type", COMPRESSION_TYPE);
 
     typedef std::set<osd_pool_get_choices> choices_set_t;
 
@@ -3518,9 +3518,9 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	  case CACHE_MIN_EVICT_AGE:
 	    f->dump_unsigned("cache_min_evict_age", p->cache_min_evict_age);
 	    break;
-    case COMPRESSION_TYPE:
-      f->dump_string("compression_type", p->compression_type);
-      break;
+	    case COMPRESSION_TYPE:
+	    f->dump_string("compression_type", p->compression_type);
+	    break;
 	  case ERASURE_CODE_PROFILE:
 	    f->dump_string("erasure_code_profile", p->erasure_code_profile);
 	    break;
@@ -3618,9 +3618,9 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	  case CACHE_MIN_EVICT_AGE:
 	    ss << "cache_min_evict_age: " << p->cache_min_evict_age << "\n";
 	    break;
-    case COMPRESSION_TYPE:
-      ss << "compression_type: " << p->compression_type << "\n";
-      break;
+	    case COMPRESSION_TYPE:
+	    ss << "compression_type: " << p->compression_type << "\n";
+	    break;
 	  case ERASURE_CODE_PROFILE:
 	    ss << "erasure_code_profile: " << p->erasure_code_profile << "\n";
 	    break;
@@ -4504,7 +4504,7 @@ int OSDMonitor::prepare_new_pool(string& name, uint64_t auid,
 				 const string &crush_ruleset_name,
                                  unsigned pg_num, unsigned pgp_num,
 				 const string &erasure_code_profile,
-         const string &compression_type,
+				 const string &compression_type,
                                  const unsigned pool_type,
                                  const uint64_t expected_num_objects,
                                  FastReadType fast_read,
