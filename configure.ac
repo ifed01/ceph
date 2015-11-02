@@ -276,19 +276,19 @@ ACX_PTHREAD
 
 #Linux only dependencies
 if test x"$linux" = x"yes"; then
-  # libblkid
-  AC_CHECK_HEADER([blkid/blkid.h], [],
-    AC_MSG_ERROR([blkid/blkid.h not found (libblkid-dev, libblkid-devel)]))
-  AC_CHECK_LIB([blkid], [blkid_get_cache], [true],
-    AC_MSG_FAILURE([libblkid not found]))
-  AC_CHECK_LIB([blkid], [blkid_find_dev_with_tag], [true],
-    AC_MSG_FAILURE([libblkid not found]))
-  AC_CHECK_LIB([blkid], [blkid_dev_devname], [true],
-    AC_MSG_FAILURE([libblkid not found]))
 
   # rbd {map,unmap,showmapped} dependencies, Linux only
   if test x"$with_rbd" = x"yes"; then
+
     # libblkid
+    AC_CHECK_HEADER([blkid/blkid.h], [],
+      AC_MSG_ERROR([blkid/blkid.h not found (libblkid-dev, libblkid-devel)]))
+    AC_CHECK_LIB([blkid], [blkid_get_cache], [true],
+      AC_MSG_FAILURE([libblkid not found]))
+    AC_CHECK_LIB([blkid], [blkid_find_dev_with_tag], [true],
+      AC_MSG_FAILURE([libblkid not found]))
+    AC_CHECK_LIB([blkid], [blkid_dev_devname], [true],
+      AC_MSG_FAILURE([libblkid not found]))
     AC_CHECK_LIB([blkid], [blkid_devno_to_wholedisk], [true],
       AC_MSG_FAILURE([libblkid not found]))
 
@@ -961,6 +961,10 @@ AC_CHECK_FUNC([sync_file_range],
 AC_CHECK_FUNC([fallocate],
 	[AC_DEFINE([CEPH_HAVE_FALLOCATE], [], [fallocate(2) is supported])],
 	[])
+
+# mallinfo
+AC_CHECK_FUNC([mallinfo],
+  [AC_DEFINE(HAVE_MALLINFO, 1, [Define if you have mallinfo])])
 
 # getgrouplist
 AC_CHECK_FUNCS([getgrouplist])

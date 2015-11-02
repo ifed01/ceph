@@ -92,7 +92,7 @@ void usage()
   cout.flush();
 }
 
-int preload_erasure_plugins()
+int preload_plugins()
 {
   string plugins = g_conf->osd_erasure_code_plugins;
   stringstream ss;
@@ -555,7 +555,7 @@ int main(int argc, const char **argv)
     return -1;
   global_init_chdir(g_ceph_context);
 
-  if (preload_erasure_plugins() < 0)
+  if (preload_plugins() < 0)
     return -1;
 
   osd = new OSD(g_ceph_context,
