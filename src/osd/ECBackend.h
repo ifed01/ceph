@@ -281,16 +281,14 @@ public:
 	uint64_t, uint64_t, map<pg_shard_t, bufferlist> > > returned;
     read_result_t() : r(0) {}
   };
-
   struct read_request_t {
     const list<boost::tuple<uint64_t, uint64_t, uint32_t> > to_read;
     const set<pg_shard_t> need;
     const bool want_attrs;
-
     GenContext<pair<RecoveryMessages *, read_result_t& > &> *cb;
     read_request_t(
       const hobject_t &hoid,
-      const list<boost::tuple<uint64_t, uint64_t, uint32_t> >& to_read,
+      const list<boost::tuple<uint64_t, uint64_t, uint32_t> > &to_read,
       const set<pg_shard_t> &need,
       bool want_attrs,
       GenContext<pair<RecoveryMessages *, read_result_t& > &> *cb)

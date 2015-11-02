@@ -16,7 +16,6 @@
 #include <boost/optional/optional_io.hpp>
 #include <iostream>
 #include <sstream>
-#include <typeinfo>
 
 #include "ECUtil.h"
 #include "ECBackend.h"
@@ -31,7 +30,7 @@ class ReplicatedPG;
 #undef dout_prefix
 #define dout_prefix _prefix(_dout, this)
 static ostream& _prefix(std::ostream *_dout, ECBackend *pgb) {
-   return *_dout << pgb->get_parent()->gen_dbg_prefix();
+  return *_dout << pgb->get_parent()->gen_dbg_prefix();
 }
 
 struct ECRecoveryHandle : public PGBackend::RecoveryHandle {
@@ -347,7 +346,7 @@ void ECBackend::handle_recovery_read_complete(
   boost::optional<map<string, bufferlist> > attrs,
   RecoveryMessages *m)
 {
-  dout(10) << __func__ <<": returned " << hoid << " "
+  dout(10) << __func__ << ": returned " << hoid << " "
 	   << "(" << to_read.get<0>()
 	   << ", " << to_read.get<1>()
 	   << ", " << to_read.get<2>()
@@ -556,7 +555,7 @@ void ECBackend::continue_recovery_op(
 	pop.soid = op.hoid;
 	pop.version = op.v;
 	pop.data = op.returned_data[mi->shard];
-	dout(1) << __func__ << ": before_progress=" << op.recovery_progress
+	dout(10) << __func__ << ": before_progress=" << op.recovery_progress
 		 << ", after_progress=" << after_progress
 		 << ", pop.data.length()=" << pop.data.length()
                  << ", size=" << op.get_recovered_object_size() << "(" << op.obc->obs.oi.size << ")" << dendl;
@@ -1716,10 +1715,10 @@ void ECBackend::start_remaining_read_op(
 ECUtil::HashInfoRef ECBackend::get_hash_info(
   const hobject_t &hoid, bool checks)
 {
-  dout(1) << __func__ << ": Getting attr on " << hoid << dendl;
+  dout(10) << __func__ << ": Getting attr on " << hoid << dendl;
   ECUtil::HashInfoRef ref = unstable_hashinfo_registry.lookup(hoid);
   if (!ref) {
-    dout(1) << __func__ << ": not in cache " << hoid << dendl;
+    dout(10) << __func__ << ": not in cache " << hoid << dendl;
     struct stat st;
     int r = store->stat(
       coll,
