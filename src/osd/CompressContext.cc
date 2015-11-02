@@ -499,17 +499,6 @@ int CompressContext::do_compress(CompressorRef cs_impl, const ECUtil::stripe_inf
                         result_bl.append(tmp_bl);
                         res = 1;
                 }
-                /*if (sinfo.pad_to_stripe_width(block_len) < sinfo.pad_to_stripe_width(block2compress.length())) {
-                        // align
-                        if (block_len % sinfo.get_stripe_width())
-                                tmp_bl.append_zero(
-                                  sinfo.get_stripe_width() -
-                                  block_len % sinfo.get_stripe_width());
-
-                        result_bl.append(tmp_bl0);
-                        result_bl.append(tmp_bl);
-                        res = 1;
-                }*/
                 else {
                         result_bl.append(block2compress);
                         res = 0;

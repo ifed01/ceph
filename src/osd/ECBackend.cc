@@ -404,8 +404,8 @@ void ECBackend::handle_recovery_read_complete(
     CompressContext cctx;
     cctx.setup_for_append_or_recovery(op.xattrs);
     uint64_t compressed_size = cctx.get_compressed_size();
-    if (compressed_size && compressed_size < op.obc->obs.oi.size )
-            op.set_recovered_object_size(compressed_size);
+    if (compressed_size )
+      op.set_recovered_object_size(compressed_size);
   }
   assert(op.xattrs.size());
   assert(op.obc);
@@ -1398,11 +1398,11 @@ void ECBackend::submit_transaction(
 
     CompressContextRef cinfo = get_compress_context_basic(*i);
     if (!cinfo) {
-            derr << __func__ << ": get_compress_context_basic(" << *i << ")"
-                    << " returned a null pointer and there is no "
-                    << " way to recover from such an error in this "
-                    << " context" << dendl;
-            assert(0);
+      derr << __func__ << ": get_compress_context_basic(" << *i << ")"
+                       << " returned a null pointer and there is no "
+                       << " way to recover from such an error in this "
+                       << " context" << dendl;
+      assert(0);
     }
     op->compress_infos.insert(make_pair(*i, cinfo));
 
@@ -1753,41 +1753,41 @@ ECUtil::HashInfoRef ECBackend::get_hash_info(
 
 CompressContextRef ECBackend::get_compress_context_basic(const hobject_t &hoid)
 {
-        CompressContextRef ref = unstable_compressinfo_registry.lookup(hoid);
-        if (!ref) {
-                dout(10) << __func__ << ": not in cache " << hoid << dendl;
-                map<string, bufferlist> attrset;
-                load_attrs(hoid, attrset);
-                CompressContext cctx;
-                cctx.setup_for_append_or_recovery(attrset);
-                ref = unstable_compressinfo_registry.lookup_or_create(hoid, cctx);
-        }
-        return ref;
+  CompressContextRef ref = unstable_compressinfo_registry.lookup(hoid);
+  if (!ref) {
+    dout(10) << __func__ << ": not in cache " << hoid << dendl;
+    map<string, bufferlist> attrset;
+    CompressContext cctx;
+    if( load_attrs(hoid, attrset) >= 0 )
+      cctx.setup_for_append_or_recovery(attrset);
+    ref = unstable_compressinfo_registry.lookup_or_create(hoid, cctx);
+  }
+  return ref;
 }
 
 int ECBackend::load_attrs(const hobject_t &hoid, map<string, bufferlist>& attrset) const
 {
-        dout(10) << __func__ << ": Loading attrs on " << hoid << dendl;
-        struct stat st;
-        int r = store->stat(
-                coll,
-                ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-                &st);
-        if (r >= 0 && st.st_size > 0) {
-                dout(10) << __func__ << ": found on disk, size " << st.st_size << dendl;
-                bufferlist bl;
+  dout(10) << __func__ << ": Loading attrs on " << hoid << dendl;
+  struct stat st;
+  int r = store->stat(
+    coll,
+    ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
+    &st);
+  if (r >= 0 && st.st_size > 0) {
+    dout(10) << __func__ << ": found on disk, size " << st.st_size << dendl;
+    bufferlist bl;
 
-                r = store->getattrs(
-                        coll,
-                        ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-                        attrset);
-                if (r < 0){
-                        dout(0) << __func__ << ": failed to load attrs" << dendl;
-                }
-        }
-        else if( st.st_size == 0 )
-               r=0;
-        return r;
+    r = store->getattrs(
+      coll,
+      ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
+      attrset);
+      if (r < 0){
+        derr << __func__ << ": failed to load attrs" << dendl;
+      }
+  }
+  else if( st.st_size == 0 )
+    r=0;
+  return r;
 }
 
 void ECBackend::check_op(Op *op)
@@ -1830,8 +1830,8 @@ void ECBackend::start_write(Op *op) {
 
   op->t->generate_transactions(
     op->unstable_hash_infos,
-    op->compress_infos,
     ec_impl,
+    op->compress_infos,
     get_parent()->get_pool().get_compression_type(),
     get_parent()->get_info().pgid.pgid,
     sinfo,

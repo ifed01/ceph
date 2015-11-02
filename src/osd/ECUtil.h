@@ -47,7 +47,7 @@ public:
   }
   uint64_t pad_to_stripe_width(uint64_t length) const {
     if (length % get_stripe_width())
-        length += get_stripe_width() - (length % get_stripe_width());
+      length += get_stripe_width() - (length % get_stripe_width());
     return length;
   }
 

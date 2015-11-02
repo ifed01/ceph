@@ -242,8 +242,7 @@ private:
     RecoveryOp() : pending_read(false), state(IDLE) {}
     void set_recovered_object_size(uint64_t sz) { compressed_object_size = sz; }
     uint64_t get_recovered_object_size() const {
-            return compressed_object_size ? compressed_object_size.get() : 
-                   obc ? obc->obs.oi.size : 0;
+      return compressed_object_size ? compressed_object_size.get() : obc ? obc->obs.oi.size : 0;
     }
 
   };
@@ -516,8 +515,8 @@ public:
   }
 
 protected:
-        int load_attrs(const hobject_t &hoid, map<string, bufferlist>& attrset) const;
-        CompressContextRef get_compress_context_basic(const hobject_t &hoid);
+  int load_attrs(const hobject_t &hoid, map<string, bufferlist>& attrset) const;
+  CompressContextRef get_compress_context_basic(const hobject_t &hoid);
 
 };
 
