@@ -21,11 +21,6 @@
 #include "ECBackend.h"
 #include "ECUtil.h"
 #include "os/ObjectStore.h"
-#include "common/debug.h"
-
-#define dout_subsys ceph_subsys_osd
-#undef dout_prefix
-#define dout_prefix *_dout
 
 struct AppendObjectsGenerator: public boost::static_visitor<void> {
   set<hobject_t, hobject_t::BitwiseComparator> *out;
@@ -165,7 +160,6 @@ struct TransGenerator : public boost::static_visitor<void> {
       bl.append_zero(
 	sinfo.get_stripe_width() -
 	((offset + bl.length()) % sinfo.get_stripe_width()));
-    //assert(bl.length() - op.bl.length() < sinfo.get_stripe_width());
     int r = ECUtil::encode(
       sinfo, ecimpl, bl, want, &buffers);
 

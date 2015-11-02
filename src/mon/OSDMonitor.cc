@@ -2876,7 +2876,7 @@ void OSDMonitor::dump_info(Formatter *f)
 
 namespace {
   enum osd_pool_get_choices {
-    COMPRESSION_TYPE, SIZE, MIN_SIZE, CRASH_REPLAY_INTERVAL,
+    SIZE, MIN_SIZE, CRASH_REPLAY_INTERVAL,
     PG_NUM, PGP_NUM, CRUSH_RULESET, HASHPSPOOL,
     NODELETE, NOPGCHANGE, NOSIZECHANGE,
     WRITE_FADVISE_DONTNEED, NOSCRUB, NODEEP_SCRUB,
@@ -3339,7 +3339,6 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 
     typedef std::map<std::string, osd_pool_get_choices> choices_map_t;
     const choices_map_t ALL_CHOICES = boost::assign::map_list_of
-      ("compression_type", COMPRESSION_TYPE)
       ("size", SIZE)
       ("min_size", MIN_SIZE)
       ("crash_replay_interval", CRASH_REPLAY_INTERVAL)

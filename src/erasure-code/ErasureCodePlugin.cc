@@ -130,7 +130,6 @@ int ErasureCodePluginRegistry::load(const std::string &plugin_name,
   std::string fname = directory + "/" PLUGIN_PREFIX
     + plugin_name + PLUGIN_SUFFIX;
   void *library = dlopen(fname.c_str(), RTLD_NOW);
-  *ss << "load dlopen(" << fname << "): ";
   if (!library) {
     *ss << "load dlopen(" << fname << "): " << dlerror();
     return -EIO;

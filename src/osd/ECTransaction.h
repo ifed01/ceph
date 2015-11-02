@@ -31,7 +31,7 @@ public:
     bufferlist bl;
     uint32_t fadvise_flags;
     AppendOp(const hobject_t &oid, uint64_t off, bufferlist &bl, uint32_t flags)
-            : oid(oid), off(off), bl(bl), fadvise_flags(flags){}
+      : oid(oid), off(off), bl(bl), fadvise_flags(flags) {}
   };
   struct CloneOp {
     hobject_t source;
@@ -113,8 +113,7 @@ public:
     uint64_t off,
     uint64_t len,
     bufferlist &bl,
-    uint32_t fadvise_flags
-    ) {
+    uint32_t fadvise_flags) {
     if (len == 0) {
       touch(hoid);
       return;

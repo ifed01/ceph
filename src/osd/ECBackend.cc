@@ -29,11 +29,10 @@ class ReplicatedPG;
 #define dout_subsys ceph_subsys_osd
 #define DOUT_PREFIX_ARGS this
 #undef dout_prefix
-//#define dout_prefix _prefix(_dout, this)
-#define dout_prefix *_dout
-// static ostream& _prefix(std::ostream *_dout, ECBackend *pgb) {
-//   return *_dout << pgb->get_parent()->gen_dbg_prefix();
-// }
+#define dout_prefix _prefix(_dout, this)
+static ostream& _prefix(std::ostream *_dout, ECBackend *pgb) {
+   return *_dout << pgb->get_parent()->gen_dbg_prefix();
+}
 
 struct ECRecoveryHandle : public PGBackend::RecoveryHandle {
   list<ECBackend::RecoveryOp> ops;
@@ -182,7 +181,6 @@ ECBackend::ECBackend(
     sinfo(ec_impl->get_data_chunk_count(), stripe_width) {
   assert((ec_impl->get_data_chunk_count() *
 	  ec_impl->get_chunk_size(stripe_width)) == stripe_width);
-
 }
 
 PGBackend::RecoveryHandle *ECBackend::open_recovery_op()
@@ -349,12 +347,12 @@ void ECBackend::handle_recovery_read_complete(
   boost::optional<map<string, bufferlist> > attrs,
   RecoveryMessages *m)
 {
-  /*dout(1) << __func__ <<" ifed:"<< ": returned " << hoid << " "
+  dout(10) << __func__ <<": returned " << hoid << " "
 	   << "(" << to_read.get<0>()
 	   << ", " << to_read.get<1>()
 	   << ", " << to_read.get<2>()
 	   << ")"
-	   << dendl;*/
+	   << dendl;
   assert(recovery_ops.count(hoid));
   RecoveryOp &op = recovery_ops[hoid];
   assert(op.returned_data.empty());
@@ -843,7 +841,6 @@ void ECBackend::handle_sub_write(
   ECSubWrite &op,
   Context *on_local_applied_sync)
 {
-  dout(10) << "!!! ec write" << dendl;
   if (msg)
     msg->mark_started();
   assert(!get_parent()->get_log().get_missing().is_missing(op.soid));
@@ -1158,8 +1155,6 @@ void ECBackend::complete_read_op(ReadOp &rop, RecoveryMessages *m)
     if (reqiter->second.cb) {
       pair<RecoveryMessages *, read_result_t &> arg(
 	m, resiter->second);
-
-
       reqiter->second.cb->complete(arg);
       reqiter->second.cb = NULL;
     }
@@ -1367,7 +1362,6 @@ void ECBackend::submit_transaction(
   OpRequestRef client_op
   )
 {
-  dout(10) << "!st! encode" << dendl;
   assert(!tid_to_op_map.count(tid));
   Op *op = &(tid_to_op_map[tid]);
   op->hoid = hoid;
@@ -1398,7 +1392,6 @@ void ECBackend::submit_transaction(
 	   << " context" << dendl;
       assert(0);
     }
-
     op->unstable_hash_infos.insert(
       make_pair(
 	*i,
@@ -1597,7 +1590,6 @@ void ECBackend::start_read_op(
     list<boost::tuple<
       uint64_t, uint64_t, map<pg_shard_t, bufferlist> > > &reslist =
       op.complete[i->first].returned;
-    
     bool need_attrs = i->second.want_attrs;
     for (set<pg_shard_t>::const_iterator j = i->second.need.begin();
 	 j != i->second.need.end();
@@ -1834,7 +1826,6 @@ void ECBackend::start_write(Op *op) {
     trans[i->shard];
     trans[i->shard].set_use_tbl(parent->transaction_use_tbl());
   }
-  dout(10) << "!sw! encode" << dendl;
   ObjectStore::Transaction empty;
   empty.set_use_tbl(parent->transaction_use_tbl());
 
@@ -1919,8 +1910,7 @@ struct CallClientContexts :
     ECBackend::ClientAsyncReadStatus *status,
     const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
 		    pair<bufferlist*, Context*> > > &to_read)
-    : ec(ec), status(status), to_read(to_read) {
-  }
+    : ec(ec), status(status), to_read(to_read) {}
   void finish(pair<RecoveryMessages *, ECBackend::read_result_t &> &in) {
     ECBackend::read_result_t &res = in.second;
     if (res.r != 0)
@@ -1976,7 +1966,6 @@ out:
       ip.pop_front();
     }
   }
-
   ~CallClientContexts() {
     for (list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
 		   pair<bufferlist*, Context*> > >::iterator i = to_read.begin();

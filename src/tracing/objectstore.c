@@ -3,5 +3,4 @@
 /*
  * The header containing our TRACEPOINT_EVENTs.
  */
-#define TRACEPOINT_DEFINE
 #include "objectstore.h"

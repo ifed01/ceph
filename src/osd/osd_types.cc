@@ -24,7 +24,6 @@ extern "C" {
 #include "OSDMap.h"
 #include "PGBackend.h"
 
-
 const char *ceph_osd_flag_name(unsigned flag)
 {
   switch (flag) {
