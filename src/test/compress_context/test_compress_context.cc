@@ -22,22 +22,67 @@
 #include "common/ceph_argparse.h"
 #include "global/global_context.h"
 #include "common/config.h"
+#include "osd/CompressContext.h"
 /*
-TEST(CompressionZlib, compress_decompress)
+Introducing CompressContextTester class to access CompressContext protected members
+*/
+class CompressContextTester : public CompressContext
 {
-  CompressionZlib sp;
-  EXPECT_EQ(sp.get_method_name(), "zlib");
-  char* test = "This is test text";
-  int len = strlen(test);
-  bufferlist in, out;
-  in.append(test, len);
-  int res = sp.compress(in, out);
-  EXPECT_EQ(res, 0);
-  bufferlist after;
-  res = sp.decompress(out, after);
-  EXPECT_EQ(res, 0);
-  EXPECT_EQ(test, after.c_str());
-}*/
+public:
+  bool testMapping1()
+  {
+    clear();
+
+    //putting three blocks into the map
+    size_t offs = 0;
+    append_block(0, 8 * 1024, "some_compression", 4 * 1024);
+    append_block(8*1024, 7*1024, "", 7 * 1024);
+    append_block( (8+7)*1024, 1932, "another_compression", 932);
+
+    pair<uint64_t, uint64_t> block_offs_start = map_offset(0, false);
+    EXPECT_EQ(block_offs_start.first, 0);
+    EXPECT_EQ(block_offs_start.second, 0);
+
+    pair<uint64_t, uint64_t> block_offs_end = map_offset(0, true);
+    EXPECT_EQ(block_offs_end.first, 8*1024);
+    EXPECT_EQ(block_offs_end.second, 4 * 1024);
+
+    pair<uint64_t, uint64_t> compressed_block = offset_len_to_compressed_block(std::pair<uint64_t, uint64_t>( 0, 1) );
+    EXPECT_EQ(compressed_block.first, 0);
+    EXPECT_EQ(compressed_block.second, 4 * 1024);
+
+    compressed_block = offset_len_to_compressed_block(std::pair<uint64_t, uint64_t>(0, 132));
+    EXPECT_EQ(compressed_block.first, 0);
+    EXPECT_EQ(compressed_block.second, 4 * 1024);
+
+    compressed_block = offset_len_to_compressed_block(std::pair<uint64_t, uint64_t>(0, 4*1024));
+    EXPECT_EQ(compressed_block.first, 0);
+    EXPECT_EQ(compressed_block.second, 4 * 1024);
+
+    compressed_block = offset_len_to_compressed_block(std::pair<uint64_t, uint64_t>(0, 4 * 1024+1));
+    EXPECT_EQ(compressed_block.first, 0);
+    EXPECT_EQ(compressed_block.second, 4 * 1024);
+
+    compressed_block = offset_len_to_compressed_block(std::pair<uint64_t, uint64_t>(0, 8 * 1024 - 1));
+    EXPECT_EQ(compressed_block.first, 0);
+    EXPECT_EQ(compressed_block.second, 4 * 1024);
+
+    compressed_block = offset_len_to_compressed_block(std::pair<uint64_t, uint64_t>(0, 8 * 1024));
+    EXPECT_EQ(compressed_block.first, 0);
+    EXPECT_EQ(compressed_block.second, 4 * 1024);
+
+    compressed_block = offset_len_to_compressed_block(std::pair<uint64_t, uint64_t>(0, 8 * 1024 + 1));
+    EXPECT_EQ(compressed_block.first, 0);
+    EXPECT_EQ(compressed_block.second, (4+7) * 1024);
+
+  }
+};
+
+TEST(CompressContext, check_mapping)
+{
+  CompressContextTester ctx;
+  ctx.testMapping1();
+}
 
 int main(int argc, char **argv) {
   vector<const char*> args;

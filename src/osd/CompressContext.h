@@ -85,11 +85,12 @@ public:
     }
   };
 
-private:
   enum {
-    RECS_PER_RECORDSET = 32  //amount of comression information records per single record set. 
+    RECS_PER_RECORDSET = 64,    //amount of comression information records per single record set. 
+    MAX_STRIPES_PER_BLOCK = 32, //maximum amount of stripes that can be compressed as a single block
   };
 
+private:
   /*
   Run-time compressed block information
   */
@@ -110,11 +111,30 @@ private:
   MasterRecord prevMasterRec;     //Compression information master record replica saved before the first unflushed update
   bufferlist prev_blocks_encoded; //Encoded compression information records replica saved before the first unflushed update
 
+protected:
 
   static bool less_upper(const uint64_t&, const BlockMap::value_type&);
   static bool less_lower(const BlockMap::value_type&, const uint64_t&);
 
   int do_compress(CompressorRef csimpl, const ECUtil::stripe_info_t& sinfo, bufferlist& block2compress, bufferlist& result_bl) const;
+
+  void append_block(uint64_t original_offset, uint64_t original_size, const string& method, uint64_t new_block_size);
+  bool can_compress(uint64_t offs) const;
+
+  void swap(CompressContext& other) {
+    blocks.swap(other.blocks);
+    masterRec.swap(other.masterRec);
+    std::swap(prev_blocks_encoded, other.prev_blocks_encoded);
+    prevMasterRec.swap(other.prevMasterRec);
+  }
+
+  uint64_t get_compressed_size() const {
+    return masterRec.current_compressed_pos;
+  }
+  uint64_t get_block_size(uint64_t stripe_width) const;
+
+  pair<uint64_t, uint64_t>  map_offset(uint64_t offs, bool next_block_flag) const; //returns <original block offset, compressed block_offset>
+  pair<uint64_t, uint64_t> offset_len_to_compressed_block(const pair<uint64_t, uint64_t> offs_len_pair) const;
 
 public:
   CompressContext() {}
@@ -136,30 +156,10 @@ public:
   void flush(map<string, bufferlist>& attrset);
   void flush_for_rollback(map<string, boost::optional<bufferlist> >& attrset) const;
 
-  void swap(CompressContext& other) {
-    blocks.swap(other.blocks);
-    masterRec.swap(other.masterRec);
-    std::swap(prev_blocks_encoded, other.prev_blocks_encoded);
-    prevMasterRec.swap(other.prevMasterRec);
-  }
-
   void dump(Formatter* f) const;
-
-  void append_block(uint64_t original_offset, uint64_t original_size, const string& method, uint64_t new_block_size);
-  bool can_compress(uint64_t offs) const;
-
-  pair<uint64_t, uint64_t>  map_offset(uint64_t offs, bool next_block_flag) const; //returns <original block offset, compressed block_offset>
-
-  pair<uint64_t, uint64_t> offset_len_to_compressed_block(const pair<uint64_t, uint64_t> offs_len_pair) const;
 
   int try_decompress(const hobject_t& oid, uint64_t orig_offs, uint64_t len, bufferlist& cs_bl, bufferlist& res_bl) const;
   int try_compress(const std::string& compression_method, const hobject_t& oid, uint64_t& off, const bufferlist& bl, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl);
-
-  uint64_t get_compressed_size() const {
-    return masterRec.current_compressed_pos;
-  }
-  uint64_t get_block_size(uint64_t stripe_width) const;
-
 };
 typedef ceph::shared_ptr<CompressContext> CompressContextRef;
 

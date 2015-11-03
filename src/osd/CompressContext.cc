@@ -112,7 +112,7 @@ bool  CompressContext::can_compress(uint64_t offs) const
 
 uint64_t CompressContext::get_block_size(uint64_t stripe_width) const
 {
-  return 32 * stripe_width;
+  return MAX_STRIPES_PER_BLOCK * stripe_width;
 }
 
 void CompressContext::setup_for_append_or_recovery(map<string, bufferlist>& attrset)
