@@ -188,7 +188,7 @@ const string CINFO_KEY = "@ci@";
 
 bool ECUtil::is_internal_key_string(const string &key)
 {
-  return key == HINFO_KEY || key.find(CINFO_KEY)==0 || key.find(CINFO__MASTER_KEY)==0;
+  return key == HINFO_KEY || key.find(CINFO_KEY)==0 || key.find(CINFO_MASTER_KEY)==0;
 }
 
 const string &ECUtil::get_hinfo_key()

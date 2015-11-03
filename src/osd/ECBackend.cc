@@ -1765,7 +1765,7 @@ CompressContextRef ECBackend::get_compress_context_basic(const hobject_t &hoid)
   return ref;
 }
 
-int ECBackend::load_attrs(const hobject_t &hoid, map<string, bufferlist>& attrset) const
+int ECBackend::load_attrs(const hobject_t &hoid, map<string, bufferlist>& attrset)
 {
   dout(10) << __func__ << ": Loading attrs on " << hoid << dendl;
   struct stat st;

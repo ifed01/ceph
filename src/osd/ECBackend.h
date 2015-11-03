@@ -515,7 +515,7 @@ public:
   }
 
 protected:
-  int load_attrs(const hobject_t &hoid, map<string, bufferlist>& attrset) const;
+  int load_attrs(const hobject_t &hoid, map<string, bufferlist>& attrset);
   CompressContextRef get_compress_context_basic(const hobject_t &hoid);
 
 };
