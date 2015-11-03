@@ -8,7 +8,6 @@
 #include "ECBackend.h"
 #include "osd_types.h"
 #include <boost/optional/optional_io.hpp>
-//#include "ECTransaction.h"
 #include "ECMsgTypes.h"
 #include "ECUtil.h"
 #include "CompressContext.h"

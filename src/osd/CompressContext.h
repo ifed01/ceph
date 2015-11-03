@@ -128,13 +128,9 @@ protected:
     prevMasterRec.swap(other.prevMasterRec);
   }
 
-  uint64_t get_compressed_size() const {
-    return masterRec.current_compressed_pos;
-  }
   uint64_t get_block_size(uint64_t stripe_width) const;
 
   pair<uint64_t, uint64_t>  map_offset(uint64_t offs, bool next_block_flag) const; //returns <original block offset, compressed block_offset>
-  pair<uint64_t, uint64_t> offset_len_to_compressed_block(const pair<uint64_t, uint64_t> offs_len_pair) const;
 
 public:
   CompressContext() {}
@@ -155,6 +151,12 @@ public:
   void setup_for_read(map<string, bufferlist>& attrset, uint64_t start_offset, uint64_t end_offset);
   void flush(map<string, bufferlist>& attrset);
   void flush_for_rollback(map<string, boost::optional<bufferlist> >& attrset) const;
+
+  uint64_t get_compressed_size() const {
+    return masterRec.current_compressed_pos;
+  }
+
+  pair<uint64_t, uint64_t> offset_len_to_compressed_block(const pair<uint64_t, uint64_t> offs_len_pair) const;
 
   void dump(Formatter* f) const;
 
