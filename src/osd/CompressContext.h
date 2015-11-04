@@ -13,6 +13,7 @@
 #include "common/Formatter.h"
 #include "common/hobject.h"
 #include "compressor/Compressor.h"
+#include "osd/ECUtil.h"
 
 class CompressContext {
 public:
@@ -69,6 +70,7 @@ public:
     void clear() {
       current_original_pos = current_compressed_pos = 0;
       block_info_record_length = block_info_recordset_header_length = 0;
+      methods.clear();
     }
 
     string get_method_name(uint8_t index) const;
@@ -116,7 +118,7 @@ protected:
   static bool less_upper(const uint64_t&, const BlockMap::value_type&);
   static bool less_lower(const BlockMap::value_type&, const uint64_t&);
 
-  int do_compress(CompressorRef csimpl, const ECUtil::stripe_info_t& sinfo, bufferlist& block2compress, bufferlist& result_bl) const;
+  int do_compress(CompressorRef csimpl, bufferlist& block2compress, bufferlist& result_bl) const;
 
   void append_block(uint64_t original_offset, uint64_t original_size, const string& method, uint64_t new_block_size);
   bool can_compress(uint64_t offs) const;
@@ -131,6 +133,8 @@ protected:
   uint64_t get_block_size(uint64_t stripe_width) const;
 
   pair<uint64_t, uint64_t>  map_offset(uint64_t offs, bool next_block_flag) const; //returns <original block offset, compressed block_offset>
+
+  bool need_flush() const { return prevMasterRec.current_original_pos != masterRec.current_original_pos; }
 
 public:
   CompressContext() {}
