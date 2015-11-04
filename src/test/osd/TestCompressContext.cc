@@ -380,7 +380,7 @@ public:
     clear();
     out_res.clear();
     compressor->reset( TestCompressor::COMPRESS );
-    size_t block_count=128;
+    size_t block_count=200;
     uint64_t offs4append=0;
     for( size_t i=0;i<block_count; i++ ) {
       offs = offs4append;
@@ -396,8 +396,6 @@ public:
     EXPECT_EQ(offs, (block_count-1)*sinfo.get_stripe_width());
     EXPECT_EQ(compressor->compress_calls, block_count);
 
-/*    out.clear();
-    out.swap(out_res);*/
     out=out_res;
     out_res.clear();
     attrs.clear();
@@ -406,7 +404,7 @@ public:
     clear();
     offs = 0;
     uint64_t size = block_count*s1.size();
-    setup_for_read(attrs, 0, size); //read as a single block
+    setup_for_read(attrs, offs, size); //read as a single block
     r = try_decompress( oid, offs, size, out, out_res);
     EXPECT_EQ(r, 0);
     for( size_t i =0; i<block_count; i++){
@@ -415,6 +413,43 @@ public:
     }
     EXPECT_EQ(compressor->decompress_calls, block_count);
 
+    //reading all the object but the first and last bytes
+    clear();
+    compressor->reset();
+    out_res.clear();
+    offs = 1;
+    size = block_count*s1.size() - 1;
+    setup_for_read(attrs, offs, size); //read as a single block
+    r = try_decompress( oid, offs, size, out, out_res);
+    EXPECT_EQ(r, 0);
+    EXPECT_EQ(size, out_res.length());
+    EXPECT_EQ(compressor->decompress_calls, block_count);
+
+    //reading Nth block ( totally and partially ) 
+    for( size_t i = 0;i<block_count; i++){
+      clear();
+      compressor->reset();
+      out_res.clear();
+      offs = i*s1.size();
+      size = s1.size();
+      setup_for_read(attrs, offs, offs+size); //read as a single block
+      r = try_decompress( oid, offs, size, out, out_res);
+      EXPECT_EQ(r, 0);
+      EXPECT_EQ(size, out_res.length());
+      std::string tmpstr(out_res.c_str(), s1.size());
+      EXPECT_EQ(size, tmpstr.length());
+      EXPECT_EQ(s1, tmpstr);
+      EXPECT_EQ(compressor->decompress_calls, 1u);
+
+      out_res.clear();
+      offs = i*s1.size() + 2;
+      size = s1.size()-3;
+      setup_for_read(attrs, offs, offs+size); //read as a single block
+      r = try_decompress( oid, offs, size, out, out_res);
+      EXPECT_EQ(r, 0);
+      EXPECT_EQ(size, out_res.length());
+      EXPECT_EQ(compressor->decompress_calls, 2u);
+    }
   }
 };
 

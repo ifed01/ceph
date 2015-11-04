@@ -144,7 +144,7 @@ void CompressContext::setup_for_read(map<string, bufferlist>& attrset, uint64_t 
     ::decode(masterRec, it_val);
 
     assert(end_offset <= masterRec.current_original_pos);
-    dout(10) << __func__ << masterRec.current_original_pos << "," << masterRec.current_compressed_pos << dendl;
+    dout(1) << __func__ << masterRec.current_original_pos << "," << masterRec.current_compressed_pos<<","<<start_offset<<","<<end_offset << dendl;
 
     it = attrset.find(ECUtil::get_cinfo_key());
     if (it != end) {
@@ -155,16 +155,21 @@ void CompressContext::setup_for_read(map<string, bufferlist>& attrset, uint64_t 
       BlockInfoRecordSetHeader recset_header;
       {
         //searching for the record set that contains desired data range
+//derr<<"decode00"<<dendl;
+        ::decode(recset_header, it_bl);
+
         BlockInfoRecordSetHeader recset_header_next;
         bufferlist::iterator it_bl_next = it_bl;
-        ::decode(recset_header, it_bl);
 
         bool found = false;
         do {
           if (it_bl_next.get_remaining() >= record_set_size) {
-            it_bl_next.advance(record_set_size);
-            bufferlist::iterator tmp_it = it_bl_next;
-            ::decode(recset_header_next, tmp_it);
+//derr<<"decode0:"<<it_bl_next.get_remaining()<<" "<<record_set_size<<dendl;
+            it_bl_next.advance(record_set_size-masterRec.block_info_recordset_header_length);
+            //bufferlist::iterator tmp_it = it_bl_next;
+//derr<<"decode"<<dendl;
+            ::decode(recset_header_next, it_bl_next);
+//derr<<"decoded:"<<recset_header_next.start_offset<<dendl;
             found = recset_header_next.start_offset > start_offset;
             if (!found) {
               it_bl = it_bl_next;
@@ -178,7 +183,7 @@ void CompressContext::setup_for_read(map<string, bufferlist>& attrset, uint64_t 
 
       uint64_t cur_pos = recset_header.start_offset;
       uint64_t cur_cpos = recset_header.compressed_offset;
-      dout(10) << __func__ << " ifed:found recordset:" << cur_pos << "." << cur_cpos << dendl;
+      dout(1) << __func__ << " ifed:found recordset:" << cur_pos << "." << cur_cpos << dendl;
       uint64_t found_start_offset = 0;
       BlockInfo found_bi;
       bool start_found = false;
@@ -201,7 +206,7 @@ void CompressContext::setup_for_read(map<string, bufferlist>& attrset, uint64_t 
           if (cur_pos >= end_offset) {
             stop = true;
           }
-          dout(10) << __func__ << " ifed:" << cur_pos << "=(" << (int)rec.method_idx << "," << cur_cpos << ")" << dendl;
+          dout(1) << __func__ << " ifed:" << cur_pos << "=(" << (int)rec.method_idx << "," << cur_cpos << ")" << dendl;
         }
 
         cur_pos += rec.original_length;
@@ -212,7 +217,7 @@ void CompressContext::setup_for_read(map<string, bufferlist>& attrset, uint64_t 
 
       if (start_found) {
         blocks[found_start_offset] = found_bi;
-        dout(10) << __func__ << " ifed:" << found_start_offset << "==(" << (int)found_bi.method_idx << "," << found_bi.target_offset << ")" << dendl;
+        dout(1) << __func__ << " ifed:" << found_start_offset << "==(" << (int)found_bi.method_idx << "," << found_bi.target_offset << ")" << dendl;
       }
     }
   }
