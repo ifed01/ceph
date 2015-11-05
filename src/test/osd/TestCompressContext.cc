@@ -376,7 +376,8 @@ public:
     EXPECT_TRUE(s1 == std::string(out_res.c_str()));
     EXPECT_EQ(compressor->decompress_calls, 1u);
 
-    //multiple blocks compress
+    //multiple (fixed-size) blocks  compress
+    vector< pair<uint64_t, uint64_t> >block_info; //compressed block offset, size
     clear();
     out_res.clear();
     compressor->reset( TestCompressor::COMPRESS );
@@ -389,6 +390,7 @@ public:
       EXPECT_EQ(r, 0);
       EXPECT_EQ(offs, out_res.length());
       offs4append+=in.length();
+      block_info.push_back( std::pair<uint64_t, uint64_t>( out_res.length(), out.length()));
       out_res.append(out);
     }
     EXPECT_EQ(out_res.length(), block_count*sinfo.get_stripe_width());
@@ -433,11 +435,14 @@ public:
       offs = i*s1.size();
       size = s1.size();
       setup_for_read(attrs, offs, offs+size); //read as a single block
-      r = try_decompress( oid, offs, size, out, out_res);
+
+      bufferlist compressed_block;
+      compressed_block.substr_of( out, block_info[i].first, block_info[i].second);
+
+      r = try_decompress( oid, offs, size, compressed_block, out_res);
       EXPECT_EQ(r, 0);
       EXPECT_EQ(size, out_res.length());
       std::string tmpstr(out_res.c_str(), s1.size());
-      EXPECT_EQ(size, tmpstr.length());
       EXPECT_EQ(s1, tmpstr);
       EXPECT_EQ(compressor->decompress_calls, 1u);
 
@@ -449,6 +454,123 @@ public:
       EXPECT_EQ(r, 0);
       EXPECT_EQ(size, out_res.length());
       EXPECT_EQ(compressor->decompress_calls, 2u);
+    }
+
+    //multiple blocks (variable sizes) compress
+    block_info.clear();
+    clear();
+    out_res.clear();
+    compressor->reset( TestCompressor::COMPRESS );
+    block_count=200;
+    const unsigned num_blocks=8;
+    string blocks[num_blocks] = {
+        std::string(4096, 'a'), 
+        std::string(4096*3, 'a'), 
+        std::string(4096*8, 'a'), 
+        std::string(4096*9, 'a'), 
+        std::string(4096*31, 'a'), 
+        std::string(4096*127, 'a'), 
+        std::string(4096*129, 'a'), 
+        std::string(4096*140, 'a') };
+    offs4append=0;
+    uint64_t total_size=0;
+    uint64_t total_blocks=0;
+    for( size_t i=0;i<block_count; i++ ) {
+      in.clear();
+      in.append( blocks[ i % num_blocks]);
+      total_size+=in.length();
+      total_blocks += in.length() / ( get_block_size(sinfo.get_stripe_width()));
+      total_blocks += in.length() % ( get_block_size(sinfo.get_stripe_width())) ? 1 : 0;
+
+      offs = offs4append;
+      out.clear();
+      int r = try_compress( TestCompressor::method_name(), oid, offs, in, sinfo, out);
+      EXPECT_EQ(r, 0);
+      EXPECT_EQ(offs, out_res.length());
+      offs4append+=in.length();
+      block_info.push_back( std::pair<uint64_t, uint64_t>( out_res.length(), out.length()));
+      out_res.append(out);
+    }
+    EXPECT_EQ(compressor->compress_calls, 
+              total_blocks- block_count/8 /*these blocks aren't compressed due to small writes*/ );
+    EXPECT_EQ(out_res.length(), get_compressed_size());
+    EXPECT_EQ(get_compressed_size(), block_count*sinfo.get_stripe_width()); //as we have pretty huge compression ratio all large blocks are expected to fit into single stripe
+    attrs.clear();
+    flush(attrs);
+    MasterRecord mrec = get_master_record();
+    EXPECT_NE(mrec.block_info_record_length, 0u);
+    EXPECT_NE(mrec.block_info_recordset_header_length, 0u);
+    unsigned recsets = total_blocks / RECS_PER_RECORDSET + 
+          (total_blocks % RECS_PER_RECORDSET ? 1 : 0);
+
+    EXPECT_EQ(attrs[ECUtil::get_cinfo_key()].length(), 
+      total_blocks * mrec.block_info_record_length +
+        recsets * mrec.block_info_recordset_header_length);
+
+    out=out_res;
+    out_res.clear();
+
+    //reading Nth block ( totally, partially and block+1 octet ) 
+    uint64_t offs_to_read = 0;
+    for( size_t i = 0;i<block_count; i++){
+      clear();
+      compressor->reset();
+      out_res.clear();
+      size = blocks[ i % num_blocks ].size();
+      offs = offs_to_read;
+      setup_for_read(attrs, offs, offs+size); //read as a single block
+      bufferlist compressed_block;
+      compressed_block.substr_of( out, block_info[i].first, block_info[i].second);
+
+      r = try_decompress( oid, offs, size, compressed_block, out_res);
+      EXPECT_EQ(r, 0);
+      EXPECT_EQ(size, out_res.length());
+      unsigned decompress_calls = 0;
+      if( size > sinfo.get_stripe_width()) {
+        decompress_calls += size / ( get_block_size(sinfo.get_stripe_width()));
+        decompress_calls += size % ( get_block_size(sinfo.get_stripe_width())) ? 1 : 0;
+      }
+      EXPECT_EQ(compressor->decompress_calls, decompress_calls);
+
+      out_res.clear();
+      compressor->reset();
+      size = blocks[ i % num_blocks ].size()-3;
+      offs = offs_to_read+2;
+      setup_for_read(attrs, offs, offs+size); //read as a single block
+      r = try_decompress( oid, offs, size, compressed_block, out_res);
+      EXPECT_EQ(r, 0);
+      EXPECT_EQ(size, out_res.length());
+      decompress_calls = 0;
+      if( size > sinfo.get_stripe_width()) {
+        decompress_calls += size / ( get_block_size(sinfo.get_stripe_width()));
+        decompress_calls += size % ( get_block_size(sinfo.get_stripe_width())) ? 1 : 0;
+      }
+      EXPECT_EQ(compressor->decompress_calls, decompress_calls);
+
+      if( i<block_count-1){
+        out_res.clear();
+        compressor->reset();
+        size = blocks[ i % num_blocks ].size()+3; //read Nth blocks + 3 octets from the next one
+        offs = offs_to_read+2;
+        setup_for_read(attrs, offs, offs+size);
+        compressed_block.substr_of( out,
+                                    block_info[i].first,
+                                    block_info[i].second+block_info[i+1].second);
+        r = try_decompress( oid, offs, size, compressed_block, out_res);
+        EXPECT_EQ(r, 0);
+        EXPECT_EQ(size, out_res.length());
+        decompress_calls = 0;
+        if( blocks[i % num_blocks].size() > sinfo.get_stripe_width()) {
+            decompress_calls += blocks[i % num_blocks].size() / ( get_block_size(sinfo.get_stripe_width()));
+            decompress_calls += blocks[i % num_blocks].size() % ( get_block_size(sinfo.get_stripe_width())) ? 1 : 0;
+        }
+        if( blocks[(i+1) % num_blocks].size() > sinfo.get_stripe_width())
+            ++decompress_calls; //we need just single block decompress as we need 3 bytes from the second block only
+        EXPECT_EQ(compressor->decompress_calls, decompress_calls);
+      }
+
+      offs_to_read+= blocks[ i % num_blocks ].size();
+
     }
   }
 };
