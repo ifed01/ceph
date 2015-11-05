@@ -131,6 +131,7 @@ protected:
   }
 
   uint64_t get_block_size(uint64_t stripe_width) const;
+  MasterRecord get_master_record() const { return masterRec; };
 
   pair<uint64_t, uint64_t>  map_offset(uint64_t offs, bool next_block_flag) const; //returns <original block offset, compressed block_offset>
 
