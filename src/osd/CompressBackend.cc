@@ -74,7 +74,7 @@ void CompressedECBackend::objects_read_async(
   Context* on_complete,
   bool fast_read) {
   map<string, bufferlist> attrset;
-  int r = load_attrs(hoid, attrset);
+  int r = load_attrs(hoid, &attrset);
   if (r != 0) {
     derr << __func__ << ": load_attrs(" << hoid << ")"
 	 << " returned a null pointer and there is no "
