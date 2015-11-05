@@ -352,7 +352,7 @@ class CompressContextTester : public CompressContext {
   void testCompressSimple(TestCompressor* compressor) {
     hobject_t oid;
     ECUtil::stripe_info_t sinfo(1024/*arbitrary selected, not used*/ , 4096);
-    std::string s1(7 * 1024, 'a');
+    std::string s1(8 * 1024, 'a');
     bufferlist in, out, out_res;
     uint64_t offs = 0;
     in.append(s1);
@@ -375,8 +375,71 @@ class CompressContextTester : public CompressContext {
     setup_for_read(attrs, 0, s1.size());
     r = try_decompress(oid, offs, s1.size(), out, &out_res);
     EXPECT_EQ(r, 0);
-    EXPECT_TRUE(s1 == std::string(out_res.c_str()));
+    EXPECT_EQ(s1.size(), out_res.length());
+    EXPECT_TRUE(s1 == std::string(out_res.c_str(), out_res.length()));
     EXPECT_EQ(compressor->decompress_calls, 1u);
+
+    //single block compress attempt - bypassed, followed by another successful compression
+    clear();
+    out.clear();
+    out_res.clear();
+    compressor->reset(TestCompressor::COMPRESS_NO_BENEFIT);
+    offs=0;
+    try_compress(TestCompressor::method_name(), oid, in, sinfo, &offs, &out);
+    EXPECT_EQ(r, 0);
+    EXPECT_EQ(in.length(), out.length());
+    EXPECT_EQ(get_compressed_size(), in.length());
+    EXPECT_EQ(offs, 0u);
+    EXPECT_EQ(compressor->compress_calls, 1u);
+
+    flush(&attrs);
+
+    MasterRecord mrec = get_master_record();
+    EXPECT_EQ(mrec.current_original_pos, in.length());
+    EXPECT_EQ(mrec.current_compressed_pos, in.length());
+    EXPECT_EQ(mrec.methods.size(), 0u);
+    EXPECT_NE(mrec.block_info_record_length, 0u);
+    EXPECT_NE(mrec.block_info_recordset_header_length, 0u);
+
+    out_res.append(out);
+    out.clear();
+
+    compressor->reset(TestCompressor::COMPRESS);
+    setup_for_append_or_recovery(attrs);
+
+/*    mrec = get_master_record();
+    EXPECT_EQ(mrec.current_original_pos, in.length());
+    EXPECT_EQ(mrec.current_compressed_pos, in.length());
+    EXPECT_EQ(mrec.methods.size(), 0u);
+    EXPECT_NE(mrec.block_info_record_length, 0u);
+    EXPECT_NE(mrec.block_info_recordset_header_length, 0u);*/
+
+    EXPECT_EQ(get_compressed_size(), out_res.length());
+    offs=in.length();
+    try_compress(TestCompressor::method_name(), oid, in, sinfo, &offs, &out);
+    EXPECT_EQ(r, 0);
+    EXPECT_GT(in.length(), out.length());
+    EXPECT_EQ(get_compressed_size(), out_res.length()+out.length());
+    EXPECT_EQ(offs, out_res.length());
+    EXPECT_EQ(compressor->compress_calls, 1u);
+
+    flush(&attrs);
+    mrec = get_master_record();
+    EXPECT_EQ(mrec.current_original_pos, in.length()*2);
+    EXPECT_EQ(mrec.current_compressed_pos, get_compressed_size());
+    EXPECT_EQ(mrec.methods.size(), 1u);
+    EXPECT_NE(mrec.block_info_record_length, 0u);
+    EXPECT_NE(mrec.block_info_recordset_header_length, 0u);
+
+    out_res.append(out);
+    out.clear();
+/*    clear();
+    offs = 0;
+    setup_for_read(attrs, 0, s1.size());
+    r = try_decompress(oid, offs, s1.size(), out, &out_res);
+    EXPECT_EQ(r, 0);
+    EXPECT_TRUE(s1 == std::string(out_res.c_str()));
+    EXPECT_EQ(compressor->decompress_calls, 1u);*/
 
     //multiple (fixed-size) blocks  compress
     vector< pair<uint64_t, uint64_t> >block_info; //compressed block offset, size
@@ -402,7 +465,6 @@ class CompressContextTester : public CompressContext {
 
     out = out_res;
     out_res.clear();
-    attrs.clear();
     flush(&attrs);
 
     clear();
@@ -498,9 +560,9 @@ class CompressContextTester : public CompressContext {
 	      total_blocks - block_count / 8 /*these blocks aren't compressed due to small writes*/);
     EXPECT_EQ(out_res.length(), get_compressed_size());
     EXPECT_EQ(get_compressed_size(), block_count * sinfo.get_stripe_width()); //as we have pretty huge compression ratio all large blocks are expected to fit into single stripe
-    attrs.clear();
+
     flush(&attrs);
-    MasterRecord mrec = get_master_record();
+    mrec = get_master_record();
     EXPECT_NE(mrec.block_info_record_length, 0u);
     EXPECT_NE(mrec.block_info_recordset_header_length, 0u);
     unsigned recsets = total_blocks / RECS_PER_RECORDSET +

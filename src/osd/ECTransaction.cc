@@ -166,9 +166,11 @@ struct TransGenerator : public boost::static_visitor<void> {
     hinfo->append(
       sinfo.aligned_logical_offset_to_chunk_offset(offset),
       buffers);
+    bufferlist hbuf;
     ::encode(
       *hinfo,
-      attrset[ECUtil::get_hinfo_key()]);
+      hbuf);
+    attrset[ECUtil::get_hinfo_key()] = hbuf;
 
     assert(r == 0);
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();

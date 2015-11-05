@@ -245,8 +245,9 @@ void CompressContext::flush(map<string, bufferlist>* attrset) {
 
     (*attrset)[ECUtil::get_cinfo_key()] = bl;
 
-    ::encode(masterRec,
-	     (*attrset)[ECUtil::get_cinfo_master_key()]);
+    bufferlist master_bl;
+    ::encode(masterRec, master_bl );
+     (*attrset)[ECUtil::get_cinfo_master_key()] = master_bl;
 
     dout(1) << __func__ << " ifed: cinfo:" << (*attrset)[ECUtil::get_cinfo_master_key()].length() << "," <<
 	    bl.length() << "," << masterRec.block_info_record_length << "," << masterRec.block_info_recordset_header_length << "," << masterRec.current_original_pos << "," << masterRec.current_compressed_pos <<
