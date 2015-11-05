@@ -43,7 +43,7 @@ struct CompressBackendReadCallContext : public Context {
                   to_read.first.get<0>(),
                   to_read.first.get<1>(),
                   intermediate_buffer,
-                  *to_read.second.first
+                  to_read.second.first
                 );
       //FIXME: how to handle an error!!!!
       if (to_read.second.second) {

@@ -357,7 +357,7 @@ public:
     clear();
     //single block compress
     compressor->reset( TestCompressor::COMPRESS );
-    int r = try_compress( TestCompressor::method_name(), oid, offs, in, sinfo, out);
+    int r = try_compress(TestCompressor::method_name(), oid, in, sinfo, &offs, &out);
     EXPECT_EQ(r, 0);
     EXPECT_NE(in.length(), out.length());
     EXPECT_EQ(out.length(), sinfo.get_stripe_width());
@@ -371,7 +371,7 @@ public:
     clear();
     offs = 0;
     setup_for_read(attrs, 0, s1.size());
-    r = try_decompress( oid, offs, s1.size(), out, out_res);
+    r = try_decompress( oid, offs, s1.size(), out, &out_res);
     EXPECT_EQ(r, 0);
     EXPECT_TRUE(s1 == std::string(out_res.c_str()));
     EXPECT_EQ(compressor->decompress_calls, 1u);
@@ -385,7 +385,7 @@ public:
     for( size_t i=0;i<block_count; i++ ) {
       offs = offs4append;
       out.clear();
-      int r = try_compress( TestCompressor::method_name(), oid, offs, in, sinfo, out);
+      int r = try_compress(TestCompressor::method_name(), oid, in, sinfo, &offs, &out);
       EXPECT_EQ(r, 0);
       EXPECT_EQ(offs, out_res.length());
       offs4append+=in.length();
@@ -405,7 +405,7 @@ public:
     offs = 0;
     uint64_t size = block_count*s1.size();
     setup_for_read(attrs, offs, size); //read as a single block
-    r = try_decompress( oid, offs, size, out, out_res);
+    r = try_decompress( oid, offs, size, out, &out_res);
     EXPECT_EQ(r, 0);
     for( size_t i =0; i<block_count; i++){
       std::string tmpstr(out_res.get_contiguous( i*s1.size(), s1.size()), s1.size());
@@ -420,7 +420,7 @@ public:
     offs = 1;
     size = block_count*s1.size() - 1;
     setup_for_read(attrs, offs, size); //read as a single block
-    r = try_decompress( oid, offs, size, out, out_res);
+    r = try_decompress( oid, offs, size, out, &out_res);
     EXPECT_EQ(r, 0);
     EXPECT_EQ(size, out_res.length());
     EXPECT_EQ(compressor->decompress_calls, block_count);
@@ -433,7 +433,7 @@ public:
       offs = i*s1.size();
       size = s1.size();
       setup_for_read(attrs, offs, offs+size); //read as a single block
-      r = try_decompress( oid, offs, size, out, out_res);
+      r = try_decompress( oid, offs, size, out, &out_res);
       EXPECT_EQ(r, 0);
       EXPECT_EQ(size, out_res.length());
       std::string tmpstr(out_res.c_str(), s1.size());
@@ -445,7 +445,7 @@ public:
       offs = i*s1.size() + 2;
       size = s1.size()-3;
       setup_for_read(attrs, offs, offs+size); //read as a single block
-      r = try_decompress( oid, offs, size, out, out_res);
+      r = try_decompress( oid, offs, size, out, &out_res);
       EXPECT_EQ(r, 0);
       EXPECT_EQ(size, out_res.length());
       EXPECT_EQ(compressor->decompress_calls, 2u);

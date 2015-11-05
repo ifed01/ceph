@@ -41,7 +41,7 @@ public:
   struct BlockInfoRecordSetHeader {
     uint64_t start_offset,        //original offset for the first block in the recordset
              compressed_offset;   //compressed offset for the first block in the recordset
-    BlockInfoRecordSetHeader(uint64_t offset = 0, uint64_t coffset = 0) : start_offset(offset), compressed_offset(coffset) {}
+    BlockInfoRecordSetHeader(uint64_t offset, uint64_t coffset) : start_offset(offset), compressed_offset(coffset) {}
 
     void encode(bufferlist& bl) const;
     void decode(bufferlist::iterator& bl);
@@ -118,7 +118,7 @@ protected:
   static bool less_upper(const uint64_t&, const BlockMap::value_type&);
   static bool less_lower(const BlockMap::value_type&, const uint64_t&);
 
-  int do_compress(CompressorRef csimpl, bufferlist& block2compress, bufferlist& result_bl) const;
+  int do_compress(CompressorRef csimpl, const bufferlist& block2compress, bufferlist* result_bl) const;
 
   void append_block(uint64_t original_offset, uint64_t original_size, const string& method, uint64_t new_block_size);
   bool can_compress(uint64_t offs) const;
@@ -151,10 +151,10 @@ public:
     prevMasterRec.clear();
   }
 
-  void setup_for_append_or_recovery(map<string, bufferlist>& attrset);
-  void setup_for_read(map<string, bufferlist>& attrset, uint64_t start_offset, uint64_t end_offset);
-  void flush(map<string, bufferlist>& attrset);
-  void flush_for_rollback(map<string, boost::optional<bufferlist> >& attrset) const;
+  void setup_for_append_or_recovery(const map<string, bufferlist>& attrset);
+  void setup_for_read(const map<string, bufferlist>& attrset, uint64_t start_offset, uint64_t end_offset);
+  void flush(map<string, bufferlist>* attrset);
+  void flush_for_rollback(map<string, boost::optional<bufferlist> >* attrset) const;
 
   uint64_t get_compressed_size() const {
     return masterRec.current_compressed_pos;
@@ -164,8 +164,8 @@ public:
 
   void dump(Formatter* f) const;
 
-  int try_decompress(const hobject_t& oid, uint64_t orig_offs, uint64_t len, bufferlist& cs_bl, bufferlist& res_bl) const;
-  int try_compress(const std::string& compression_method, const hobject_t& oid, uint64_t& off, const bufferlist& bl, const ECUtil::stripe_info_t& sinfo, bufferlist& res_bl);
+  int try_decompress(const hobject_t& oid, uint64_t orig_offs, uint64_t len, const bufferlist& cs_bl, bufferlist* res_bl) const;
+  int try_compress(const std::string& compression_method, const hobject_t& oid, const bufferlist& bl, const ECUtil::stripe_info_t& sinfo, uint64_t* off, bufferlist* res_bl);
 };
 typedef ceph::shared_ptr<CompressContext> CompressContextRef;
 

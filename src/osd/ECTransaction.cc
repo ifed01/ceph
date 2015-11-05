@@ -149,7 +149,7 @@ struct TransGenerator : public boost::static_visitor<void> {
 
     assert(compress_infos.count(op.oid));
     CompressContextRef cinfo = compress_infos[op.oid];
-    cinfo->try_compress( compression_method, op.oid, offset, op.bl, sinfo, bl );
+    cinfo->try_compress(compression_method, op.oid, op.bl, sinfo, &offset, &bl);
     cinfo->flush(attrset);
 
     assert(bl.length());
