@@ -231,12 +231,12 @@ public:
 
     map<string, boost::optional<bufferlist> > rollback_attrs;
     map<string, bufferlist> attrs;
-    flush_for_rollback(rollback_attrs);
+    flush_for_rollback(&rollback_attrs);
     EXPECT_EQ(rollback_attrs.size(), 2u);
     EXPECT_EQ(rollback_attrs[ECUtil::get_cinfo_key()], boost::optional<bufferlist>());
     EXPECT_EQ(rollback_attrs[ECUtil::get_cinfo_master_key()], boost::optional<bufferlist>());
 
-    flush(attrs);
+    flush(&attrs);
     EXPECT_EQ(attrs.size(), 2u);
     EXPECT_GT(attrs[ECUtil::get_cinfo_key()].length(), 0u);
     EXPECT_GT(attrs[ECUtil::get_cinfo_master_key()].length(), 0u);
@@ -244,7 +244,7 @@ public:
     EXPECT_EQ(get_compressed_size(), (4+7)*1024+932u);
 
     rollback_attrs.clear();
-    flush_for_rollback(rollback_attrs);
+    flush_for_rollback(&rollback_attrs);
     EXPECT_EQ(rollback_attrs.size(), 2u);
     EXPECT_EQ(rollback_attrs[ECUtil::get_cinfo_key()], attrs[ECUtil::get_cinfo_key()]);
     EXPECT_EQ(rollback_attrs[ECUtil::get_cinfo_master_key()], attrs[ECUtil::get_cinfo_master_key()]);
@@ -252,7 +252,7 @@ public:
     clear();
     EXPECT_EQ(get_compressed_size(), 0u);
     rollback_attrs.clear();
-    flush_for_rollback(rollback_attrs);
+    flush_for_rollback(&rollback_attrs);
     EXPECT_EQ(rollback_attrs.size(), 2u);
     EXPECT_EQ(rollback_attrs[ECUtil::get_cinfo_key()], boost::optional<bufferlist>());
     EXPECT_EQ(rollback_attrs[ECUtil::get_cinfo_master_key()], boost::optional<bufferlist>());
@@ -260,14 +260,14 @@ public:
     setup_for_append_or_recovery( attrs );
     EXPECT_EQ(get_compressed_size(), (4+7)*1024+932u);
     rollback_attrs.clear();
-    flush_for_rollback(rollback_attrs);
+    flush_for_rollback(&rollback_attrs);
     EXPECT_EQ(rollback_attrs.size(), 2u);
     EXPECT_EQ(rollback_attrs[ECUtil::get_cinfo_key()], attrs[ECUtil::get_cinfo_key()]);
     EXPECT_EQ(rollback_attrs[ECUtil::get_cinfo_master_key()], attrs[ECUtil::get_cinfo_master_key()]);
 
     //verifying context content encoded in attrs
     CompressContext::MasterRecord masterRec;
-    CompressContext::BlockInfoRecordSetHeader recHdr;
+    CompressContext::BlockInfoRecordSetHeader recHdr(0,0);
     CompressContext::BlockInfoRecord rec;
 
     bufferlist::iterator it = attrs[ECUtil::get_cinfo_master_key()].begin();
@@ -312,7 +312,7 @@ public:
       append_block( offs, block_len, "", cblock_len);
       offs+=block_len;
     }
-    flush(attrs);
+    flush(&attrs);
 
     it = attrs[ECUtil::get_cinfo_master_key()].begin();
     masterRec.clear();
@@ -366,7 +366,7 @@ public:
     EXPECT_EQ(compressor->compress_calls, 1u);
 
     map<string, bufferlist> attrs;
-    flush(attrs);
+    flush(&attrs);
 
     clear();
     offs = 0;
@@ -401,7 +401,7 @@ public:
     out=out_res;
     out_res.clear();
     attrs.clear();
-    flush(attrs);
+    flush(&attrs);
 
     clear();
     offs = 0;
@@ -496,7 +496,7 @@ public:
     EXPECT_EQ(out_res.length(), get_compressed_size());
     EXPECT_EQ(get_compressed_size(), block_count*sinfo.get_stripe_width()); //as we have pretty huge compression ratio all large blocks are expected to fit into single stripe
     attrs.clear();
-    flush(attrs);
+    flush(&attrs);
     MasterRecord mrec = get_master_record();
     EXPECT_NE(mrec.block_info_record_length, 0u);
     EXPECT_NE(mrec.block_info_recordset_header_length, 0u);
