@@ -16,17 +16,17 @@
 #include "osd/ECUtil.h"
 
 class CompressContext {
-public:
+ public:
 
   /*
   Compression information record for single object block.
   To be stored along with other records under specific key in object attributes.
-  Substitutes BlockMap entry( see below ) at persistent storage to reduce object attributes space utilization. 
+  Substitutes BlockMap entry( see below ) at persistent storage to reduce object attributes space utilization.
   */
   struct BlockInfoRecord {
     uint8_t method_idx;                           //an index indicating applied compression method in corresponding master record list, 0 - if no compression has been applied.
     uint32_t original_length,                     // block original length
-             compressed_length;                   // block compressed length
+	     compressed_length;                   // block compressed length
     BlockInfoRecord() : method_idx(0), original_length(0), compressed_length(0) {}
     BlockInfoRecord(const BlockInfoRecord& from) : method_idx(from.method_idx), original_length(from.original_length), compressed_length(from.compressed_length) {}
     BlockInfoRecord(uint8_t idx, uint32_t olen, uint32_t clen) : method_idx(idx), original_length(olen), compressed_length(clen) {}
@@ -40,7 +40,7 @@ public:
   */
   struct BlockInfoRecordSetHeader {
     uint64_t start_offset,        //original offset for the first block in the recordset
-             compressed_offset;   //compressed offset for the first block in the recordset
+	     compressed_offset;   //compressed offset for the first block in the recordset
     BlockInfoRecordSetHeader(uint64_t offset, uint64_t coffset) : start_offset(offset), compressed_offset(coffset) {}
 
     void encode(bufferlist& bl) const;
@@ -48,14 +48,14 @@ public:
   };
 
   /*
-  Object compression information master record. 
+  Object compression information master record.
   To be stored under specific key in object attributes
   */
   struct MasterRecord {
     uint64_t current_original_pos;                //Object original size (position original data is appended to), if 0 - no compression has been applied.
     uint64_t current_compressed_pos;              //Object compressed size (position compressed data to be appended to)
     uint32_t block_info_record_length,            //The length of the single block info record
-             block_info_recordset_header_length;  //The length of the single block info recordset header
+	     block_info_recordset_header_length;  //The length of the single block info recordset header
     typedef vector<string>  MethodList;
     MethodList methods;                           //list of compression methods applied to the object. Positions to be preserved through object life-cycle to ensure proper mapping. +-1 shift to be applied to the index since 0 denotes no compression and isn't stored in the list.
 
@@ -88,11 +88,11 @@ public:
   };
 
   enum {
-    RECS_PER_RECORDSET = 64,    //amount of comression information records per single record set. 
+    RECS_PER_RECORDSET = 64,    //amount of comression information records per single record set.
     MAX_STRIPES_PER_BLOCK = 32, //maximum amount of stripes that can be compressed as a single block
   };
 
-private:
+ private:
   /*
   Run-time compressed block information
   */
@@ -113,7 +113,7 @@ private:
   MasterRecord prevMasterRec;     //Compression information master record replica saved before the first unflushed update
   bufferlist prev_blocks_encoded; //Encoded compression information records replica saved before the first unflushed update
 
-protected:
+ protected:
 
   static bool less_upper(const uint64_t&, const BlockMap::value_type&);
   static bool less_lower(const BlockMap::value_type&, const uint64_t&);
@@ -131,13 +131,17 @@ protected:
   }
 
   uint64_t get_block_size(uint64_t stripe_width) const;
-  MasterRecord get_master_record() const { return masterRec; };
+  MasterRecord get_master_record() const {
+    return masterRec;
+  };
 
   pair<uint64_t, uint64_t>  map_offset(uint64_t offs, bool next_block_flag) const; //returns <original block offset, compressed block_offset>
 
-  bool need_flush() const { return prevMasterRec.current_original_pos != masterRec.current_original_pos; }
+  bool need_flush() const {
+    return prevMasterRec.current_original_pos != masterRec.current_original_pos;
+  }
 
-public:
+ public:
   CompressContext() {}
   CompressContext(const CompressContext& from) :
     masterRec(from.masterRec),

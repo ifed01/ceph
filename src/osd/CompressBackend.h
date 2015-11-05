@@ -16,10 +16,10 @@
 ECBackend extenstion to provide object data decompression on read access
 */
 class CompressedECBackend : public ECBackend {
-protected:
+ protected:
   CompressContextRef get_compress_context_on_read(map<string, bufferlist>& attrset, uint64_t offs, uint64_t offs_last);
 
-public:
+ public:
   CompressedECBackend(
     PGBackend::Listener* pg,
     coll_t coll,
@@ -31,7 +31,7 @@ public:
   virtual void objects_read_async(
     const hobject_t& hoid,
     const list < pair < boost::tuple<uint64_t, uint64_t, uint32_t>,
-    pair<bufferlist*, Context*> > > &to_read,
+    pair<bufferlist*, Context*> > >& to_read,
     Context* on_complete,
     bool fast_read);
 };

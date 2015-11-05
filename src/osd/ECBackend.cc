@@ -404,8 +404,9 @@ void ECBackend::handle_recovery_read_complete(
     CompressContext cctx;
     cctx.setup_for_append_or_recovery(op.xattrs);
     uint64_t compressed_size = cctx.get_compressed_size();
-    if (compressed_size )
+    if (compressed_size) {
       op.set_recovered_object_size(compressed_size);
+    }
   }
   assert(op.xattrs.size());
   assert(op.obc);
@@ -1758,15 +1759,17 @@ CompressContextRef ECBackend::get_compress_context_basic(const hobject_t &hoid)
     dout(10) << __func__ << ": not in cache " << hoid << dendl;
     map<string, bufferlist> attrset;
     CompressContext cctx;
-    if( load_attrs(hoid, attrset) >= 0 )
+    if (load_attrs(hoid, &attrset) >= 0) {
       cctx.setup_for_append_or_recovery(attrset);
+    }
     ref = unstable_compressinfo_registry.lookup_or_create(hoid, cctx);
   }
   return ref;
 }
 
-int ECBackend::load_attrs(const hobject_t &hoid, map<string, bufferlist>& attrset)
+int ECBackend::load_attrs(const hobject_t &hoid, map<string, bufferlist>* attrset)
 {
+  assert(attrset);
   dout(10) << __func__ << ": Loading attrs on " << hoid << dendl;
   struct stat st;
   int r = store->stat(
@@ -1780,13 +1783,14 @@ int ECBackend::load_attrs(const hobject_t &hoid, map<string, bufferlist>& attrse
     r = store->getattrs(
       coll,
       ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-      attrset);
+      *attrset);
       if (r < 0){
         derr << __func__ << ": failed to load attrs" << dendl;
       }
   }
-  else if( st.st_size == 0 )
-    r=0;
+  else if (st.st_size == 0) {
+    r = 0;
+  }
   return r;
 }
 

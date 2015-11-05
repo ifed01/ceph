@@ -38,17 +38,16 @@ struct CompressBackendReadCallContext : public Context {
   virtual void finish(int r) {
     if (r) {
       bufferlist bl;
-      int res = ccontext->try_decompress(
-                  hoid,
-                  to_read.first.get<0>(),
-                  to_read.first.get<1>(),
-                  intermediate_buffer,
-                  to_read.second.first
-                );
-      //FIXME: how to handle an error!!!!
+      ccontext->try_decompress(
+		  hoid,
+		  to_read.first.get<0>(),
+		  to_read.first.get<1>(),
+		  intermediate_buffer,
+		  to_read.second.first
+		);
       if (to_read.second.second) {
-        to_read.second.second->complete(to_read.second.first->length());
-        to_read.second.second = NULL;
+	to_read.second.second->complete(to_read.second.first->length());
+	to_read.second.second = NULL;
       }
     }
   }
@@ -65,8 +64,7 @@ CompressedECBackend::CompressedECBackend(
   CephContext* cct,
   ErasureCodeInterfaceRef ec_impl,
   uint64_t stripe_width) :
-  ECBackend(pg, coll, store, cct, ec_impl, stripe_width)
-{
+  ECBackend(pg, coll, store, cct, ec_impl, stripe_width) {
 }
 
 
@@ -74,15 +72,14 @@ void CompressedECBackend::objects_read_async(
   const hobject_t& hoid,
   const list<ReadRangeCallParam>& to_read,
   Context* on_complete,
-  bool fast_read)
-{
+  bool fast_read) {
   map<string, bufferlist> attrset;
   int r = load_attrs(hoid, attrset);
   if (r != 0) {
     derr << __func__ << ": load_attrs(" << hoid << ")"
-         << " returned a null pointer and there is no "
-         << " way to recover from such an error in this "
-         << " context" << dendl;
+	 << " returned a null pointer and there is no "
+	 << " way to recover from such an error in this "
+	 << " context" << dendl;
     assert(0);
   }
 
@@ -93,9 +90,9 @@ void CompressedECBackend::objects_read_async(
     CompressContextRef cinfo = get_compress_context_on_read(attrset, it->first.get<0>(), it->first.get<0>() + it->first.get<1>());
     if (!cinfo) {
       derr << __func__ << ": get_compress_context_on_read(" << hoid << ")"
-           << " returned a null pointer and there is no "
-           << " way to recover from such an error in this "
-           << " context" << dendl;
+	   << " returned a null pointer and there is no "
+	   << " way to recover from such an error in this "
+	   << " context" << dendl;
       assert(0);
     }
 
@@ -107,21 +104,20 @@ void CompressedECBackend::objects_read_async(
 
     to_read_from_ec.push_back(
       std::make_pair(
-        boost::make_tuple(
-          tmp.first, //new offset
-          tmp.second, //new length
-          it->first.get<2>()), //flags
-        std::make_pair(
-          &ctx->intermediate_buffer,
-          ctx))
+	boost::make_tuple(
+	  tmp.first, //new offset
+	  tmp.second, //new length
+	  it->first.get<2>()), //flags
+	std::make_pair(
+	  &ctx->intermediate_buffer,
+	  ctx))
     );
   }
   ECBackend::objects_read_async(hoid, to_read_from_ec, on_complete, fast_read);
 }
 
 CompressContextRef CompressedECBackend::get_compress_context_on_read(
-  map<string, bufferlist>& attrset, uint64_t offs, uint64_t offs_last)
-{
+  map<string, bufferlist>& attrset, uint64_t offs, uint64_t offs_last) {
   CompressContextRef ref(new CompressContext);
   ref->setup_for_read(attrset, offs, offs_last);
   return ref;
