@@ -16,7 +16,7 @@
 
 const unsigned CompressContext::RECS_PER_RECORDSET = 64;    //amount of comression information records per single record set.
 const unsigned CompressContext::MAX_STRIPES_PER_BLOCK = 32; //maximum amount of stripes that can be compressed as a single block
-const unsigned CompressContext::DEBUG_LEVEL = 10;  //debug level for compression stuff
+const int CompressContext::DEBUG_LEVEL = 10;  //debug level for compression stuff
 
 void CompressContext::BlockInfoRecord::encode(bufferlist& bl) const {
   ENCODE_START(1, 1, bl);

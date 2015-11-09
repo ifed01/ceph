@@ -99,7 +99,7 @@ void CompressedECBackend::objects_read_async(
 
     CompressBackendReadCallContext* ctx = new CompressBackendReadCallContext(cinfo, hoid, *it);
 
-    dout(CompressionContext::DEBUG_LEVEL) << __func__
+    dout(CompressContext::DEBUG_LEVEL) << __func__
 					  << " reading from EC pool: original(" << "( offs:" << it->first.get<0>() << ", len:" << it->first.get<1>() << ")"
 					  << " target ( offs:" << tmp.first << ", len:" << tmp.second << ")" << dendl;
 

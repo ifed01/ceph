@@ -20,7 +20,7 @@ class CompressContext {
 
   static const unsigned RECS_PER_RECORDSET;    //amount of comression information records per single record set.
   static const unsigned MAX_STRIPES_PER_BLOCK; //maximum amount of stripes that can be compressed as a single block
-  static const unsigned DEBUG_LEVEL;           //debug level for compression stuff
+  static const int DEBUG_LEVEL;           //debug level for compression stuff
 
   /*
   Compression information record for single object block.
