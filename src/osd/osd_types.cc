@@ -1096,6 +1096,7 @@ void pg_pool_t::dump(Formatter *f) const
   f->dump_unsigned("cache_min_flush_age", cache_min_flush_age);
   f->dump_unsigned("cache_min_evict_age", cache_min_evict_age);
   f->dump_string("erasure_code_profile", erasure_code_profile);
+  f->dump_string("compression_type", compression_type);
   f->open_object_section("hit_set_params");
   hit_set_params.dump(f);
   f->close_section(); // hit_set_params
@@ -1425,7 +1426,7 @@ void pg_pool_t::encode(bufferlist& bl, uint64_t features) const
     return;
   }
 
-  ENCODE_START(24, 5, bl);
+  ENCODE_START(25, 5, bl);
   ::encode(type, bl);
   ::encode(size, bl);
   ::encode(crush_ruleset, bl);
@@ -1474,12 +1475,13 @@ void pg_pool_t::encode(bufferlist& bl, uint64_t features) const
   ::encode(hit_set_grade_decay_rate, bl);
   ::encode(hit_set_search_last_n, bl);
   ::encode(opts, bl);
+  ::encode(compression_type, bl);
   ENCODE_FINISH(bl);
 }
 
 void pg_pool_t::decode(bufferlist::iterator& bl)
 {
-  DECODE_START_LEGACY_COMPAT_LEN(24, 5, 5, bl);
+  DECODE_START_LEGACY_COMPAT_LEN(25, 5, 5, bl);
   ::decode(type, bl);
   ::decode(size, bl);
   ::decode(crush_ruleset, bl);
@@ -1621,6 +1623,11 @@ void pg_pool_t::decode(bufferlist::iterator& bl)
   if (struct_v >= 24) {
     ::decode(opts, bl);
   }
+  if (struct_v >= 25) {
+    ::decode(compression_type, bl);
+  } else {
+    compression_type.clear();
+  }
   DECODE_FINISH(bl);
   calc_pg_masks();
   calc_grade_table();
@@ -1681,6 +1688,7 @@ void pg_pool_t::generate_test_instances(list<pg_pool_t*>& o)
   a.cache_min_flush_age = 231;
   a.cache_min_evict_age = 2321;
   a.erasure_code_profile = "profile in osdmap";
+  a.compression_type = "none";
   a.expected_num_objects = 123456;
   a.fast_read = false;
   o.push_back(new pg_pool_t(a));
