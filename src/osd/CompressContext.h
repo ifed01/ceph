@@ -18,6 +18,10 @@
 class CompressContext {
  public:
 
+  static const unsigned RECS_PER_RECORDSET;    //amount of comression information records per single record set.
+  static const unsigned MAX_STRIPES_PER_BLOCK; //maximum amount of stripes that can be compressed as a single block
+  static const unsigned DEBUG_LEVEL;           //debug level for compression stuff
+
   /*
   Compression information record for single object block.
   To be stored along with other records under specific key in object attributes.
@@ -85,11 +89,6 @@ class CompressContext {
       std::swap(block_info_recordset_header_length, other.block_info_recordset_header_length);
       methods.swap(other.methods);
     }
-  };
-
-  enum {
-    RECS_PER_RECORDSET = 64,    //amount of comression information records per single record set.
-    MAX_STRIPES_PER_BLOCK = 32, //maximum amount of stripes that can be compressed as a single block
   };
 
  private:
