@@ -20,6 +20,7 @@ include mds/Makefile.am
 include os/Makefile.am
 include osd/Makefile.am
 include erasure-code/Makefile.am
+include compressor/Makefile.am
 include osdc/Makefile.am
 include client/Makefile.am
 include global/Makefile.am
@@ -41,7 +42,6 @@ include rbd_replay/Makefile.am
 include test/Makefile.am
 include tools/Makefile.am
 include Makefile-rocksdb.am
-include compressor/Makefile.am
 include tracing/Makefile.am
 
 
