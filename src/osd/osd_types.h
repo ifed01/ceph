@@ -1361,6 +1361,8 @@ public:
     return quota_max_objects;
   }
 
+  const char* get_compression_type() const;
+
   static int calc_bits_of(int t);
   void calc_pg_masks();
 
