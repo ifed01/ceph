@@ -23,7 +23,6 @@
 // -----------------------------------------------------------------------------
 
 class CompressionZlib : public Compressor {
-	const char version = '1';
 public:
 
   CompressionZlib()
