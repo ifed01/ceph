@@ -45,6 +45,12 @@ public:
   uint64_t get_stripe_width() const {
     return stripe_width;
   }
+  uint64_t pad_to_stripe_width(uint64_t length) const {
+    if (length % get_stripe_width())
+      length += get_stripe_width() - (length % get_stripe_width());
+    return length;
+  }
+
   uint64_t get_chunk_size() const {
     return chunk_size;
   }
@@ -114,7 +120,6 @@ public:
     cumulative_shard_hashes(num_chunks, -1) {}
   void append(uint64_t old_size, map<int, bufferlist> &to_append) {
     assert(to_append.size() == cumulative_shard_hashes.size());
-    assert(old_size == total_chunk_size);
     uint64_t size_to_append = to_append.begin()->second.length();
     for (map<int, bufferlist>::iterator i = to_append.begin();
 	 i != to_append.end();
@@ -146,8 +151,10 @@ public:
 };
 typedef ceph::shared_ptr<HashInfo> HashInfoRef;
 
-bool is_hinfo_key_string(const string &key);
+bool is_internal_key_string(const string &key);
 const string &get_hinfo_key();
+const string &get_cinfo_master_key();
+const string &get_cinfo_key();
 
 }
 WRITE_CLASS_ENCODER(ECUtil::HashInfo)
