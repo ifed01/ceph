@@ -1788,9 +1788,6 @@ int ECBackend::load_attrs(const hobject_t &hoid, map<string, bufferlist>* attrse
         derr << __func__ << ": failed to load attrs" << dendl;
       }
   }
-  else if (st.st_size == 0) {
-    r = 0;
-  }
   return r;
 }
 
