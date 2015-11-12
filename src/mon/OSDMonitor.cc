@@ -55,7 +55,7 @@
 #include "common/errno.h"
 
 #include "erasure-code/ErasureCodePlugin.h"
-#include "compressor/CompressionPlugin.h"
+#include "compressor/Compressor.h"
 
 #include "include/compat.h"
 #include "include/assert.h"
@@ -4263,10 +4263,12 @@ int OSDMonitor::get_compressor(const string &compression_type,
          CompressorRef *compressor,
          ostream *ss) const
 {
-  CompressionPluginRegistry &instance = CompressionPluginRegistry::instance();
-  return instance.factory(compression_type,
-        g_conf->compression_dir,
-        compressor, ss);
+  *compressor = Compressor::create(g_ceph_context, compression_type);
+
+  if (compressor == NULL)
+    return -1;
+  else 
+    return 0;
 }
 
 int OSDMonitor::get_erasure_code(const string &erasure_code_profile,
