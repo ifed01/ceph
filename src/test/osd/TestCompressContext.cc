@@ -357,7 +357,7 @@ class CompressContextTester : public CompressContext {
     uint64_t offs = 0;
     in.append(s1);
     clear();
-    //single block compress
+    ////single block compress
     compressor->reset(TestCompressor::COMPRESS);
     int r = try_compress(TestCompressor::method_name(), oid, in, sinfo, &offs, &out);
     EXPECT_EQ(r, 0);
@@ -379,13 +379,13 @@ class CompressContextTester : public CompressContext {
     EXPECT_TRUE(s1 == std::string(out_res.c_str(), out_res.length()));
     EXPECT_EQ(compressor->decompress_calls, 1u);
 
-    //single block compress attempt - bypassed, followed by another successful compression
+    ////multiple block compress attempts - the first has no benefit(bypassed), followed by successful and failed blocks
     clear();
     out.clear();
     out_res.clear();
     compressor->reset(TestCompressor::COMPRESS_NO_BENEFIT);
     offs=0;
-    try_compress(TestCompressor::method_name(), oid, in, sinfo, &offs, &out);
+    try_compress(TestCompressor::method_name(), oid, in, sinfo, &offs, &out); //bypassed block
     EXPECT_EQ(r, 0);
     EXPECT_EQ(in.length(), out.length());
     EXPECT_EQ(get_compressed_size(), in.length());
@@ -407,16 +407,17 @@ class CompressContextTester : public CompressContext {
     compressor->reset(TestCompressor::COMPRESS);
     setup_for_append_or_recovery(attrs);
 
-/*    mrec = get_master_record();
+    mrec = get_master_record();
     EXPECT_EQ(mrec.current_original_pos, in.length());
     EXPECT_EQ(mrec.current_compressed_pos, in.length());
     EXPECT_EQ(mrec.methods.size(), 0u);
     EXPECT_NE(mrec.block_info_record_length, 0u);
-    EXPECT_NE(mrec.block_info_recordset_header_length, 0u);*/
+    EXPECT_NE(mrec.block_info_recordset_header_length, 0u);
 
     EXPECT_EQ(get_compressed_size(), out_res.length());
+
     offs=in.length();
-    try_compress(TestCompressor::method_name(), oid, in, sinfo, &offs, &out);
+    try_compress(TestCompressor::method_name(), oid, in, sinfo, &offs, &out); //successfully compressed block
     EXPECT_EQ(r, 0);
     EXPECT_GT(in.length(), out.length());
     EXPECT_EQ(get_compressed_size(), out_res.length()+out.length());
@@ -430,18 +431,64 @@ class CompressContextTester : public CompressContext {
     EXPECT_EQ(mrec.methods.size(), 1u);
     EXPECT_NE(mrec.block_info_record_length, 0u);
     EXPECT_NE(mrec.block_info_recordset_header_length, 0u);
-
     out_res.append(out);
-    out.clear();
-/*    clear();
+
+    compressor->reset(TestCompressor::NO_COMPRESS);
+    offs=in.length()*2;
+    try_compress(TestCompressor::method_name(), oid, in, sinfo, &offs, &out); //failed block compression
+    EXPECT_EQ(r, 0);
+    EXPECT_EQ(in.length(), out.length());
+    EXPECT_EQ(get_compressed_size(), out_res.length()+out.length());
+    EXPECT_EQ(offs, out_res.length());
+    EXPECT_EQ(compressor->compress_calls, 1u);
+
+    flush(&attrs);
+    mrec = get_master_record();
+    EXPECT_EQ(mrec.current_original_pos, in.length()*3);
+    EXPECT_EQ(mrec.current_compressed_pos, get_compressed_size());
+    EXPECT_EQ(mrec.methods.size(), 1u);
+    EXPECT_NE(mrec.block_info_record_length, 0u);
+    EXPECT_NE(mrec.block_info_recordset_header_length, 0u);
+    out_res.append(out);
+
+    out.swap(out_res);
+    out_res.clear();
+    compressor->reset(TestCompressor::NO_COMPRESS);
+    clear();
     offs = 0;
-    setup_for_read(attrs, 0, s1.size());
+    setup_for_read(attrs, offs, s1.size());
     r = try_decompress(oid, offs, s1.size(), out, &out_res);
     EXPECT_EQ(r, 0);
     EXPECT_TRUE(s1 == std::string(out_res.c_str()));
-    EXPECT_EQ(compressor->decompress_calls, 1u);*/
+    EXPECT_EQ(compressor->decompress_calls, 0u);
 
-    //multiple (fixed-size) blocks  compress
+    //reading two bytes: the first one from uncompressed block and the second one from compressed block
+    out_res.clear();
+    compressor->reset(TestCompressor::NO_COMPRESS);
+    offs = s1.size()-1;
+    setup_for_read(attrs, offs, offs+2);
+    r = try_decompress(oid, offs, 2, out, &out_res);
+    EXPECT_EQ(r, 0);
+    EXPECT_EQ( out_res.length(), 2u);
+    EXPECT_TRUE('a' == out_res[0]);
+    EXPECT_TRUE('a' == out_res[1]);
+    EXPECT_EQ(compressor->decompress_calls, 1u);
+
+    //reading a block starting at the last byte of the first block and finishing at the first byte of the last block
+    out_res.clear();
+    compressor->reset(TestCompressor::NO_COMPRESS);
+    offs = s1.size()-1;
+    setup_for_read(attrs, offs, offs + s1.size() + 2);
+    r = try_decompress(oid, offs, s1.size() + 2, out, &out_res);
+    EXPECT_EQ(r, 0);
+    EXPECT_EQ( out_res.length(), s1.size() + 2u);
+    EXPECT_TRUE('a' == out_res[0]);
+    EXPECT_TRUE('a' == out_res[1]);
+    EXPECT_TRUE('a' == out_res[s1.size()]);
+    EXPECT_TRUE('a' == out_res[s1.size()+1]);
+    EXPECT_EQ(compressor->decompress_calls, 1u);
+
+    ////multiple (fixed-size) blocks  compress
     vector< pair<uint64_t, uint64_t> >block_info; //compressed block offset, size
     clear();
     out_res.clear();
@@ -520,7 +567,7 @@ class CompressContextTester : public CompressContext {
       EXPECT_EQ(compressor->decompress_calls, 2u);
     }
 
-    //multiple blocks (variable sizes) compress
+    ////multiple blocks (variable sizes) compress
     block_info.clear();
     clear();
     out_res.clear();
