@@ -3,8 +3,9 @@
 /*
  * Ceph distributed storage system
  *
+ * Copyright (C) 2015 Mirantis, Inc.
  *
- * Author: Igor Fedotov <ifed@mirantis.com>
+ * Author: Igor Fedotov <ifedotov@mirantis.com>
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
