@@ -48,7 +48,6 @@ using namespace std;
 #include "include/assert.h"
 
 #include "erasure-code/ErasureCodePlugin.h"
-#include "compressor/CompressionPlugin.h"
 
 #define dout_subsys ceph_subsys_osd
 
@@ -94,21 +93,13 @@ void usage()
   cout.flush();
 }
 
-int preload_plugins()
+int preload_erasure_code()
 {
   string plugins = g_conf->osd_erasure_code_plugins;
   stringstream ss;
   int r = ErasureCodePluginRegistry::instance().preload(
     plugins,
     g_conf->erasure_code_dir,
-    &ss);
-  if (r)
-    derr << ss.str() << dendl;
-  else
-    dout(10) << ss.str() << dendl;
-  r = CompressionPluginRegistry::instance().preload(
-    g_conf->osd_compression_plugins,
-    g_conf->compression_dir,
     &ss);
   if (r)
     derr << ss.str() << dendl;
@@ -585,7 +576,7 @@ int main(int argc, const char **argv)
     return -1;
   global_init_chdir(g_ceph_context);
 
-  if (preload_plugins() < 0)
+  if (preload_erasure_code() < 0)
     return -1;
 
   osd = new OSD(g_ceph_context,
