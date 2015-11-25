@@ -67,7 +67,7 @@ int PluginRegistry::remove(const std::string& type, const std::string& name)
     plugins.find(type);
   if (i == plugins.end())
     return -ENOENT;
-  std::map<std::string,Plugin*>::iterator j = i->second.find(name);
+  std::map<std::string,Plugin*>::iterator j = i->second.find(type);
   if (j == i->second.end())
     return -ENOENT;
 
