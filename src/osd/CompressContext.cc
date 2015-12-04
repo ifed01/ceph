@@ -528,7 +528,8 @@ int CompressContext::try_compress(const std::string& compression_method, const h
   }
 
   //apply compression if that's a first block or it's been already applied to previous blocks
-  if (can_compress(*off) && cs_impl != NULL) {
+  bool compress_permitted = can_compress(*off); //if current object metadata state is consistent to apply compression
+  if ( compress_permitted && cs_impl != NULL) {
     if (bl_cs.length() > sinfo.get_stripe_width()) {
 
       bufferlist::iterator it = bl_cs.begin();
@@ -571,7 +572,8 @@ int CompressContext::try_compress(const std::string& compression_method, const h
   }
   if (!compressed) { //the whole block wasn't compressed or there is no benefit in compression
     *res_bl = bl0;
-    append_block(*off, res_bl->length(), "", res_bl->length());
+    if( compress_permitted )
+      append_block(*off, res_bl->length(), "", res_bl->length());
   } else {
     bl.swap(*res_bl);
     swap(new_cinfo);
