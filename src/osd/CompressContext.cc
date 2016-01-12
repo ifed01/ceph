@@ -593,7 +593,7 @@ int CompressContext::try_compress(const std::string& compression_method, const h
   bufferlist bl;
   CompressContext new_cinfo(*this);
 
-  dout(DEBUG_LEVEL) << __func__ << " compressing oid=" << oid << " params("
+  dout(0) << __func__ << " compressing oid=" << oid << " params("
 		    << compression_method << "," << *off << ", " << bl0.length() << ")" << dendl;
 
   bool compressed = false, failure = false;

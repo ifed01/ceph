@@ -1752,6 +1752,7 @@ ostream& operator<<(ostream& out, const pg_pool_t& p)
 void object_stat_sum_t::dump(Formatter *f) const
 {
   f->dump_int("num_bytes", num_bytes);
+  f->dump_int("num_bytes_compressed", num_bytes_compressed);
   f->dump_int("num_objects", num_objects);
   f->dump_int("num_object_clones", num_object_clones);
   f->dump_int("num_object_copies", num_object_copies);
@@ -1789,7 +1790,7 @@ void object_stat_sum_t::dump(Formatter *f) const
 
 void object_stat_sum_t::encode(bufferlist& bl) const
 {
-  ENCODE_START(15, 3, bl);
+  ENCODE_START(16, 3, bl);
 #if defined(CEPH_LITTLE_ENDIAN)
   bl.append((char *)(&num_bytes), sizeof(object_stat_sum_t));
 #else
@@ -1827,6 +1828,7 @@ void object_stat_sum_t::encode(bufferlist& bl) const
   ::encode(num_evict_mode_full, bl);
   ::encode(num_objects_pinned, bl);
   ::encode(num_objects_missing, bl);
+  ::encode(num_bytes_compressed, bl);
 #endif
   ENCODE_FINISH(bl);
 }
@@ -1940,6 +1942,11 @@ void object_stat_sum_t::decode(bufferlist::iterator& bl)
       num_objects_missing = 0;
     }
   }
+  if (struct_v >= 16) {
+    ::decode(num_bytes_compressed, bl);
+  } else {
+    num_bytes_compressed = 0;
+  }
   DECODE_FINISH(bl);
 }
 
@@ -1948,6 +1955,7 @@ void object_stat_sum_t::generate_test_instances(list<object_stat_sum_t*>& o)
   object_stat_sum_t a;
 
   a.num_bytes = 1;
+  a.num_bytes_compressed = a.num_bytes;
   a.num_objects = 3;
   a.num_object_clones = 4;
   a.num_object_copies = 5;
@@ -1984,6 +1992,7 @@ void object_stat_sum_t::generate_test_instances(list<object_stat_sum_t*>& o)
 void object_stat_sum_t::add(const object_stat_sum_t& o)
 {
   num_bytes += o.num_bytes;
+  num_bytes_compressed += o.num_bytes_compressed;
   num_objects += o.num_objects;
   num_object_clones += o.num_object_clones;
   num_object_copies += o.num_object_copies;
@@ -2022,6 +2031,7 @@ void object_stat_sum_t::add(const object_stat_sum_t& o)
 void object_stat_sum_t::sub(const object_stat_sum_t& o)
 {
   num_bytes -= o.num_bytes;
+  num_bytes_compressed -= o.num_bytes_compressed;
   num_objects -= o.num_objects;
   num_object_clones -= o.num_object_clones;
   num_object_copies -= o.num_object_copies;
@@ -2061,6 +2071,7 @@ bool operator==(const object_stat_sum_t& l, const object_stat_sum_t& r)
 {
   return
     l.num_bytes == r.num_bytes &&
+    l.num_bytes_compressed == r.num_bytes_compressed &&
     l.num_objects == r.num_objects &&
     l.num_object_clones == r.num_object_clones &&
     l.num_object_copies == r.num_object_copies &&
