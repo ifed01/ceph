@@ -846,7 +846,7 @@ void ECBackend::handle_sub_write(
     msg->mark_started();
   assert(!get_parent()->get_log().get_missing().is_missing(op.soid));
   if (!get_parent()->pgb_is_primary())
-    get_parent()->update_stats(op.stats);
+    get_parent()->update_stats(op.stats, true);
   ObjectStore::Transaction *localt = new ObjectStore::Transaction;
   localt->set_use_tbl(op.t.get_use_tbl());
   if (!op.temp_added.empty()) {
@@ -1852,7 +1852,7 @@ void ECBackend::start_write(Op *op) {
   }
   ObjectStore::Transaction empty;
   empty.set_use_tbl(parent->transaction_use_tbl());
-
+  uint64_t bytes_appended=0;
   op->t->generate_transactions(
     op->unstable_hash_infos,
     ec_impl,
@@ -1862,7 +1862,13 @@ void ECBackend::start_write(Op *op) {
     sinfo,
     &trans,
     &(op->temp_added),
-    &(op->temp_cleared));
+    &(op->temp_cleared),
+    &bytes_appended);
+
+  dout(0) << "ifed:post generate:" << bytes_appended<< dendl;
+  pg_stat_t stats;
+  stats.stats.sum.num_bytes_compressed = bytes_appended;
+  get_parent()->update_stats( stats, false );
 
   dout(10) << "onreadable_sync: " << op->on_local_applied_sync << dendl;
 

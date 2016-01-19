@@ -71,6 +71,7 @@ struct TransGenerator : public boost::static_visitor<void> {
   set<hobject_t, hobject_t::BitwiseComparator> *temp_added;
   set<hobject_t, hobject_t::BitwiseComparator> *temp_removed;
   stringstream *out;
+  uint64_t bytes_appended;
   TransGenerator(
     map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
     map<hobject_t, CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
@@ -88,7 +89,8 @@ struct TransGenerator : public boost::static_visitor<void> {
       sinfo(sinfo),
       trans(trans),
       temp_added(temp_added), temp_removed(temp_removed),
-      out(out) {
+      out(out),
+      bytes_appended(0) {
     for (unsigned i = 0; i < ecimpl->get_chunk_count(); ++i) {
       want.insert(i);
     }
@@ -161,6 +163,9 @@ struct TransGenerator : public boost::static_visitor<void> {
       bl.append_zero(
 	sinfo.get_stripe_width() -
 	((offset + bl.length()) % sinfo.get_stripe_width()));
+
+    bytes_appended += bl.length();
+
     int r = ECUtil::encode(
       sinfo, ecimpl, bl, want, &buffers);
 
@@ -198,6 +203,7 @@ struct TransGenerator : public boost::static_visitor<void> {
     assert(hash_infos.count(op.target));
     assert(compress_infos.count(op.source));
     assert(compress_infos.count(op.target));
+//FIXME: check for the need of stats update
     *(hash_infos[op.target]) = *(hash_infos[op.source]);
     *(compress_infos[op.target]) = *(compress_infos[op.source]);
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
@@ -231,6 +237,7 @@ struct TransGenerator : public boost::static_visitor<void> {
   void operator()(const ECTransaction::StashOp &op) {
     assert(hash_infos.count(op.oid));
     assert(compress_infos.count(op.oid));
+//FIXME: check for the need of stats update
     hash_infos[op.oid]->clear();
     compress_infos[op.oid]->clear();
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
@@ -248,6 +255,7 @@ struct TransGenerator : public boost::static_visitor<void> {
     assert(hash_infos.count(op.oid));
     assert(compress_infos.count(op.oid));
 
+    bytes_appended -= compress_infos[op.oid]->get_compressed_size();
     hash_infos[op.oid]->clear();
     compress_infos[op.oid]->clear();
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
@@ -310,6 +318,7 @@ void ECTransaction::generate_transactions(
   map<shard_id_t, ObjectStore::Transaction> *transactions,
   set<hobject_t, hobject_t::BitwiseComparator> *temp_added,
   set<hobject_t, hobject_t::BitwiseComparator> *temp_removed,
+  uint64_t* bytes_appended,
   stringstream *out) const
 {
   TransGenerator gen(
@@ -324,4 +333,6 @@ void ECTransaction::generate_transactions(
     temp_removed,
     out);
   visit(gen);
+  if( bytes_appended )
+    *bytes_appended = gen.bytes_appended;
 }

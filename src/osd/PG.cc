@@ -2539,6 +2539,7 @@ void PG::publish_stats_to_osd()
   if (!is_primary())
     return;
 
+dout(0)<<"ifed:"<<__func__<<info.stats.stats.sum.num_bytes<<dendl;
   pg_stats_publish_lock.Lock();
 
   if (info.stats.stats.sum.num_scrub_errors)
