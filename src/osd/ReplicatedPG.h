@@ -426,8 +426,11 @@ public:
   }
 
   void update_stats(
-    const pg_stat_t &stat) {
-    info.stats = stat;
+    const pg_stat_t &stat, bool overwrite) {
+    if( overwrite )
+      info.stats = stat;
+    else
+      info.stats.add(stat);
   }
 
   void schedule_recovery_work(

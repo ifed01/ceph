@@ -1199,7 +1199,7 @@ void ReplicatedBackend::sub_op_modify_impl(OpRequestRef op)
     // collections now.  Otherwise, we do it later on push.
     update_snaps = true;
   }
-  parent->update_stats(m->pg_stats);
+  parent->update_stats(m->pg_stats, true);
   parent->log_operation(
     log,
     m->updated_hit_set_history,

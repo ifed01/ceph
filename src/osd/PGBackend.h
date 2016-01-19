@@ -188,7 +188,7 @@
        eversion_t lcod) = 0;
 
      virtual void update_stats(
-       const pg_stat_t &stat) = 0;
+       const pg_stat_t &stat, bool overwrite) = 0;
 
      virtual void schedule_recovery_work(
        GenContext<ThreadPool::TPHandle&> *c) = 0;
