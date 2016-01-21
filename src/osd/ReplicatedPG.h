@@ -1245,7 +1245,6 @@ protected:
 
   void _clear_recovery_state();
 
-  void queue_for_recovery();
   bool start_recovery_ops(
     int max, ThreadPool::TPHandle &handle, int *started);
 

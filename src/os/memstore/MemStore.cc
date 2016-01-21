@@ -52,6 +52,7 @@ int MemStore::mount()
 
 int MemStore::umount()
 {
+  finisher.wait_for_empty();
   finisher.stop();
   return _save();
 }
@@ -59,7 +60,6 @@ int MemStore::umount()
 int MemStore::_save()
 {
   dout(10) << __func__ << dendl;
-  Mutex::Locker l(apply_lock); // block any writer
   dump_all();
   set<coll_t> collections;
   for (ceph::unordered_map<coll_t,CollectionRef>::iterator p = coll_map.begin();
@@ -327,12 +327,15 @@ int MemStore::fiemap(coll_t cid, const ghobject_t& oid,
   ObjectRef o = c->get_object(oid);
   if (!o)
     return -ENOENT;
-  if (offset >= o->get_size())
-    return 0;
+  map<uint64_t, uint64_t> m;
   size_t l = len;
+  if (offset == 0 && len == 0)
+    l = o->get_size();
   if (offset + l > o->get_size())
     l = o->get_size() - offset;
-  map<uint64_t, uint64_t> m;
+  if (offset >= o->get_size())
+    goto out;
+ out:
   m[offset] = l;
   ::encode(m, bl);
   return 0;

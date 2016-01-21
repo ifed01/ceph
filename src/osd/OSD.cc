@@ -1494,16 +1494,16 @@ int OSD::peek_meta(ObjectStore *store, std::string& magic,
   if (r < 0)
     return r;
   r = cluster_fsid.parse(val.c_str());
-  if (r < 0)
-    return r;
+  if (!r)
+    return -EINVAL;
 
   r = store->read_meta("fsid", &val);
   if (r < 0) {
     osd_fsid = uuid_d();
   } else {
     r = osd_fsid.parse(val.c_str());
-    if (r < 0)
-      return r;
+    if (!r)
+      return -EINVAL;
   }
 
   return 0;
@@ -3250,7 +3250,7 @@ void OSD::handle_pg_peering_evt(
 
       pg->queue_peering_event(evt);
       pg->unlock();
-      wake_pg_waiters(pg, pgid);
+      wake_pg_waiters(pgid);
       return;
     }
     case RES_SELF: {
@@ -3285,7 +3285,7 @@ void OSD::handle_pg_peering_evt(
 
       pg->queue_peering_event(evt);
       pg->unlock();
-      wake_pg_waiters(pg, resurrected);
+      wake_pg_waiters(resurrected);
       return;
     }
     case RES_PARENT: {
@@ -3326,7 +3326,7 @@ void OSD::handle_pg_peering_evt(
       //parent->queue_peering_event(evt);
       parent->queue_null(osdmap->get_epoch(), osdmap->get_epoch());
       parent->unlock();
-      wake_pg_waiters(parent, resurrected);
+      wake_pg_waiters(resurrected);
       return;
     }
     }
@@ -3949,7 +3949,7 @@ bool OSD::heartbeat_reset(Connection *con)
 void OSD::tick()
 {
   assert(osd_lock.is_locked());
-  dout(5) << "tick" << dendl;
+  dout(10) << "tick" << dendl;
 
   logger->set(l_osd_buf, buffer::get_total_alloc());
   logger->set(l_osd_history_alloc_bytes, SHIFT_ROUND_UP(buffer::get_history_alloc_bytes(), 20));
@@ -3998,7 +3998,7 @@ void OSD::tick()
 void OSD::tick_without_osd_lock()
 {
   assert(tick_timer_lock.is_locked());
-  dout(5) << "tick_without_osd_lock" << dendl;
+  dout(10) << "tick_without_osd_lock" << dendl;
 
   // osd_lock is not being held, which means the OSD state
   // might change when doing the monitor report
@@ -6078,11 +6078,9 @@ OSDService::ScrubJob::ScrubJob(const spg_t& pg, const utime_t& timestamp,
       pool_scrub_max_interval : g_conf->osd_scrub_max_interval;
 
     sched_time += scrub_min_interval;
-    int divisor = scrub_min_interval *
-      g_conf->osd_scrub_interval_randomize_ratio;
-    if (divisor > 0) {
-      sched_time += rand() % divisor;
-    }
+    double r = rand() / RAND_MAX;
+    sched_time +=
+      scrub_min_interval * g_conf->osd_scrub_interval_randomize_ratio * r;
     deadline += scrub_max_interval;
   }
 }
@@ -7211,7 +7209,7 @@ void OSD::handle_pg_create(OpRequestRef op)
     pg->write_if_dirty(*rctx.transaction);
     pg->publish_stats_to_osd();
     pg->unlock();
-    wake_pg_waiters(pg, pgid);
+    wake_pg_waiters(pgid);
     dispatch_context(rctx, pg, osdmap);
   }
 
@@ -8488,7 +8486,7 @@ struct C_CompleteSplits : public Context {
       osd->dispatch_context_transaction(rctx, &**i);
 	to_complete.insert((*i)->info.pgid);
       (*i)->unlock();
-      osd->wake_pg_waiters(&**i, (*i)->info.pgid);
+      osd->wake_pg_waiters((*i)->info.pgid);
       to_complete.clear();
     }
 

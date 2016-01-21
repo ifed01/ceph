@@ -36,7 +36,7 @@ target_link_libraries(test_build_librgw rgw_a global pthread ${CRYPTO_LIBS} ${EX
 
 # From src/test/Makefile-client.am: I dont get this one... testing the osdc build but link in libcephfs?
 add_executable(test_build_libcephfs buildtest_skeleton.cc)
-target_link_libraries(test_build_libcephfs cephfs expat pthread ${CRYPTO_LIBS} ${EXTRALIBS})
+target_link_libraries(test_build_libcephfs cephfs expat pthread ${CRYPTO_LIBS} ${EXTRALIBS} ${ALLOC_LIBS})
 
 add_executable(test_build_librados buildtest_skeleton.cc)
 target_link_libraries(test_build_librados librados pthread ${CRYPTO_LIBS} ${EXTRALIBS} osdc osd os common cls_lock_client ${BLKID_LIBRARIES} ${ALLOC_LIBS})
@@ -2108,12 +2108,15 @@ if(${WITH_CEPHFS})
     libcephfs/caps.cc
     libcephfs/multiclient.cc
     libcephfs/flock.cc
+    libcephfs/acl.cc
+    libcephfs/access.cc
     $<TARGET_OBJECTS:heap_profiler_objs>
   )
   set_target_properties(test_libcephfs PROPERTIES COMPILE_FLAGS
     ${UNITTEST_CXX_FLAGS})
   target_link_libraries(test_libcephfs
     cephfs
+    librados
     ${UNITTEST_LIBS}
     ${EXTRALIBS}
     ${ALLOC_LIBS}

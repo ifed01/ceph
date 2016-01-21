@@ -92,8 +92,14 @@ endif(USE_NSS)
 
 set(GCOV_PREFIX_STRIP 4)
 
-get_git_head_revision(GIT_REFSPEC CEPH_GIT_VER)
-git_describe(CEPH_GIT_NICE_VER --always)
+option(ENABLE_GIT_VERSION "build Ceph with git version string" ON)
+if(${ENABLE_GIT_VERSION})
+  get_git_head_revision(GIT_REFSPEC CEPH_GIT_VER)
+  git_describe(CEPH_GIT_NICE_VER --always)
+else(${ENABLE_GIT_VERSION})
+  set(CEPH_GIT_VER "no_version")
+  set(CEPH_GIT_NICE_VER "Development")
+endif(${ENABLE_GIT_VERSION})
 
 # Python stuff
 find_package(PythonInterp 2 QUIET)
@@ -610,7 +616,7 @@ set(ceph_mon_srcs
   common/TextTable.cc)
 add_executable(ceph-mon ${ceph_mon_srcs} $<TARGET_OBJECTS:heap_profiler_objs>)
 add_dependencies(ceph-mon erasure_code_plugins)
-      target_link_libraries(ceph-mon mon ${Boost_THREAD_LIBRARY} common os global ${EXTRALIBS}
+      target_link_libraries(ceph-mon mon common os global ${EXTRALIBS}
   ${CMAKE_DL_LIBS} ${ALLOC_LIBS})
 install(TARGETS ceph-mon DESTINATION bin)
 
@@ -675,7 +681,7 @@ endif(${HAVE_LIBAIO})
 if(${WITH_LTTNG})
   target_link_libraries(os libos_tp)
 endif(${WITH_LTTNG})
-target_link_libraries(os kv leveldb snappy rocksdb)
+target_link_libraries(os kv)
 
 set(cls_references_files objclass/class_api.cc)
 add_library(cls_references_objs OBJECT ${cls_references_files})
@@ -892,16 +898,22 @@ if(WITH_LIBCEPHFS)
     client/MetaRequest.cc
     client/ClientSnapRealm.cc
     client/MetaSession.cc
-    client/Trace.cc)
+    client/Trace.cc
+    client/posix_acl.cc)
   add_library(client ${libclient_srcs})
   target_link_libraries(client osdc mds ${LIBEDIT_LIBS})
   set(libcephfs_srcs libcephfs.cc)
-  add_library(cephfs SHARED ${libcephfs_srcs})
+  add_library(cephfs ${CEPH_SHARED} ${libcephfs_srcs}
+    $<TARGET_OBJECTS:cls_references_objs>
+    $<TARGET_OBJECTS:heap_profiler_objs>
+    $<TARGET_OBJECTS:common_util_obj>)
+  target_link_libraries(cephfs PRIVATE client osdc osd os global common cls_lock_client
+    ${BLKID_LIBRARIES}
+    ${CRYPTO_LIBS} ${EXTRALIBS} ${TCMALLOC_LIBS})
 if(${ENABLE_SHARED})
   set_target_properties(cephfs PROPERTIES OUTPUT_NAME cephfs VERSION 1.0.0
     SOVERSION 1)
 endif(${ENABLE_SHARED})
-  target_link_libraries(cephfs client global)
   install(TARGETS cephfs DESTINATION lib)
   install(DIRECTORY
     "${CMAKE_SOURCE_DIR}/src/include/cephfs"
@@ -967,12 +979,11 @@ if(${WITH_RBD})
     librbd/ImageWatcher.cc
     librbd/internal.cc
     librbd/Journal.cc
-    librbd/JournalReplay.cc
-    librbd/JournalTypes.cc
     librbd/librbd.cc
     librbd/LibrbdAdminSocketHook.cc
     librbd/LibrbdWriteback.cc
     librbd/ObjectMap.cc
+    librbd/Operations.cc
     librbd/Utils.cc
     librbd/exclusive_lock/AcquireRequest.cc
     librbd/exclusive_lock/ReleaseRequest.cc
@@ -981,6 +992,8 @@ if(${WITH_RBD})
     librbd/image/RefreshParentRequest.cc
     librbd/image/RefreshRequest.cc
     librbd/image/SetSnapRequest.cc
+    librbd/journal/Entries.cc
+    librbd/journal/Replay.cc
     librbd/object_map/InvalidateRequest.cc
     librbd/object_map/LockRequest.cc
     librbd/object_map/Request.cc
@@ -1189,6 +1202,7 @@ add_custom_target(vstart DEPENDS
 add_custom_target(cephfs_testing DEPENDS
     vstart
     rados
+    cephfs
     ceph-fuse
     ceph-dencoder
     cephfs-journal-tool
