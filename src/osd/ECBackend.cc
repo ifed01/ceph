@@ -1852,7 +1852,7 @@ void ECBackend::start_write(Op *op) {
   }
   ObjectStore::Transaction empty;
   empty.set_use_tbl(parent->transaction_use_tbl());
-  uint64_t bytes_appended=0;
+  int64_t bytes_appended=0;
   op->t->generate_transactions(
     op->unstable_hash_infos,
     ec_impl,
@@ -1865,7 +1865,6 @@ void ECBackend::start_write(Op *op) {
     &(op->temp_cleared),
     &bytes_appended);
 
-  dout(0) << "ifed:post generate:" << bytes_appended<< dendl;
   pg_stat_t stats;
   stats.stats.sum.num_bytes_compressed = bytes_appended;
   get_parent()->update_stats( stats, false );

@@ -71,7 +71,7 @@ struct TransGenerator : public boost::static_visitor<void> {
   set<hobject_t, hobject_t::BitwiseComparator> *temp_added;
   set<hobject_t, hobject_t::BitwiseComparator> *temp_removed;
   stringstream *out;
-  uint64_t bytes_appended;
+  int64_t bytes_appended;
   TransGenerator(
     map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
     map<hobject_t, CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
@@ -203,7 +203,9 @@ struct TransGenerator : public boost::static_visitor<void> {
     assert(hash_infos.count(op.target));
     assert(compress_infos.count(op.source));
     assert(compress_infos.count(op.target));
-//FIXME: check for the need of stats update
+
+    bytes_appended += compress_infos[op.source]->get_compressed_size();
+
     *(hash_infos[op.target]) = *(hash_infos[op.source]);
     *(compress_infos[op.target]) = *(compress_infos[op.source]);
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
@@ -237,7 +239,8 @@ struct TransGenerator : public boost::static_visitor<void> {
   void operator()(const ECTransaction::StashOp &op) {
     assert(hash_infos.count(op.oid));
     assert(compress_infos.count(op.oid));
-//FIXME: check for the need of stats update
+
+    bytes_appended -= compress_infos[op.oid]->get_compressed_size();
     hash_infos[op.oid]->clear();
     compress_infos[op.oid]->clear();
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
@@ -256,6 +259,7 @@ struct TransGenerator : public boost::static_visitor<void> {
     assert(compress_infos.count(op.oid));
 
     bytes_appended -= compress_infos[op.oid]->get_compressed_size();
+
     hash_infos[op.oid]->clear();
     compress_infos[op.oid]->clear();
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
@@ -290,6 +294,7 @@ struct TransGenerator : public boost::static_visitor<void> {
   void operator()(const ECTransaction::AllocHintOp &op) {
     // logical_to_next_chunk_offset() scales down both aligned and
     // unaligned offsets
+
     uint64_t object_size = sinfo.logical_to_next_chunk_offset(
                                                     op.expected_object_size);
     uint64_t write_size = sinfo.logical_to_next_chunk_offset(
@@ -318,7 +323,7 @@ void ECTransaction::generate_transactions(
   map<shard_id_t, ObjectStore::Transaction> *transactions,
   set<hobject_t, hobject_t::BitwiseComparator> *temp_added,
   set<hobject_t, hobject_t::BitwiseComparator> *temp_removed,
-  uint64_t* bytes_appended,
+  int64_t* bytes_appended,
   stringstream *out) const
 {
   TransGenerator gen(

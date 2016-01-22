@@ -205,7 +205,7 @@ public:
     map<shard_id_t, ObjectStore::Transaction> *transactions,
     set<hobject_t, hobject_t::BitwiseComparator> *temp_added,
     set<hobject_t, hobject_t::BitwiseComparator> *temp_removed,
-    uint64_t* result_size,
+    int64_t* result_size,
     stringstream *out = 0) const;
 };
 

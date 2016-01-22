@@ -1562,10 +1562,10 @@ static int rados_tool_common(const std::map < std::string, std::string > &opts,
     if (!formatter) {
       printf("%-15s "
 	     "%12s %12s %12s %12s "
-	     "%12s %12s %12s %12s %12s\n",
+	     "%12s %12s %12s %12s %12s %12s\n",
 	     "pool name",
 	     "KB", "objects", "clones", "degraded",
-	     "unfound", "rd", "rd KB", "wr", "wr KB");
+	     "unfound", "rd", "rd KB", "wr", "wr KB", "pack ratio");
     } else {
       formatter->open_object_section("stats");
       formatter->open_array_section("pools");
@@ -1578,7 +1578,7 @@ static int rados_tool_common(const std::map < std::string, std::string > &opts,
       if (!formatter) {
 	printf("%-15s "
 	       "%12lld %12lld %12lld %12lld "
-	       "%12lld %12lld %12lld %12lld %12lld\n",
+	       "%12lld %12lld %12lld %12lld %12lld %12f\n",
 	       pool_name,
 	       (long long)s.num_kb,
 	       (long long)s.num_objects,
@@ -1586,7 +1586,8 @@ static int rados_tool_common(const std::map < std::string, std::string > &opts,
 	       (long long)s.num_objects_degraded,
 	       (long long)s.num_objects_unfound,
 	       (long long)s.num_rd, (long long)s.num_rd_kb,
-	         (long long)s.num_wr, (long long)s.num_wr_kb);
+	         (long long)s.num_wr, (long long)s.num_wr_kb,
+	         s.num_kb_on_disk ? (double)s.num_kb/s.num_kb_on_disk : 0.0);
       } else {
         formatter->open_object_section("pool");
         int64_t pool_id = rados.pool_lookup(pool_name);

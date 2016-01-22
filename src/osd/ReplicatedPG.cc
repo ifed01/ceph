@@ -6394,9 +6394,7 @@ int ReplicatedPG::prepare_transaction(OpContext *ctx)
     return result;
 
   // read-op?  done?
-dout(0)<<"ifed: stats update?"<<ctx->delta_stats.num_bytes<<dendl;
   if (ctx->op_t->empty() && !ctx->modify) {
-dout(0)<<"ifed: stats update"<<dendl;
     unstable_stats.add(ctx->delta_stats);
     return result;
   }
@@ -6543,9 +6541,7 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
   }
   ctx->bytes_written = ctx->op_t->get_bytes_written();
  
-   dout(0)<<"ifed: new_obs.exists?"<<dendl;
   if (ctx->new_obs.exists) {
-   dout(0)<<"ifed: new_obs.exists"<<dendl;
     // on the head object
     ctx->new_obs.oi.version = ctx->at_version;
     ctx->new_obs.oi.prior_version = ctx->obs->oi.version;
@@ -8160,7 +8156,6 @@ void ReplicatedPG::eval_repop(RepGather *repop)
       log_op_stats(repop->ctx);
       repop->log_op_stat = true;
     }
-    dout(0)<<__func__<<" ifed:"<<info.stats.stats.sum.num_bytes_compressed<<dendl;
     publish_stats_to_osd();
 
     // send dup commits, in order

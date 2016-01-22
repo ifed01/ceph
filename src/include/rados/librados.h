@@ -240,6 +240,8 @@ struct rados_pool_stat_t {
   uint64_t num_bytes;
   /// space used in KB
   uint64_t num_kb;
+  /// actual space used in KB
+  uint64_t num_kb_on_disk;
   /// number of objects in the pool
   uint64_t num_objects;
   /// number of clones of objects

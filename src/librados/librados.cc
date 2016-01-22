@@ -2206,7 +2206,8 @@ int librados::Rados::get_pool_stats(std::list<string>& v,
        ++p) {
     pool_stat_t& pv = result[p->first];
     object_stat_sum_t *sum = &p->second.stats.sum;
-    pv.num_kb = SHIFT_ROUND_UP(sum->num_bytes_compressed, 10);
+    pv.num_kb = SHIFT_ROUND_UP(sum->num_bytes, 10);
+    pv.num_kb_on_disk = SHIFT_ROUND_UP(sum->num_bytes_compressed, 10);
     pv.num_bytes = sum->num_bytes;
     pv.num_objects = sum->num_objects;
     pv.num_object_clones = sum->num_object_clones;
@@ -2935,7 +2936,8 @@ extern "C" int rados_ioctx_pool_stat(rados_ioctx_t io, struct rados_pool_stat_t 
   }
 
   ::pool_stat_t& r = rawresult[pool_name];
-  stats->num_kb = SHIFT_ROUND_UP(r.stats.sum.num_bytes_compressed, 10);
+  stats->num_kb = SHIFT_ROUND_UP(r.stats.sum.num_bytes, 10);
+  stats->num_kb_on_disk = SHIFT_ROUND_UP(r.stats.sum.num_bytes_compressed, 10);
   stats->num_bytes = r.stats.sum.num_bytes;
   stats->num_objects = r.stats.sum.num_objects;
   stats->num_object_clones = r.stats.sum.num_object_clones;
