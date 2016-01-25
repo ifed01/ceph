@@ -1352,7 +1352,7 @@ void PGMonitor::dump_object_stat_sum(TextTable &tbl, Formatter *f,
       f->dump_int("rd_bytes", sum.num_rd_kb * 1024ull);
       f->dump_int("wr", sum.num_wr);
       f->dump_int("wr_bytes", sum.num_wr_kb * 1024ull);
-      f->dump_int("raw_bytes_used", sum.num_bytes * raw_used_rate * curr_object_copies_rate);
+      f->dump_int("raw_bytes_used", sum.num_bytes_on_disk * raw_used_rate * curr_object_copies_rate);
     }
   } else {
     tbl << stringify(si_t(sum.num_bytes));
@@ -1367,7 +1367,7 @@ void PGMonitor::dump_object_stat_sum(TextTable &tbl, Formatter *f,
       tbl << stringify(si_t(sum.num_objects_dirty))
           << stringify(si_t(sum.num_rd))
           << stringify(si_t(sum.num_wr))
-          << stringify(si_t(sum.num_bytes * raw_used_rate * curr_object_copies_rate));
+          << stringify(si_t(sum.num_bytes_on_disk * raw_used_rate * curr_object_copies_rate));
     }
   }
 }
@@ -1425,6 +1425,7 @@ void PGMonitor::dump_pool_stats(stringstream &ss, Formatter *f, bool verbose)
       tbl.define_column("READ", TextTable::LEFT, TextTable::RIGHT);
       tbl.define_column("WRITE", TextTable::LEFT, TextTable::RIGHT);
       tbl.define_column("RAW USED", TextTable::LEFT, TextTable::RIGHT);
+      //tbl.define_column(" USED", TextTable::LEFT, TextTable::RIGHT);
     }
   }
 

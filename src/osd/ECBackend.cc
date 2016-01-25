@@ -1866,7 +1866,7 @@ void ECBackend::start_write(Op *op) {
     &bytes_appended);
 
   pg_stat_t stats;
-  stats.stats.sum.num_bytes_compressed = bytes_appended;
+  stats.stats.sum.num_bytes_on_disk = bytes_appended;
   get_parent()->update_stats( stats, false );
 
   dout(10) << "onreadable_sync: " << op->on_local_applied_sync << dendl;

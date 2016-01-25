@@ -1487,7 +1487,7 @@ struct object_stat_sum_t {
    * adding/removing fields!
    **************************************************************************/
   int64_t num_bytes;    // in bytes
-  int64_t num_bytes_compressed;  // space taken by object(s) after compression aplied (in bytes)
+  int64_t num_bytes_on_disk;  // space taken by object(s) after compression aplied (in bytes)
   int64_t num_objects;
   int64_t num_object_clones;
   int64_t num_object_copies;  // num_objects * num_replicas
@@ -1524,7 +1524,7 @@ struct object_stat_sum_t {
 
   object_stat_sum_t()
     : num_bytes(0),
-      num_bytes_compressed(0),
+      num_bytes_on_disk(0),
       num_objects(0), num_object_clones(0), num_object_copies(0),
       num_objects_missing_on_primary(0), num_objects_degraded(0),
       num_objects_unfound(0),
@@ -1555,7 +1555,7 @@ struct object_stat_sum_t {
   void floor(int64_t f) {
 #define FLOOR(x) if (x < f) x = f
     FLOOR(num_bytes);
-    FLOOR(num_bytes_compressed);
+    FLOOR(num_bytes_on_disk);
     FLOOR(num_objects);
     FLOOR(num_object_clones);
     FLOOR(num_object_copies);
@@ -1602,7 +1602,7 @@ struct object_stat_sum_t {
     }                                           \
 
     SPLIT(num_bytes);
-    SPLIT(num_bytes_compressed);
+    SPLIT(num_bytes_on_disk);
     SPLIT(num_objects);
     SPLIT(num_object_clones);
     SPLIT(num_object_copies);
@@ -1659,7 +1659,7 @@ struct object_stat_sum_t {
     static_assert(
       sizeof(object_stat_sum_t) ==
         sizeof(num_bytes) +
-        sizeof(num_bytes_compressed) +
+        sizeof(num_bytes_on_disk) +
         sizeof(num_objects) +
         sizeof(num_object_clones) +
         sizeof(num_object_copies) +
