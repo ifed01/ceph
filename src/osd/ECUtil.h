@@ -142,10 +142,8 @@ public:
 };
 typedef ceph::shared_ptr<HashInfo> HashInfoRef;
 
-bool is_internal_key_string(const string &key);
+bool is_hinfo_key_string(const string &key);
 const string &get_hinfo_key();
-const string &get_cinfo_master_key();
-const string &get_cinfo_key_prefix();
 
 }
 WRITE_CLASS_ENCODER(ECUtil::HashInfo)

@@ -128,7 +128,9 @@ class CompressContext {
   std::string prev_blocks_key;    //Attribute key for last compression info attribute in xattrs
   bufferlist prev_blocks_encoded; //Attribute value for last compression info attribute in xattrs
 
-  uint64_t stripe_width;
+  uint64_t stripe_width;          // Compression backend specific stripe width - this determines max compression block and blockset sized
+  uint64_t align_width;           // Determines compressed block alignment if any. Required if compressed data to be processed by a backend ( e.g. EC one ) that requires aligned input data when writing
+
  protected:
 
   static bool less_upper(const uint64_t&, const BlockMap::value_type&);
@@ -167,14 +169,16 @@ class CompressContext {
 
 
  public:
-  CompressContext(uint64_t _stripe_width) : stripe_width(_stripe_width) {}
+  CompressContext(uint64_t _stripe_width, uint64_t _align_width) : stripe_width(_stripe_width), align_width(_align_width) {}
   CompressContext(const CompressContext& from) :
     masterRec(from.masterRec),
     blocks(from.blocks),
     prevMasterRec(from.prevMasterRec),
     prev_blocks_key(from.prev_blocks_key),
     prev_blocks_encoded(from.prev_blocks_encoded),
-    stripe_width(from.stripe_width) {}
+    stripe_width(from.stripe_width),
+    align_width(from.align_width)
+  {}
   virtual ~CompressContext();
   void clear() {
     masterRec.clear();
@@ -192,13 +196,20 @@ class CompressContext {
   uint64_t get_compressed_size() const {
     return masterRec.current_compressed_pos;
   }
-
+  
   pair<uint64_t, uint64_t> offset_len_to_compressed_block(const pair<uint64_t, uint64_t> offs_len_pair) const;
 
   void dump(Formatter* f) const;
 
   int try_decompress(const hobject_t& oid, uint64_t orig_offs, uint64_t len, const bufferlist& cs_bl, bufferlist* res_bl) const;
   int try_compress(const std::string& compression_method, const hobject_t& oid, const bufferlist& bl, uint64_t* off, bufferlist* res_bl);
+
+  static uint64_t get_compressed_size(const map<string, bufferlist>& attrset, uint64_t defval);
+  static bool is_internal_key_string(const string &key);
+
+  static const string &get_cinfo_master_key();
+  static const string &get_cinfo_key_prefix();
+
 };
 typedef ceph::shared_ptr<CompressContext> CompressContextRef;
 

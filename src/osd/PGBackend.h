@@ -27,6 +27,8 @@
 #include "common/LogClient.h"
 #include <string>
 
+struct PG_RecoveryInfoProvider;
+
  /**
   * PGBackend
   *
@@ -284,6 +286,8 @@
     *
     * head may be NULL only if the head/snapdir is missing
     *
+    * rinfo_provider may be NULL. The primary intention is to be able to insert means for obtaining compressed object size
+    *
     * @param missing [in] set of info, missing pairs for queried nodes
     * @param overlaps [in] mapping of object to file offset overlaps
     */
@@ -292,6 +296,7 @@
      eversion_t v,          ///< [in] version to recover
      ObjectContextRef head,  ///< [in] context of the head/snapdir object
      ObjectContextRef obc,  ///< [in] context of the object
+     PG_RecoveryInfoProvider* rinfo_provider, ///< [in] pointer to an interface to obtain actual object size for recovery
      RecoveryHandle *h      ///< [in,out] handle to attach recovery op to
      ) = 0;
 
@@ -623,6 +628,12 @@ struct PG_RecoveryQueueAsync : public Context {
   void finish(int) {
     pg->schedule_recovery_work(c);
   }
+};
+
+struct PG_RecoveryInfoProvider {
+  virtual ~PG_RecoveryInfoProvider() {}
+  virtual uint64_t get_object_size_for_recovery(
+    const map<string, bufferlist>& attrs, uint64_t defval ) const = 0;
 };
 
 #endif

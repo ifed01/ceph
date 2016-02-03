@@ -168,6 +168,14 @@ void ECBackend::RecoveryOp::dump(Formatter *f) const
   f->dump_stream("extent_requested") << extent_requested;
 }
 
+void ECBackend::RecoveryOp::obtain_object_recover_size(map<string, bufferlist> attrs)
+{
+  if (recovery_info_provider)
+    object_recover_size = recovery_info_provider->get_object_size_for_recovery(attrs, obc ? obc->obs.oi.size : 0);
+  else
+    object_recover_size = obc ? obc->obs.oi.size : 0;
+}
+
 ECBackend::ECBackend(
   PGBackend::Listener *pg,
   coll_t coll,
@@ -392,6 +400,7 @@ void ECBackend::handle_recovery_read_complete(
       assert(op.obc);
       op.recovery_info.size = op.obc->obs.oi.size;
       op.recovery_info.oi = op.obc->obs.oi;
+
     }
 
     ECUtil::HashInfo hinfo(ec_impl->get_chunk_count());
@@ -401,13 +410,8 @@ void ECBackend::handle_recovery_read_complete(
       ::decode(hinfo, bp);
     }
     op.hinfo = unstable_hashinfo_registry.lookup_or_create(hoid, hinfo);
-
-    CompressContext cctx(sinfo.get_stripe_width());
-    cctx.setup_for_append_or_recovery(op.xattrs);
-    uint64_t compressed_size = cctx.get_compressed_size();
-    if (compressed_size) {
-      op.set_recovered_object_size(compressed_size);
-    }
+    if (!op.object_recover_size_obtained())
+      op.obtain_object_recover_size(op.xattrs);
   }
   assert(op.xattrs.size());
   assert(op.obc);
@@ -542,10 +546,10 @@ void ECBackend::continue_recovery_op(
       ObjectRecoveryProgress after_progress = op.recovery_progress;
       after_progress.data_recovered_to += op.extent_requested.second;
       after_progress.first = false;
-      if (after_progress.data_recovered_to >= op.get_recovered_object_size()) {
+      if (after_progress.data_recovered_to >= op.recovery_info.size) {
 	after_progress.data_recovered_to =
 	  sinfo.logical_to_next_stripe_offset(
-          op.get_recovered_object_size());
+          op.get_object_recover_size());
 	after_progress.data_complete = true;
       }
       for (set<pg_shard_t>::iterator mi = op.missing_on.begin();
@@ -560,7 +564,7 @@ void ECBackend::continue_recovery_op(
 	dout(10) << __func__ << ": before_progress=" << op.recovery_progress
 		 << ", after_progress=" << after_progress
 		 << ", pop.data.length()=" << pop.data.length()
-                 << ", size=" << op.get_recovered_object_size() << "(" << op.obc->obs.oi.size << ")" << dendl;
+                 << ", size=" << op.get_object_recover_size() << "(" << op.obc->obs.oi.size << ")" << dendl;
 	assert(
 	  pop.data.length() ==
 	  sinfo.aligned_logical_offset_to_chunk_offset(
@@ -651,6 +655,7 @@ void ECBackend::recover_object(
   eversion_t v,
   ObjectContextRef head,
   ObjectContextRef obc,
+  PG_RecoveryInfoProvider* rinfo_provider,
   RecoveryHandle *_h)
 {
   ECRecoveryHandle *h = static_cast<ECRecoveryHandle*>(_h);
@@ -660,6 +665,7 @@ void ECBackend::recover_object(
   h->ops.back().obc = obc;
   h->ops.back().recovery_info.soid = hoid;
   h->ops.back().recovery_info.version = v;
+  h->ops.back().recovery_info_provider = rinfo_provider;
   if (obc) {
     h->ops.back().recovery_info.size = obc->obs.oi.size;
     h->ops.back().recovery_info.oi = obc->obs.oi;
@@ -1407,17 +1413,6 @@ void ECBackend::submit_transaction(
       make_pair(
 	*i,
 	ref));
-
-    CompressContextRef cinfo = get_compress_context_basic(*i);
-    if (!cinfo) {
-      derr << __func__ << ": get_compress_context_basic(" << *i << ")"
-                       << " returned a null pointer and there is no "
-                       << " way to recover from such an error in this "
-                       << " context" << dendl;
-      assert(0);
-    }
-    op->compress_infos.insert(make_pair(*i, cinfo));
-
   }
 
   for (vector<pg_log_entry_t>::iterator i = op->log_entries.begin();
@@ -1429,14 +1424,11 @@ void ECBackend::submit_transaction(
       dout(10) << __func__ << ": stashing HashInfo for "
 	       << i->soid << " for entry " << *i << dendl;
       assert(op->unstable_hash_infos.count(i->soid));
-      assert(op->compress_infos.count(i->soid));
       ObjectModDesc desc;
       map<string, boost::optional<bufferlist> > old_attrs;
       bufferlist old_hinfo;
       ::encode(*(op->unstable_hash_infos[i->soid]), old_hinfo);
       old_attrs[ECUtil::get_hinfo_key()] = old_hinfo;
-
-      op->compress_infos[i->soid]->flush_for_rollback(&old_attrs);
 
       desc.setattrs(old_attrs);
       i->mod_desc.swap(desc);
@@ -1776,61 +1768,22 @@ ECUtil::HashInfoRef ECBackend::get_hash_info(
   return ref;
 }
 
-CompressContextRef ECBackend::get_compress_context_basic(const hobject_t &hoid)
-{
-  CompressContextRef ref = unstable_compressinfo_registry.lookup(hoid);
-  if (!ref) {
-    dout(10) << __func__ << ": not in cache " << hoid << dendl;
-    map<string, bufferlist> attrset;
-    CompressContext cctx(sinfo.get_stripe_width());
-    if (load_attrs(hoid, &attrset) >= 0) {
-      cctx.setup_for_append_or_recovery(attrset);
-    }
-    ref = unstable_compressinfo_registry.lookup_or_create(hoid, cctx);
-  }
-  return ref;
-}
-
-int ECBackend::load_attrs(const hobject_t &hoid, map<string, bufferlist>* attrset)
-{
-  assert(attrset);
-  dout(10) << __func__ << ": Loading attrs on " << hoid << dendl;
-  struct stat st;
-  int r = store->stat(
-    coll,
-    ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-    &st);
-  if (r >= 0 && st.st_size > 0) {
-    dout(10) << __func__ << ": found on disk, size " << st.st_size << dendl;
-    bufferlist bl;
-
-    r = store->getattrs(
-      coll,
-      ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-      *attrset);
-      if (r < 0){
-        derr << __func__ << ": failed to load attrs" << dendl;
-      }
-  }
-  return r;
-}
-
 void ECBackend::check_op(Op *op)
 {
   if (op->pending_apply.empty() && op->on_all_applied) {
-    dout(10) << __func__ << " Calling on_all_applied on " << *op << dendl;
+    dout(0) << __func__ << " Calling on_all_applied on " << *op << dendl;
     op->on_all_applied->complete(0);
     op->on_all_applied = 0;
   }
   if (op->pending_commit.empty() && op->on_all_commit) {
-    dout(10) << __func__ << " Calling on_all_commit on " << *op << dendl;
+    dout(0) << __func__ << " Calling on_all_commit on " << *op << dendl;
     op->on_all_commit->complete(0);
     op->on_all_commit = 0;
   }
   if (op->pending_apply.empty() && op->pending_commit.empty()) {
     // done!
     assert(writing.front() == op);
-    dout(10) << __func__ << " Completing " << *op << dendl;
+    dout(0) << __func__ << " Completing " << *op << dendl;
     writing.pop_front();
     tid_to_op_map.erase(op->tid);
   }
@@ -1856,8 +1809,6 @@ void ECBackend::start_write(Op *op) {
   op->t->generate_transactions(
     op->unstable_hash_infos,
     ec_impl,
-    op->compress_infos,
-    get_parent()->get_pool().compression_type.c_str(),
     get_parent()->get_info().pgid.pgid,
     sinfo,
     &trans,
@@ -2104,7 +2055,7 @@ int ECBackend::objects_get_attrs(
   for (map<string, bufferlist>::iterator i = out->begin();
        i != out->end();
        ) {
-    if (ECUtil::is_internal_key_string(i->first))
+    if (ECUtil::is_hinfo_key_string(i->first))
       out->erase(i++);
     else
       ++i;

@@ -9129,6 +9129,7 @@ int ReplicatedPG::recover_missing(
     v,
     head_obc,
     obc,
+    NULL,
     h);
   return PULL_YES;
 }
@@ -10311,6 +10312,7 @@ int ReplicatedPG::prep_object_replica_pushes(
     v,
     ObjectContextRef(),
     obc, // has snapset context
+    NULL,
     h);
   obc->ondisk_read_unlock();
   return 1;
@@ -10853,6 +10855,7 @@ void ReplicatedPG::prep_backfill_object_push(
     v,
     ObjectContextRef(),
     obc,
+    NULL,
     h);
   obc->ondisk_read_unlock();
 }

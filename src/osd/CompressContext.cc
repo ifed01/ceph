@@ -31,7 +31,7 @@
 const unsigned CompressContext::MAX_STRIPES_PER_BLOCK = 32;      //maximum amount of stripes that can be compressed as a single block
 const unsigned CompressContext::RECS_PER_RECORDSET = 32;         //amount of comression information records per single record set, i.e. records grouped for seek speed-up.
 const unsigned CompressContext::MAX_STRIPES_PER_BLOCKSET = 1024; //maximum stripes to be described by a single attribute
-const int CompressContext::DEBUG_LEVEL = 10;  //debug level for compression stuff
+const int CompressContext::DEBUG_LEVEL = 0;  //debug level for compression stuff
 
 void CompressContext::BlockInfoRecord::encode(bufferlist& bl) const {
   ENCODE_START(1, 1, bl);
@@ -115,6 +115,39 @@ void CompressContext::MasterRecord::decode(bufferlist::iterator& bl) {
 CompressContext::~CompressContext() {
 }
 
+uint64_t CompressContext::get_compressed_size(const map<string, bufferlist>& attrset, uint64_t defval)
+{
+  uint64_t res = 0;
+  map<string, bufferlist>::const_iterator it_attrs = attrset.find(get_cinfo_master_key());
+  if (it_attrs != attrset.end()) {
+    MasterRecord mrec;
+    bufferlist::iterator it = const_cast<bufferlist&>(it_attrs->second).begin();
+    ::decode(mrec, it);
+    res = mrec.current_compressed_pos;
+  }
+  if (res == 0)
+    res = defval;
+  return res;
+}
+
+const string CINFO_MASTER_KEY = "@ci_master@";
+const string CINFO_KEY_PREFIX = "@ci@";
+
+const string &CompressContext::get_cinfo_key_prefix()
+{
+  return CINFO_KEY_PREFIX;
+}
+
+const string &CompressContext::get_cinfo_master_key()
+{
+  return CINFO_MASTER_KEY;
+}
+
+bool CompressContext::is_internal_key_string(const string &key)
+{
+  return key.find(CINFO_KEY_PREFIX) == 0 || key.find(CINFO_MASTER_KEY) == 0;
+}
+
 bool  CompressContext::can_compress(uint64_t offs) const {
   return (offs == 0 && masterRec.current_compressed_pos == 0) || masterRec.current_compressed_pos != 0;
 }
@@ -160,7 +193,7 @@ void CompressContext::setup_for_read(const map<string, bufferlist>& attrset, uin
   assert(end_offset >= start_offset);
 
   clear();
-  map<string, bufferlist>::const_iterator it_master = attrset.find(ECUtil::get_cinfo_master_key());
+  map<string, bufferlist>::const_iterator it_master = attrset.find(get_cinfo_master_key());
   map<string, bufferlist>::const_iterator end = attrset.end();
   if (it_master != end) {
     bufferlist::iterator it_val = const_cast<bufferlist&>(it_master->second).begin();
@@ -270,12 +303,13 @@ void CompressContext::setup_for_read(const map<string, bufferlist>& attrset, uin
 void CompressContext::setup_for_append_or_recovery(const map<string, bufferlist>& attrset) {
   clear();
 
-  map<string, bufferlist>::const_iterator it_attrs = attrset.find(ECUtil::get_cinfo_master_key());
+  map<string, bufferlist>::const_iterator it_attrs = attrset.find(get_cinfo_master_key());
   if (it_attrs != attrset.end()) {
     bufferlist::iterator it = const_cast<bufferlist&>(it_attrs->second).begin();
     ::decode(masterRec, it);
     prevMasterRec = masterRec;
   }
+
   std::string key;
   offset_to_key(prevMasterRec.current_original_pos, key);
 
@@ -346,7 +380,7 @@ void CompressContext::flush(map<string, bufferlist>* attrset) {
 
     bufferlist master_bl;
     ::encode(masterRec, master_bl);
-    (*attrset)[ECUtil::get_cinfo_master_key()] = master_bl;
+    (*attrset)[get_cinfo_master_key()] = master_bl;
 
     dout(DEBUG_LEVEL) << __func__ << " cctx: Lengths:( master rec:"
 		      << master_bl.length() << ", block info:"
@@ -377,9 +411,9 @@ void CompressContext::flush_for_rollback(map<string, boost::optional<bufferlist>
   if (prevMasterRec.current_original_pos != 0) {
     bufferlist bl;
     ::encode(prevMasterRec, bl);
-    (*attrset)[ECUtil::get_cinfo_master_key()] = bl;
+    (*attrset)[get_cinfo_master_key()] = bl;
   } else {
-    (*attrset)[ECUtil::get_cinfo_master_key()] = boost::optional<bufferlist>();    //to trigger record removal on rollback
+    (*attrset)[get_cinfo_master_key()] = boost::optional<bufferlist>();    //to trigger record removal on rollback
   }
 }
 
@@ -463,7 +497,7 @@ void CompressContext::offset_to_key(uint64_t offs, std::string& key) const
   offs /= get_blockset_size();
   char buf[9];
   sprintf(buf, "%llx", (long long unsigned)offs);
-  key = ECUtil::get_cinfo_key_prefix();
+  key = get_cinfo_key_prefix();
   key += buf;
 }
 
@@ -609,7 +643,7 @@ int CompressContext::try_compress(const std::string& compression_method, const h
   //apply compression if that's a first block or it's been already applied to previous blocks
   bool compress_permitted = can_compress(*off); //if current object metadata state is consistent to apply compression
   if ( compress_permitted && cs_impl != NULL) {
-    if (bl_cs.length() > stripe_width) {
+    if (bl_cs.length() > align_width) {
 
       bufferlist::iterator it = bl_cs.begin();
 
@@ -627,7 +661,7 @@ int CompressContext::try_compress(const std::string& compression_method, const h
 	  failure = true;
 	} else {
 	  if (it.end()) {
-	    unsigned padded_size = ECUtil::stripe_info_t::pad_to_stripe_width(stripe_width, bl.length());
+	    unsigned padded_size = align_width ? ECUtil::stripe_info_t::pad_to_stripe_width(align_width, bl.length()) : 0;
 	    if (padded_size > bl.length()) {
 	      bl.append_zero(padded_size - bl.length());
 	    }
@@ -636,7 +670,7 @@ int CompressContext::try_compress(const std::string& compression_method, const h
 	}
 	cur_offs += block2compress.length();
       }
-      if (!failure && bl.length() < ECUtil::stripe_info_t::pad_to_stripe_width(stripe_width, bl_cs.length())) {
+      if (!failure && bl.length() < bl_cs.length()) {
 	compressed = true;
 	dout(DEBUG_LEVEL) << " block(s) compressed, oid=" << oid << ", ratio = " << (float)bl_cs.length() / bl.length() << dendl;
       } else if (failure) {

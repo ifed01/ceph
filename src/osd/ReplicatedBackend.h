@@ -55,6 +55,7 @@ public:
     eversion_t v,
     ObjectContextRef head,
     ObjectContextRef obc,
+    PG_RecoveryInfoProvider* rinfo_provider, ///< [in] pointer to an interface to obtain actual object size for recovery
     RecoveryHandle *h
     );
 

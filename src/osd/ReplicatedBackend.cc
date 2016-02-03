@@ -82,6 +82,7 @@ void ReplicatedBackend::recover_object(
   eversion_t v,
   ObjectContextRef head,
   ObjectContextRef obc,
+  PG_RecoveryInfoProvider* rinfo_provider,
   RecoveryHandle *_h
   )
 {

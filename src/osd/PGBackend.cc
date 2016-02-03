@@ -294,12 +294,12 @@ PGBackend *PGBackend::build_pg_backend(
       &ec_impl,
       &ss);
     assert(ec_impl);
-    return new CompressedECBackend(
+    return new CompressBackend(
       l,
       coll,
       store,
-      cct,
-      ec_impl,
+      new ECBackend( l, coll, store, cct, ec_impl, pool.stripe_width ),
+      pool.stripe_width,
       pool.stripe_width);
   }
   default:

@@ -165,7 +165,8 @@ public:
   }
 
   void append(PGTransaction *_to_append) {
-    ECTransaction *to_append = static_cast<ECTransaction*>(_to_append);
+    ECTransaction *to_append = dynamic_cast<ECTransaction*>(_to_append);
+    assert(to_append);
     written += to_append->written;
     to_append->written = 0;
     ops.splice(ops.end(), to_append->ops,
@@ -187,6 +188,12 @@ public:
     }
   }
   template <typename T>
+  void visit_and_modify(T &vis) {
+    for (list<Op>::iterator i = ops.begin(); i != ops.end(); ++i) {
+      boost::apply_visitor(vis, *i);
+    }
+  }
+  template <typename T>
   void reverse_visit(T &vis) const {
     for (list<Op>::const_reverse_iterator i = ops.rbegin();
 	 i != ops.rend();
@@ -198,8 +205,6 @@ public:
   void generate_transactions(
     map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
     ErasureCodeInterfaceRef &ecimpl,
-    map<hobject_t, CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
-    const char* compression_method,
     pg_t pgid,
     const ECUtil::stripe_info_t &sinfo,
     map<shard_id_t, ObjectStore::Transaction> *transactions,

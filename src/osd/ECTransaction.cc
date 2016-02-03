@@ -22,6 +22,9 @@
 #include "ECUtil.h"
 #include "os/ObjectStore.h"
 
+#define dout_subsys ceph_subsys_osd
+#define dout_prefix *_dout
+
 struct AppendObjectsGenerator: public boost::static_visitor<void> {
   set<hobject_t, hobject_t::BitwiseComparator> *out;
   AppendObjectsGenerator(set<hobject_t, hobject_t::BitwiseComparator> *out) : out(out) {}
@@ -60,10 +63,8 @@ void ECTransaction::get_append_objects(
 
 struct TransGenerator : public boost::static_visitor<void> {
   map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos;
-  map<hobject_t, CompressContextRef, hobject_t::BitwiseComparator> &compress_infos;
 
   ErasureCodeInterfaceRef &ecimpl;
-  std::string compression_method;
   const pg_t pgid;
   const ECUtil::stripe_info_t sinfo;
   map<shard_id_t, ObjectStore::Transaction> *trans;
@@ -73,9 +74,7 @@ struct TransGenerator : public boost::static_visitor<void> {
   stringstream *out;
   TransGenerator(
     map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
-    map<hobject_t, CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
     ErasureCodeInterfaceRef &ecimpl,
-    const char* compression_method,
     pg_t pgid,
     const ECUtil::stripe_info_t &sinfo,
     map<shard_id_t, ObjectStore::Transaction> *trans,
@@ -83,8 +82,7 @@ struct TransGenerator : public boost::static_visitor<void> {
     set<hobject_t, hobject_t::BitwiseComparator> *temp_removed,
     stringstream *out)
     : hash_infos(hash_infos),
-      compress_infos(compress_infos),
-      ecimpl(ecimpl), compression_method(compression_method), pgid(pgid),
+      ecimpl(ecimpl), pgid(pgid),
       sinfo(sinfo),
       trans(trans),
       temp_added(temp_added), temp_removed(temp_removed),
@@ -138,68 +136,57 @@ struct TransGenerator : public boost::static_visitor<void> {
 
   void operator()(const ECTransaction::AppendOp &op) {
     uint64_t offset = op.off;
-    bufferlist bl;
-    map<string, bufferlist> attrset;
-
-    assert(op.bl.length());
+    bufferlist bl(op.bl);
+    assert(bl.length());
     assert(offset % sinfo.get_stripe_width() == 0);
     map<int, bufferlist> buffers;
 
     assert(hash_infos.count(op.oid));
     ECUtil::HashInfoRef hinfo = hash_infos[op.oid];
 
-    assert(compress_infos.count(op.oid));
-    CompressContextRef cinfo = compress_infos[op.oid];
-    cinfo->try_compress(compression_method, op.oid, op.bl, &offset, &bl);
-    cinfo->flush(&attrset);
-
-    assert(bl.length());
-    assert(offset % sinfo.get_stripe_width() == 0); //offset has changed - check again
-
     // align
     if (bl.length() % sinfo.get_stripe_width())
       bl.append_zero(
-	sinfo.get_stripe_width() -
-	((offset + bl.length()) % sinfo.get_stripe_width()));
+      sinfo.get_stripe_width() -
+      ((offset + bl.length()) % sinfo.get_stripe_width()));
+    assert(bl.length() - op.bl.length() < sinfo.get_stripe_width());
     int r = ECUtil::encode(
       sinfo, ecimpl, bl, want, &buffers);
 
     hinfo->append(
-      sinfo.aligned_logical_offset_to_chunk_offset(offset),
+      sinfo.aligned_logical_offset_to_chunk_offset(op.off),
       buffers);
     bufferlist hbuf;
     ::encode(
       *hinfo,
       hbuf);
-    attrset[ECUtil::get_hinfo_key()] = hbuf;
 
     assert(r == 0);
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
-	 i != trans->end();
-	 ++i) {
+      i != trans->end();
+      ++i) {
       assert(buffers.count(i->first));
       bufferlist &enc_bl = buffers[i->first];
       i->second.write(
 	get_coll_ct(i->first, op.oid),
 	ghobject_t(op.oid, ghobject_t::NO_GEN, i->first),
 	sinfo.logical_to_prev_chunk_offset(
-	  offset),
+	offset),
 	enc_bl.length(),
 	enc_bl,
 	op.fadvise_flags);
-      i->second.setattrs(
+      i->second.setattr(
 	get_coll_ct(i->first, op.oid),
 	ghobject_t(op.oid, ghobject_t::NO_GEN, i->first),
-        attrset);
+	ECUtil::get_hinfo_key(),
+	hbuf);
     }
   }
+
   void operator()(const ECTransaction::CloneOp &op) {
     assert(hash_infos.count(op.source));
     assert(hash_infos.count(op.target));
-    assert(compress_infos.count(op.source));
-    assert(compress_infos.count(op.target));
     *(hash_infos[op.target]) = *(hash_infos[op.source]);
-    *(compress_infos[op.target]) = *(compress_infos[op.source]);
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
 	 i != trans->end();
 	 ++i) {
@@ -212,12 +199,8 @@ struct TransGenerator : public boost::static_visitor<void> {
   void operator()(const ECTransaction::RenameOp &op) {
     assert(hash_infos.count(op.source));
     assert(hash_infos.count(op.destination));
-    assert(compress_infos.count(op.source));
-    assert(compress_infos.count(op.destination));
     *(hash_infos[op.destination]) = *(hash_infos[op.source]);
-    *(compress_infos[op.destination]) = *(compress_infos[op.source]);
     hash_infos[op.source]->clear();
-    compress_infos[op.source]->clear();
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
 	 i != trans->end();
 	 ++i) {
@@ -230,9 +213,7 @@ struct TransGenerator : public boost::static_visitor<void> {
   }
   void operator()(const ECTransaction::StashOp &op) {
     assert(hash_infos.count(op.oid));
-    assert(compress_infos.count(op.oid));
     hash_infos[op.oid]->clear();
-    compress_infos[op.oid]->clear();
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
 	 i != trans->end();
 	 ++i) {
@@ -246,10 +227,8 @@ struct TransGenerator : public boost::static_visitor<void> {
   }
   void operator()(const ECTransaction::RemoveOp &op) {
     assert(hash_infos.count(op.oid));
-    assert(compress_infos.count(op.oid));
 
     hash_infos[op.oid]->clear();
-    compress_infos[op.oid]->clear();
     for (map<shard_id_t, ObjectStore::Transaction>::iterator i = trans->begin();
 	 i != trans->end();
 	 ++i) {
@@ -303,8 +282,6 @@ struct TransGenerator : public boost::static_visitor<void> {
 void ECTransaction::generate_transactions(
   map<hobject_t, ECUtil::HashInfoRef, hobject_t::BitwiseComparator> &hash_infos,
   ErasureCodeInterfaceRef &ecimpl,
-  map<hobject_t, CompressContextRef, hobject_t::BitwiseComparator> &compress_infos,
-  const char* compression_method,
   pg_t pgid,
   const ECUtil::stripe_info_t &sinfo,
   map<shard_id_t, ObjectStore::Transaction> *transactions,
@@ -314,9 +291,7 @@ void ECTransaction::generate_transactions(
 {
   TransGenerator gen(
     hash_infos,
-    compress_infos,
     ecimpl,
-    compression_method,
     pgid,
     sinfo,
     transactions,
