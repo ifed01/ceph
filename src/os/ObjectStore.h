@@ -408,6 +408,7 @@ public:
 
       OP_SETALLOCHINT = 39,  // cid, oid, object_size, write_size
       OP_COLL_HINT = 40, // cid, type, bl
+      OP_CHUNKED_WRITE = 41,  // cid, oid, offset, len, chunk_len, bl
     };
 
     // Transaction hint type
@@ -426,7 +427,7 @@ public:
       __le64 dest_off;                  //OP_CLONERANGE
       __le32 hint_type;                 //OP_COLL_HINT
       __le64 expected_object_size;      //OP_SETALLOCHINT
-      __le64 expected_write_size;       //OP_SETALLOCHINT
+      __le64 expected_write_size;       //OP_SETALLOCHINT, OP_CHUNKED_WRITE
       __le32 split_bits;                //OP_SPLIT_COLLECTION2
       __le32 split_rem;                 //OP_SPLIT_COLLECTION2
     } __attribute__ ((packed)) ;
@@ -672,6 +673,7 @@ public:
       case OP_ZERO:
       case OP_TRUNCATE:
       case OP_SETALLOCHINT:
+      case OP_CHUNKED_WRITE:
         assert(op->cid < cm.size());
         assert(op->oid < om.size());
         op->cid = cm[op->cid];
@@ -1093,6 +1095,48 @@ public:
         _op->oid = _get_object_id(oid);
         _op->off = off;
         _op->len = len;
+        ::encode(write_data, data_bl);
+      }
+      assert(len == write_data.length());
+      data.fadvise_flags = data.fadvise_flags | flags;
+      if (write_data.length() > data.largest_data_len) {
+	data.largest_data_len = write_data.length();
+	data.largest_data_off = off;
+	data.largest_data_off_in_tbl = tbl.length() + sizeof(__u32);  // we are about to
+      }
+      data.ops++;
+    }
+    /**
+     * Write data to an offset within an object. If the object is too
+     * small, it is expanded as needed.  It is possible to specify an
+     * offset beyond the current end of an object and it will be
+     * expanded as needed. Simple implementations of ObjectStore will
+     * just zero the data between the old end of the object and the
+     * newly provided data. More sophisticated implementations of
+     * ObjectStore will omit the untouched data and store it as a
+     * "hole" in the file.
+     * In contrast to regular write this op invalidates object content at data range=(offset, offset+chunk_len) before applying new data.
+     * I.e. new "hole" is created prior to data write  - sophisticated ObjectStore implementations might release space allocated for that region.
+     */
+    void chunked_write(const coll_t& cid, const ghobject_t& oid, uint64_t off, uint64_t len, uint64_t chunk_len,
+	       const bufferlist& write_data, uint32_t flags = 0) {
+      if (use_tbl) {
+        __u32 op = OP_CHUNKED_WRITE;
+        ::encode(op, tbl);
+        ::encode(cid, tbl);
+        ::encode(oid, tbl);
+        ::encode(off, tbl);
+        ::encode(len, tbl);
+        ::encode(chunk_len, tbl);
+        ::encode(write_data, tbl);
+      } else {
+        Op* _op = _get_next_op();
+        _op->op = OP_CHUNKED_WRITE;
+        _op->cid = _get_coll_id(cid);
+        _op->oid = _get_object_id(oid);
+        _op->off = off;
+        _op->len = len;
+        _op->expected_write_size = chunk_len;
         ::encode(write_data, data_bl);
       }
       assert(len == write_data.length());
