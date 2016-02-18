@@ -3291,6 +3291,310 @@ TEST_P(StoreTest, SetAllocHint) {
   }
 }
 
+TEST_P(StoreTest, ChunkedWrite) {
+  ObjectStore::Sequencer osr("test");
+  coll_t cid;
+  int r = 0;
+  ghobject_t oid(hobject_t(sobject_t("fiemap_object", CEPH_NOSNAP)));
+  size_t kb = 1024;
+  size_t mb = 1024 * kb;
+  uint64_t chunk_len = 1 * mb;
+  struct statfs stats0, stats;
+  uint64_t min_alloc_size = g_conf->bluestore_min_alloc_size;
+
+  if (string(GetParam()) != "bluestore")
+    return;
+
+  ObjectStore::Transaction t;
+  t.create_collection(cid, 0);
+  {
+    store->statfs(&stats0);
+    //write 3 chunks having different content
+    bufferlist bl1, bl2, bl3;
+    bl1.append("faoo");
+    bl2.append(std::string(5000, 'f'));
+    bl3.append(std::string(75000, 'z'));
+    {
+      t.touch(cid, oid);
+      t.chunked_write(cid, oid, 0, bl1.length(), chunk_len, bl1);
+      t.chunked_write(cid, oid, 1 * mb, bl2.length(), chunk_len, bl2);
+      t.chunked_write(cid, oid, 4 * mb, bl3.length(), chunk_len, bl3);
+      r = store->apply_transaction(&osr, std::move(t));
+      ASSERT_EQ(r, 0);
+      store->statfs(&stats);
+      ASSERT_EQ((stats0.f_bfree - stats.f_bfree) * stats0.f_bsize,
+                 ROUND_UP_TO(bl1.length(), min_alloc_size) +
+                 ROUND_UP_TO(bl2.length(), min_alloc_size) +
+                 ROUND_UP_TO(bl3.length(), min_alloc_size) );
+    }
+    //check extent disposition
+    {
+      bufferlist bl;
+      store->fiemap(cid, oid, 0, 5 * mb, bl);
+      map<uint64_t, uint64_t> m, e;
+      bufferlist::iterator p = bl.begin();
+      ::decode(m, p);
+      cout << " got " << m << std::endl;
+      ASSERT_TRUE( (m.size() == 3 &&
+	m.count(0) &&
+	m.count(1 * mb) &&
+	m.count(4 * mb)));
+      ASSERT_EQ(m[0], ROUND_UP_TO(bl1.length(), g_conf->bluestore_min_alloc_size));
+      ASSERT_EQ(m[1 * mb], ROUND_UP_TO(bl2.length(), g_conf->bluestore_min_alloc_size));
+      ASSERT_EQ(m[4 * mb], bl3.length());
+    }
+    //read chunk content
+    {
+      bufferlist in, test_val;
+      uint64_t l;
+
+      r = store->read(cid, oid, 0, bl1.length(), in);
+      ASSERT_EQ((int)bl1.length(), r);
+      ASSERT_TRUE(in.contents_equal(bl1));
+
+      l = 1 * mb - bl1.length();
+      test_val.clear(); test_val.append_zero(l);
+      r = store->read(cid, oid, bl1.length(), l, in);
+      ASSERT_EQ((int)l, r);
+      ASSERT_TRUE(in.contents_equal(test_val));
+
+      r = store->read(cid, oid, 1 * mb, bl2.length(), in);
+      ASSERT_EQ((int)bl2.length(), r);
+      ASSERT_TRUE(in.contents_equal(bl2));
+
+      l = 4 * mb - 1 * mb - bl2.length();
+      test_val.clear(); test_val.append_zero(l);
+      r = store->read(cid, oid, 1 * mb + bl2.length(), l, in);
+      ASSERT_EQ((int)l, r);
+      ASSERT_TRUE(in.contents_equal(test_val));
+
+      r = store->read(cid, oid, 4 * mb, bl3.length(), in);
+      ASSERT_EQ((int)bl3.length(), r);
+      ASSERT_TRUE(in.contents_equal(bl3));
+
+      l = 4 * mb + bl3.length();
+      r = store->read(cid, oid, 4 * mb + bl3.length(), l, in);
+      ASSERT_EQ( 0, r);
+    }
+  }
+  {
+    //overwrite 3 chunks having either increased or decreased lengths
+    bufferlist bl1, bl2, bl3;
+    bl1.append("offfoo");
+    bl2.append(std::string(1000, 'f'));
+    bl3.append(std::string(225000, 'z'));
+    {
+      t.touch(cid, oid);
+      t.chunked_write(cid, oid, 0, bl1.length(), chunk_len, bl1);
+      t.chunked_write(cid, oid, 1 * mb, bl2.length(), chunk_len, bl2);
+      t.chunked_write(cid, oid, 4 * mb, bl3.length(), chunk_len, bl3);
+      r = store->apply_transaction(&osr, std::move(t));
+      ASSERT_EQ(r, 0);
+      sleep(2); // wait for free space information sync
+      store->statfs(&stats);
+      ASSERT_EQ((stats0.f_bfree - stats.f_bfree) * stats0.f_bsize,
+                 ROUND_UP_TO(bl1.length(), min_alloc_size) +
+                 ROUND_UP_TO(bl2.length(), min_alloc_size) +
+                 ROUND_UP_TO(bl3.length(), min_alloc_size) );
+    }
+    //check extent disposition
+    {
+      bufferlist bl;
+      store->fiemap(cid, oid, 0, 5 * mb, bl);
+      map<uint64_t, uint64_t> m, e;
+      bufferlist::iterator p = bl.begin();
+      ::decode(m, p);
+      cout << " got " << m << std::endl;
+      ASSERT_TRUE( (m.size() == 3 &&
+	m.count(0) &&
+	m.count(1 * mb) &&
+	m.count(4 * mb)));
+      ASSERT_EQ(m[0], ROUND_UP_TO(bl1.length(), g_conf->bluestore_min_alloc_size));
+      ASSERT_EQ(m[1 * mb], ROUND_UP_TO(bl2.length(), g_conf->bluestore_min_alloc_size));
+      ASSERT_EQ(m[4 * mb], bl3.length());
+    }
+    //read chunk content
+    {
+      bufferlist in, test_val;
+      uint64_t l;
+
+      r = store->read(cid, oid, 0, bl1.length(), in);
+      ASSERT_EQ((int)bl1.length(), r);
+      ASSERT_TRUE(in.contents_equal(bl1));
+
+      l = 1 * mb - bl1.length();
+      test_val.clear(); test_val.append_zero(l);
+      r = store->read(cid, oid, bl1.length(), l, in);
+      ASSERT_EQ((int)l, r);
+      ASSERT_TRUE(in.contents_equal(test_val));
+
+      r = store->read(cid, oid, 1 * mb, bl2.length(), in);
+      ASSERT_EQ((int)bl2.length(), r);
+      ASSERT_TRUE(in.contents_equal(bl2));
+
+      l = 4 * mb - 1 * mb - bl2.length();
+      test_val.clear(); test_val.append_zero(l);
+      r = store->read(cid, oid, 1 * mb + bl2.length(), l, in);
+      ASSERT_EQ((int)l, r);
+      ASSERT_TRUE(in.contents_equal(test_val));
+
+      r = store->read(cid, oid, 4 * mb, bl3.length(), in);
+      ASSERT_EQ((int)bl3.length(), r);
+      ASSERT_TRUE(in.contents_equal(bl3));
+
+      l = 4 * mb + bl3.length();
+      r = store->read(cid, oid, 4 * mb + bl3.length(), l, in);
+      ASSERT_EQ( 0, r);
+    }
+  }
+  {
+    //overwrite 3 chunks having either full or zero lengths
+    bufferlist bl1, bl2, bl3;
+    bl1.append(std::string());
+    bl2.append(std::string("a", 1 * mb));
+    bl3.append(std::string("b", 1 * mb));
+    {
+      t.touch(cid, oid);
+      t.chunked_write(cid, oid, 0, bl1.length(), chunk_len, bl1);
+      t.chunked_write(cid, oid, 1 * mb, bl2.length(), chunk_len, bl2);
+      t.chunked_write(cid, oid, 4 * mb, bl3.length(), chunk_len, bl3);
+      r = store->apply_transaction(&osr, std::move(t));
+      ASSERT_EQ(r, 0);
+      sleep(2); // wait for free space information sync
+      store->statfs(&stats);
+      ASSERT_EQ((stats0.f_bfree - stats.f_bfree) * stats0.f_bsize,
+                 ROUND_UP_TO(bl1.length(), min_alloc_size) +
+                 ROUND_UP_TO(bl2.length(), min_alloc_size) +
+                 ROUND_UP_TO(bl3.length(), min_alloc_size) );
+    }
+    //check extent disposition
+    {
+      bufferlist bl;
+      store->fiemap(cid, oid, 0, 5 * mb, bl);
+      map<uint64_t, uint64_t> m, e;
+      bufferlist::iterator p = bl.begin();
+      ::decode(m, p);
+      cout << " got " << m << std::endl;
+      ASSERT_TRUE( (m.size() == 2 &&
+	m.count(1 * mb) &&
+	m.count(4 * mb)));
+      //ASSERT_EQ(m[0], ROUND_UP_TO(bl1.length(), g_conf->bluestore_min_alloc_size));
+      ASSERT_EQ(m[1 * mb], ROUND_UP_TO(bl2.length(), g_conf->bluestore_min_alloc_size));
+      ASSERT_EQ(m[4 * mb], bl3.length());
+    }
+    //read chunk content
+    {
+      bufferlist in, test_val;
+      uint64_t l;
+
+      r = store->read(cid, oid, 0, bl1.length(), in);
+      ASSERT_EQ( int(5 * mb), r);
+
+      l = 1 * mb - bl1.length();
+      test_val.clear(); test_val.append_zero(l);
+      r = store->read(cid, oid, bl1.length(), l, in);
+      ASSERT_EQ((int)l, r);
+      ASSERT_TRUE(in.contents_equal(test_val));
+
+      r = store->read(cid, oid, 1 * mb, bl2.length(), in);
+      ASSERT_EQ((int)bl2.length(), r);
+      ASSERT_TRUE(in.contents_equal(bl2));
+
+      l = 4 * mb - 1 * mb - bl2.length();
+      test_val.clear(); test_val.append_zero(l);
+      r = store->read(cid, oid, 1 * mb + bl2.length(), l, in);
+      ASSERT_EQ((int)l, r);
+      ASSERT_TRUE(in.contents_equal(test_val));
+
+      r = store->read(cid, oid, 4 * mb, bl3.length(), in);
+      ASSERT_EQ((int)bl3.length(), r);
+      ASSERT_TRUE(in.contents_equal(bl3));
+
+      l = 4 * mb + bl3.length();
+      r = store->read(cid, oid, 4 * mb + bl3.length(), l, in);
+      ASSERT_EQ( 0, r);
+    }
+  }
+  {
+    //overwrite 3 chunks having either reduced or zero lengths
+    bufferlist bl1, bl2, bl3;
+    bl1.append(std::string("a", 64 * kb));
+    bl2.append(std::string());
+    bl3.append(std::string("b", 386 * kb));
+    {
+      t.touch(cid, oid);
+      t.chunked_write(cid, oid, 0, bl1.length(), chunk_len, bl1);
+      t.chunked_write(cid, oid, 1 * mb, bl2.length(), chunk_len, bl2);
+      t.chunked_write(cid, oid, 4 * mb, bl3.length(), chunk_len, bl3);
+      r = store->apply_transaction(&osr, std::move(t));
+      ASSERT_EQ(r, 0);
+      sleep(2); // wait for free space information sync
+      store->statfs(&stats);
+      ASSERT_EQ((stats0.f_bfree - stats.f_bfree) * stats0.f_bsize,
+                 ROUND_UP_TO(bl1.length(), min_alloc_size) +
+                 ROUND_UP_TO(bl2.length(), min_alloc_size) +
+                 ROUND_UP_TO(bl3.length(), min_alloc_size) );
+    }
+    //check extent disposition
+    {
+      bufferlist bl;
+      store->fiemap(cid, oid, 0, 5 * mb, bl);
+      map<uint64_t, uint64_t> m, e;
+      bufferlist::iterator p = bl.begin();
+      ::decode(m, p);
+      cout << " got " << m << std::endl;
+      ASSERT_TRUE( (m.size() == 2 &&
+	m.count(0 ) &&
+	m.count(4 * mb)));
+      ASSERT_EQ(m[0], ROUND_UP_TO(bl1.length(), g_conf->bluestore_min_alloc_size));
+      //ASSERT_EQ(m[1 * mb], ROUND_UP_TO(bl2.length(), g_conf->bluestore_min_alloc_size));
+      ASSERT_EQ(m[4 * mb], bl3.length());
+    }
+    //read chunk content
+    {
+      bufferlist in, test_val;
+      uint64_t l;
+
+      l = bl1.length();
+      r = store->read(cid, oid, 0, l, in);
+      ASSERT_EQ((int)l, r);
+      ASSERT_TRUE(in.contents_equal(bl1));
+
+      l = 1 * mb - bl1.length();
+      test_val.clear(); test_val.append_zero(l);
+      r = store->read(cid, oid, bl1.length(), l, in);
+      ASSERT_EQ((int)l, r);
+      ASSERT_TRUE(in.contents_equal(test_val));
+
+      r = store->read(cid, oid, 1 * mb, bl2.length(), in);
+      ASSERT_EQ((int)bl2.length(), r);
+      ASSERT_TRUE(in.contents_equal(bl2));
+
+      l = 4 * mb - 1 * mb - bl2.length();
+      test_val.clear(); test_val.append_zero(l);
+      r = store->read(cid, oid, 1 * mb + bl2.length(), l, in);
+      ASSERT_EQ((int)l, r);
+      ASSERT_TRUE(in.contents_equal(test_val));
+
+      r = store->read(cid, oid, 4 * mb, bl3.length(), in);
+      ASSERT_EQ((int)bl3.length(), r);
+      ASSERT_TRUE(in.contents_equal(bl3));
+
+      l = 4 * mb + bl3.length();
+      r = store->read(cid, oid, 4 * mb + bl3.length(), l, in);
+      ASSERT_EQ( 0, r);
+    }
+  }
+  {
+    ObjectStore::Transaction t;
+    t.remove(cid, oid);
+    t.remove_collection(cid);
+    cerr << "remove collection" << std::endl;
+    r = store->apply_transaction(&osr, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+}
+
 INSTANTIATE_TEST_CASE_P(
   ObjectStore,
   StoreTest,

@@ -823,6 +823,14 @@ private:
 	     uint64_t offset, size_t len,
 	     bufferlist& bl,
 	     uint32_t fadvise_flags);
+
+  int _write_chunk(TransContext *txc,
+		      CollectionRef& c,
+		      OnodeRef& o,
+		     uint64_t offset, size_t length, size_t chunk_length,
+		     bufferlist& bl,
+		     uint32_t fadvise_flags);
+
   bool _can_overlay_write(OnodeRef o, uint64_t length);
   int _do_overlay_trim(TransContext *txc,
 		       OnodeRef o,
@@ -844,6 +852,27 @@ private:
   void _pad_zeros_tail(OnodeRef o, bufferlist *bl,
 		       uint64_t offset, uint64_t *length,
 		       uint64_t block_size);
+
+  void _alloc_extents(TransContext *txc,
+		      CollectionRef& c,
+		      OnodeRef o,
+		      uint64_t offset,
+		      uint64_t length,
+		      bluestore_wal_op_t *cow_head_op,
+		      bluestore_wal_op_t *cow_tail_op,
+		      uint64_t hint);
+  uint64_t _dealloc_extents(TransContext *txc,
+			    CollectionRef& c,
+			    OnodeRef o,
+			    uint64_t offset,
+			    uint64_t length);
+  int _do_reallocate_chunk(TransContext *txc,
+			   CollectionRef& c,
+			   OnodeRef o,
+			   uint64_t offset,
+			   uint64_t length,
+			   uint64_t chunk_length,
+			   uint32_t fadvise_flags);
   int _do_allocate(TransContext *txc,
 		   CollectionRef& c,
 		   OnodeRef o,
@@ -856,6 +885,12 @@ private:
 		CollectionRef &c,
 		OnodeRef o,
 		uint64_t offset, uint64_t length,
+		bufferlist& bl,
+		uint32_t fadvise_flags);
+  int _do_write_chunk(TransContext *txc,
+		CollectionRef &c,
+		OnodeRef o,
+		uint64_t offset, uint64_t length,  uint64_t chunk_length,
 		bufferlist& bl,
 		uint32_t fadvise_flags);
   int _touch(TransContext *txc,
