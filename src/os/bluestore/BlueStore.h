@@ -845,13 +845,33 @@ private:
 			 uint64_t offset, uint64_t length);
   void _do_read_all_overlays(bluestore_wal_op_t& wo);
   void _pad_zeros(OnodeRef o, bufferlist *bl, uint64_t *offset, uint64_t *length,
-		  uint64_t block_size);
+		  uint64_t block_size, bool use_cache_tail);
   void _pad_zeros_head(OnodeRef o, bufferlist *bl,
 		       uint64_t *offset, uint64_t *length,
 		       uint64_t block_size);
   void _pad_zeros_tail(OnodeRef o, bufferlist *bl,
 		       uint64_t offset, uint64_t *length,
 		       uint64_t block_size);
+  void _zero_tail(TransContext *txc,
+		  OnodeRef o,
+		  const map<uint64_t, bluestore_extent_t>::iterator& bp,
+		  uint64_t offset);
+
+  void _do_append_extent(TransContext *txc,
+			  OnodeRef o,
+			  const map<uint64_t, bluestore_extent_t>::iterator& bp,
+			  uint64_t offset,
+			  uint64_t length,
+			  bool buffered,
+			  bool use_cache_tail);
+
+  uint64_t _cut_to_extent(OnodeRef o,
+			  const map<uint64_t, bluestore_extent_t>::iterator& bp,
+			  uint64_t offset,
+			  uint64_t length
+			  bufferlist& bl);
+
+  void _check_for_unwritten(OnodeRef o);
 
   void _alloc_extents(TransContext *txc,
 		      CollectionRef& c,
