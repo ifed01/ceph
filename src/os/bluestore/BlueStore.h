@@ -860,7 +860,8 @@ private:
 		       uint64_t block_size);
   void _pad_zeros_tail(OnodeRef o, bufferlist *bl,
 		       uint64_t offset, uint64_t *length,
-		       uint64_t block_size);
+		       uint64_t block_size,
+		       bool use_tail_cache);
   void _zero_tail(TransContext *txc,
 		  OnodeRef o,
 		  const map<uint64_t, bluestore_extent_t>::iterator& bp,
@@ -872,12 +873,15 @@ private:
 			  uint64_t offset,
 			  uint64_t length,
 			  bool buffered,
-			  bool use_cache_tail);
+			  bool use_cache_tail,
+			  bufferlist& bl);
 
   uint64_t _cut_to_extent(OnodeRef o,
 			  const map<uint64_t, bluestore_extent_t>::iterator& bp,
+			  uint64_t orig_offset,
+			  const bufferlist& orig_bl,
 			  uint64_t offset,
-			  uint64_t length
+			  uint64_t length,
 			  bufferlist& bl);
 
   void _check_for_unwritten(OnodeRef o);

@@ -5019,7 +5019,7 @@ void BlueStore::_zero_tail(
   uint64_t offset)
 {
   if (offset > o->onode.size) {
-    uint64_t end = ROUND_UP_TO(o->onode.size, bdev->block_size);
+    uint64_t end = ROUND_UP_TO(o->onode.size, bdev->get_block_size());
     map<uint64_t, bluestore_extent_t>::iterator pp = o->onode.find_extent(end);
     if (offset > end &&
       pp != o->onode.block_map.end() &&
@@ -5043,7 +5043,8 @@ void BlueStore::_do_append_extent(
   uint64_t offset,
   uint64_t length,
   bool buffered,
-  bool use_tail_cache)
+  bool use_tail_cache,
+  bufferlist& bl)
 {
   uint64_t block_size = bdev->get_block_size();
   dout(20) << __func__ << " append" << dendl;
@@ -5081,10 +5082,13 @@ void BlueStore::_do_append_extent(
 uint64_t BlueStore::_cut_to_extent(
   OnodeRef o,
   const map<uint64_t, bluestore_extent_t>::iterator& bp,
+  uint64_t orig_offset,
+  const bufferlist& orig_bl,
   uint64_t offset,
-  uint64_t length
+  uint64_t length,
   bufferlist& bl)
 {
+  uint64_t min_alloc_size = g_conf->bluestore_min_alloc_size;
   // cut to extent
   if (bp == o->onode.block_map.end() ||
     bp->first > offset) {
@@ -5488,8 +5492,8 @@ int BlueStore::_do_reallocate_chunk(
   uint64_t offset = orig_offset;
   uint64_t length = orig_length;
 //  uint64_t head = 0;
-  uint64_t tail = 0;
-/*  if (offset % min_alloc_size) {
+/*  uint64_t tail = 0;
+  if (offset % min_alloc_size) {
     head = min_alloc_size - (offset % min_alloc_size);
     offset += head;
     if (length >= head)
@@ -5708,7 +5712,7 @@ int BlueStore::_do_write(
     
     bufferlist bl;
     length = orig_offset + orig_length - offset;
-    length = _cut_to_extent(o, bp, offset, length, bl);
+    length = _cut_to_extent(o, bp, orig_offset, orig_bl, offset, length, bl);
 
     if (_can_overlay_write(o, length)) {
       r = _do_overlay_write(txc, o, offset, length, bl);
@@ -5728,7 +5732,7 @@ int BlueStore::_do_write(
     if (offset > bp->first &&
 	offset >= o->onode.size &&                                  // past eof +
 	(offset / block_size != (o->onode.size - 1) / block_size)) {// diff block
-      _do_append_extent(txc, o, bp, offset, length, buffered, g_conf->bluestore_cache_tails);
+      _do_append_extent(txc, o, bp, offset, length, buffered, g_conf->bluestore_cache_tails, bl);
 
       ++bp;
       continue;
@@ -5963,7 +5967,7 @@ int BlueStore::_do_write_chunk(
     bufferlist bl;
     length = orig_offset + orig_length - offset;
 
-    length = _cut_to_extent(o, bp, offset, length, bl);
+    length = _cut_to_extent(o, bp, orig_offset, orig_bl, offset, length, bl);
 
     /*if (_can_overlay_write(o, length)) {
       r = _do_overlay_write(txc, o, offset, length, bl);
@@ -5985,7 +5989,7 @@ int BlueStore::_do_write_chunk(
     /*if (offset > bp->first &&
 	offset >= o->onode.size &&                                  // past eof +
 	(offset / block_size != (o->onode.size - 1) / block_size)) {// diff block
-      _do_append_extent(txc, o, bp, offset, length, buffered, false);
+      _do_append_extent(txc, o, bp, offset, length, buffered, false, bl);
       
       ++bp;
       continue;
