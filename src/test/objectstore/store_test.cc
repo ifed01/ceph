@@ -3451,8 +3451,8 @@ TEST_P(StoreTest, ChunkedWrite) {
     //overwrite 3 chunks having either full or zero lengths
     bufferlist bl1, bl2, bl3;
     bl1.append(std::string());
-    bl2.append(std::string("a", 1 * mb));
-    bl3.append(std::string("b", 1 * mb));
+    bl2.append(std::string(1 * mb, 'a'));
+    bl3.append(std::string(1 * mb, 'b'));
     {
       t.touch(cid, oid);
       t.chunked_write(cid, oid, 0, bl1.length(), chunk_len, bl1);
@@ -3518,9 +3518,9 @@ TEST_P(StoreTest, ChunkedWrite) {
   {
     //overwrite 3 chunks having either reduced or zero lengths
     bufferlist bl1, bl2, bl3;
-    bl1.append(std::string("a", 64 * kb));
+    bl1.append(std::string(64 * kb, 'a'));
     bl2.append(std::string());
-    bl3.append(std::string("b", 386 * kb));
+    bl3.append(std::string(386 * kb, 'b'));
     {
       t.touch(cid, oid);
       t.chunked_write(cid, oid, 0, bl1.length(), chunk_len, bl1);
