@@ -5516,13 +5516,14 @@ int BlueStore::_do_reallocate_chunk(
   TransContext *txc,
   CollectionRef& c,
   OnodeRef o,
+  uint64_t extent_offset,
+  uint64_t extent_length,
   uint64_t orig_offset,
   uint64_t orig_length,
-  uint64_t chunk_length,
   uint32_t fadvise_flags)
 {
   dout(20) << __func__
-	   << " " << o->oid << " " << orig_offset << "~" << orig_length << "~" << chunk_length
+    << " " << o->oid << " " << orig_offset << "~" << orig_length << " " << extent_offset << "~" << extent_length
 	   << " - have " << o->onode.size
 	   << " bytes in " << o->onode.block_map.size()
 	   << " extents" << dendl;
@@ -5531,10 +5532,10 @@ int BlueStore::_do_reallocate_chunk(
   uint64_t block_mask = ~(block_size - 1);*/
 
   assert(min_alloc_size);
-  assert(orig_offset % min_alloc_size == 0);
-  //assert(orig_length % min_alloc_size == 0);
-  assert(chunk_length % min_alloc_size == 0);
-  assert(orig_length <= chunk_length);
+  assert(extent_offset % min_alloc_size == 0);
+  assert(extent_length % min_alloc_size == 0);
+  assert(orig_offset >= extent_offset);
+  assert(orig_offset + orig_length <= extent_offset + extent_length);
 
   // start with any full blocks we will write
   uint64_t offset = orig_offset;
@@ -5690,7 +5691,7 @@ int BlueStore::_do_reallocate_chunk(
       return r;
     }
 
-    hint = _dealloc_extents(txc, c, o, offset, chunk_length);
+    hint = _dealloc_extents(txc, c, o, extent_offset, extent_length);
 
     // allocate our new extent(s)
     _alloc_extents(txc, c, o, offset, length, nullptr, nullptr, hint);
@@ -5977,23 +5978,24 @@ int BlueStore::_do_write_chunk(
   TransContext *txc,
   CollectionRef& c,
   OnodeRef o,
+  uint64_t extent_offset,
+  uint64_t extent_length,
   uint64_t orig_offset,
   uint64_t orig_length,
-  uint64_t chunk_length,
   bufferlist& orig_bl,
   uint32_t fadvise_flags)
 {
   int r = 0;
 
   dout(20) << __func__
-	   << " " << o->oid << " " << orig_offset << "~" << orig_length << "~" << chunk_length
+	   << " " << o->oid << " " << orig_offset << "~" << orig_length " " << extent_offset << "~" << extent_length
 	   << " - have " << o->onode.size
 	   << " bytes in " << o->onode.block_map.size()
 	   << " extents" << dendl;
   _dump_onode(o);
   o->exists = true;
 
-  if (orig_length && chunk_length == 0) {
+  if (orig_length && extent_length == 0) {
     return 0;
   }
 
@@ -6008,16 +6010,16 @@ int BlueStore::_do_write_chunk(
   assert(min_alloc_size);
   assert(block_size);
   assert(min_alloc_size % block_size == 0);
-  assert(orig_offset % min_alloc_size == 0);
-//  assert(orig_length % min_alloc_size == 0);
-  assert(chunk_length % min_alloc_size == 0);
-  assert(orig_length <= chunk_length);
+  assert(extent_offset % min_alloc_size == 0);
+  assert(extent_length % min_alloc_size == 0);
+  assert(orig_offset >= extent_offset);
+  assert(orig_offset + orig_length <= extent_offset + extent_length);
 
   const uint64_t block_mask = ~(block_size - 1);
   map<uint64_t, bluestore_extent_t>::iterator bp;
   uint64_t length;
 
-  r = _do_reallocate_chunk(txc, c, o, orig_offset, orig_length, chunk_length, fadvise_flags);
+  r = _do_reallocate_chunk(txc, c, o, extent_offset, extent_length, orig_offset, orig_length, fadvise_flags);
   if (r < 0) {
     derr << __func__ << " allocate failed, " << cpp_strerror(r) << dendl;
     goto out;
@@ -6052,8 +6054,7 @@ int BlueStore::_do_write_chunk(
 
     assert(bp != o->onode.block_map.end());
     assert(bp->second.has_flag(bluestore_extent_t::FLAG_UNWRITTEN));
-    //assert(offset >= bp->first);
-    assert(offset == bp->first);
+    assert(offset >= bp->first);
     assert(offset + length <= bp->first + bp->second.length);
     
     // (pad and) overwrite unused portion of extent for an append?
