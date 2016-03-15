@@ -408,7 +408,7 @@ public:
       OP_COLL_HINT = 40, // cid, type, bl
 
       OP_TRY_RENAME = 41,   // oldcid, oldoid, newoid
-      OP_CHUNKED_WRITE = 42,  // cid, oid, offset, len, chunk_len, bl
+      OP_WRITE_EXTENT = 42,  // cid, oid, extent_offset, extent_len, offset, len, chunk_len, bl
     };
 
     // Transaction hint type
@@ -424,10 +424,10 @@ public:
       __le64 len;
       __le32 dest_cid;
       __le32 dest_oid;                  //OP_CLONE, OP_CLONERANGE
-      __le64 dest_off;                  //OP_CLONERANGE
+      __le64 dest_off;                  //OP_CLONERANGE, OP_WRITE_EXTENT
       __le32 hint_type;                 //OP_COLL_HINT
       __le64 expected_object_size;      //OP_SETALLOCHINT
-      __le64 expected_write_size;       //OP_SETALLOCHINT, OP_CHUNKED_WRITE
+      __le64 expected_write_size;       //OP_SETALLOCHINT, OP_WRITE_EXTENT
       __le32 split_bits;                //OP_SPLIT_COLLECTION2
       __le32 split_rem;                 //OP_SPLIT_COLLECTION2
     } __attribute__ ((packed)) ;
@@ -673,7 +673,7 @@ public:
       case OP_ZERO:
       case OP_TRUNCATE:
       case OP_SETALLOCHINT:
-      case OP_CHUNKED_WRITE:
+      case OP_WRITE_EXTENT:
         assert(op->cid < cm.size());
         assert(op->oid < om.size());
         op->cid = cm[op->cid];
@@ -1145,30 +1145,34 @@ public:
      * newly provided data. More sophisticated implementations of
      * ObjectStore will omit the untouched data and store it as a
      * "hole" in the file.
-     * In contrast to regular write this op invalidates object content at data range=(offset, offset+chunk_len) before applying new data.
+     * In contrast to regular write this op invalidates object content at data range=(extent_off, extent_off+extent_len) before applying new data.
      * I.e. new "hole" is created prior to data write  - sophisticated ObjectStore implementations might release space allocated for that region.
      */
-    void chunked_write(const coll_t& cid, const ghobject_t& oid, uint64_t off, uint64_t len, uint64_t chunk_len,
+    void write_extent(const coll_t& cid, const ghobject_t& oid, uint64_t extent_off, uint64_t extent_len, uint64_t off, uint64_t len,
 	       const bufferlist& write_data, uint32_t flags = 0) {
       if (use_tbl) {
-        __u32 op = OP_CHUNKED_WRITE;
+	__u32 op = OP_WRITE_EXTENT;
         ::encode(op, tbl);
         ::encode(cid, tbl);
         ::encode(oid, tbl);
-        ::encode(off, tbl);
+	::encode(extent_off, tbl);
+	::encode(extent_len, tbl);
+	::encode(off, tbl);
         ::encode(len, tbl);
-        ::encode(chunk_len, tbl);
         ::encode(write_data, tbl);
       } else {
         Op* _op = _get_next_op();
-        _op->op = OP_CHUNKED_WRITE;
+	_op->op = OP_WRITE_EXTENT;
         _op->cid = _get_coll_id(cid);
         _op->oid = _get_object_id(oid);
         _op->off = off;
         _op->len = len;
-        _op->expected_write_size = chunk_len;
+	_op->dest_off = extent_off;
+        _op->expected_write_size = extent_len;
         ::encode(write_data, data_bl);
       }
+      assert(off >= extent_off);
+      assert(off+len <= extent_off+extent_len);
       assert(len == write_data.length());
       data.fadvise_flags = data.fadvise_flags | flags;
       if (write_data.length() > data.largest_data_len) {

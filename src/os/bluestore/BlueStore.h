@@ -824,7 +824,7 @@ private:
 	     bufferlist& bl,
 	     uint32_t fadvise_flags);
 
-  int _write_chunk(TransContext *txc,
+  int _write_extent(TransContext *txc,
 		      CollectionRef& c,
 		      OnodeRef& o,
 		     uint64_t offset, size_t length, size_t chunk_length,
@@ -893,9 +893,10 @@ private:
   int _do_reallocate_chunk(TransContext *txc,
 			   CollectionRef& c,
 			   OnodeRef o,
+			   uint64_t extent_offset,
+			   uint64_t extent_length,
 			   uint64_t offset,
 			   uint64_t length,
-			   uint64_t chunk_length,
 			   uint32_t fadvise_flags);
   int _do_allocate(TransContext *txc,
 		   CollectionRef& c,
@@ -911,7 +912,7 @@ private:
 		uint64_t offset, uint64_t length,
 		bufferlist& bl,
 		uint32_t fadvise_flags);
-  int _do_write_chunk(TransContext *txc,
+  int _do_write_extent(TransContext *txc,
 		CollectionRef &c,
 		OnodeRef o,
 		uint64_t offset, uint64_t length,  uint64_t chunk_length,
