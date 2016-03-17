@@ -5930,7 +5930,7 @@ int BlueStore::_do_write_extent(
   int r = 0;
 
   dout(20) << __func__
-	   << " " << o->oid << " " << orig_offset << "~" << orig_length " " << extent_offset << "~" << extent_length
+	   << " " << o->oid << " " << extent_offset << "~" << extent_length << " " << orig_offset << "~" << orig_length
 	   << " - have " << o->onode.size
 	   << " bytes in " << o->onode.block_map.size()
 	   << " extents" << dendl;
@@ -6163,19 +6163,22 @@ out:
 int BlueStore::_write_extent(TransContext *txc,
 		      CollectionRef& c,
 		      OnodeRef& o,
-		     uint64_t offset, size_t length, size_t chunk_length,
-		     bufferlist& bl,
-		     uint32_t fadvise_flags)
+		      uint64_t extent_offset, size_t extent_length,
+		      uint64_t offset, size_t length,
+		      bufferlist& bl,
+		      uint32_t fadvise_flags)
 {
   dout(15) << __func__ << " " << c->cid << " " << o->oid
-	   << " " << offset << "~" << length << "~" << chunk_length
+	   << " " << extent_offset << "~" << extent_length
+	   << " " << offset << "~" << length
 	   << dendl;
   _assign_nid(txc, o);
-  int r = _do_write_extent(txc, c, o, offset, length, chunk_length, bl, fadvise_flags);
+  int r = _do_write_extent(txc, c, o, extent_offset, extent_length, offset, length, bl, fadvise_flags);
   txc->write_onode(o);
 
   dout(10) << __func__ << " " << c->cid << " " << o->oid
-	   << " " << offset << "~" << length << "~" << chunk_length
+	   << " " << extent_offset << "~" << extent_length
+	   << " " << offset << "~" << length
 	   << " = " << r << dendl;
   return r;
 }
