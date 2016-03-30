@@ -310,4 +310,67 @@ struct bluestore_wal_transaction_t {
 };
 WRITE_CLASS_ENCODER(bluestore_wal_transaction_t)
 
+struct bluestore_pextent_t : public bluestore_extent_t
+{
+  uint32_t compression;
+
+  bluestore_pextent_t(uint64_t o = 0, uint32_t l = 0, uint32_t f = 0, uint32_t _calg = 0)
+    : bluestore_extent_t(o, l, f), compression(_calg) {}
+
+  /*void encode(bufferlist& bl) const;
+  void decode(bufferlist::iterator& p);*/
+  void dump(Formatter *f) const;
+
+};
+//WRITE_CLASS_ENCODER(bluestore_pextent_t)
+
+//typedef boost::intrusive_ptr<bluestore_pextent_t> ExtentRef;
+typedef uint64_t PExtentRef;
+
+/// lextent: logical data block back by the extent
+struct bluestore_lextent_t {
+  static string get_flags_string(unsigned flags);
+
+  PExtentRef pextent;
+  uint32_t x_offset; // relative offset within the pextent 
+  uint32_t length;
+  uint32_t flags;  /// or reserved
+
+  bluestore_lextent_t(PExtentRef pext, uint32_t o = 0, uint32_t l = 0, uint32_t f = 0)
+    : pextent(pext), x_offset(o), length(l), flags(f) {}
+
+  uint64_t end() const {
+    return x_offset + length;
+  }
+
+  bool has_flag(unsigned f) const {
+    return flags & f;
+  }
+  void set_flag(unsigned f) {
+    flags |= f;
+  }
+  void clear_flag(unsigned f) {
+    flags &= ~f;
+  }
+
+  void encode(bufferlist& bl) const {
+    ::encode(pextent, bl);
+    ::encode(x_offset, bl);
+    ::encode(length, bl);
+    ::encode(flags, bl);
+  }
+  void decode(bufferlist::iterator& p) {
+    ::decode(pextent, p);
+    ::decode(x_offset, p);
+    ::decode(length, p);
+    ::decode(flags, p);
+  }
+  void dump(Formatter *f) const;
+  static void generate_test_instances(list<bluestore_lextent_t*>& o);
+};
+WRITE_CLASS_ENCODER(bluestore_lextent_t)
+
+typedef map<uint64_t, bluestore_lextent_t> bluestore_lextent_map_t;
+typedef map<ExtentRef, bluestore_pextent_t> bluestore_pextent_map_t;
+
 #endif
