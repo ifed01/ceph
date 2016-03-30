@@ -16,6 +16,7 @@
 #define CEPH_OSD_BLUESTORE_BLUESTORE_TYPES_H
 
 #include <ostream>
+#include <boost/intrusive_ptr.hpp>
 #include "include/types.h"
 #include "include/interval_set.h"
 #include "include/utime.h"
