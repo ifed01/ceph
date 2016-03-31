@@ -616,7 +616,7 @@ string bluestore_lextent_t::get_flags_string(unsigned flags)
 
 void bluestore_lextent_t::dump(Formatter *f) const
 {
-  f->dump_unsigned("pextent", pextent));
+  f->dump_unsigned("pextent", pextent);
   f->dump_unsigned("x_offset", x_offset);
   f->dump_unsigned("length", length);
   f->dump_unsigned("flags", flags);

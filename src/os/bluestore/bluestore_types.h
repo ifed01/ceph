@@ -371,6 +371,6 @@ struct bluestore_lextent_t {
 WRITE_CLASS_ENCODER(bluestore_lextent_t)
 
 typedef map<uint64_t, bluestore_lextent_t> bluestore_lextent_map_t;
-typedef map<ExtentRef, bluestore_pextent_t> bluestore_pextent_map_t;
+typedef map<PExtentRef, bluestore_pextent_t> bluestore_pextent_map_t;
 
 #endif

@@ -21,7 +21,7 @@ bluestore_pextent_t* LBlockTracker::get_pextent(PExtentRef pextent)
   bluestore_pextent_t* res = nullptr;
   bluestore_pextent_map_t::iterator it = m_pextents.find(pextent);
   if (it != m_pextents.end())
-    res = it->second;
+    res = &it->second;
   return res;
 }
 
@@ -46,9 +46,9 @@ int  LBlockTracker::read(uint64_t offset, uint32_t length, void* opaque, bufferl
     assert(eptr != nullptr);
     pextents2read_t::iterator it = ext2read.find(eptr);
 
-    unsigned l2read = MIN(l, bp->second.length>);
-    if (it != ext2read::end())
-      *it->second.push_back(region_t(o, bp->second.x_offset, l2read)));
+    unsigned l2read = MIN(l, bp->second.length);
+    if (it != ext2read.end())
+      it->second.push_back(region_t(o, bp->second.x_offset, l2read));
     else
       ext2read[eptr].push_back(region_t(o, bp->second.x_offset, l2read));
 
