@@ -14,9 +14,9 @@
 *
 */
 
-#include "LBlockTracker.h"
+#include "ExtentManager.h"
 
-bluestore_pextent_t* LBlockTracker::get_pextent(PExtentRef pextent)
+bluestore_pextent_t* ExtentManager::get_pextent(PExtentRef pextent)
 {
   bluestore_pextent_t* res = nullptr;
   bluestore_pextent_map_t::iterator it = m_pextents.find(pextent);
@@ -25,7 +25,7 @@ bluestore_pextent_t* LBlockTracker::get_pextent(PExtentRef pextent)
   return res;
 }
 
-int  LBlockTracker::read(uint64_t offset, uint32_t length, void* opaque, bufferlist* result)
+int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferlist* result)
 {
   result->clear();
 
@@ -106,14 +106,14 @@ int  LBlockTracker::read(uint64_t offset, uint32_t length, void* opaque, bufferl
   return 0;
 }
 
-int LBlockTracker::read_extent_total(bluestore_pextent_t* pextent, void* opaque, bufferlist* result)
+int ExtentManager::read_extent_total(bluestore_pextent_t* pextent, void* opaque, bufferlist* result)
 {
   result->clear();
 
   uint64_t r_len = ROUND_UP_TO(pextent->length, m_device.get_block_size());
   bufferlist bl;
 //  dout(30) << __func__ << "  reading " << pextent->offset << "~" << r_len << dendl;
-  int r = m_device.read(pextent->offset, r_len, opaque, &bl);
+  int r = m_device.read_block(pextent->offset, r_len, opaque, &bl);
   if (r < 0) {
     return r;
   }
@@ -121,7 +121,7 @@ int LBlockTracker::read_extent_total(bluestore_pextent_t* pextent, void* opaque,
   return 0;
 }
 
-int LBlockTracker::read_extent_sparse(bluestore_pextent_t* pextent, void* opaque, LBlockTracker::regions2read_t::const_iterator cur, LBlockTracker::regions2read_t::const_iterator end, LBlockTracker::ready_regions_t* result)
+int ExtentManager::read_extent_sparse(bluestore_pextent_t* pextent, void* opaque, ExtentManager::regions2read_t::const_iterator cur, ExtentManager::regions2read_t::const_iterator end, ExtentManager::ready_regions_t* result)
 {
   result->clear();
   uint64_t block_size = m_device.get_block_size();
@@ -137,7 +137,7 @@ int LBlockTracker::read_extent_sparse(bluestore_pextent_t* pextent, void* opaque
 
 //    dout(30) << __func__ << "  reading " << r_off << "~" << r_len << dendl;
     bufferlist bl;
-    int r = m_device.read(r_off + pextent->offset, r_len, opaque, &bl);
+    int r = m_device.read_block(r_off + pextent->offset, r_len, opaque, &bl);
     if (r < 0) {
       return r;
     }

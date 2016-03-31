@@ -14,8 +14,8 @@
  *
  */
 
-#ifndef CEPH_OSD_LBLOCK_TRACKER_H
-#define CEPH_OSD_LBLOCK_TRACKER_H
+#ifndef CEPH_OSD_EXTENT_MANAGER_H
+#define CEPH_OSD_EXTENT_ANAGER_H
 
 #include <list>
 #include <map>
@@ -23,7 +23,7 @@
 #include "include/buffer.h"
 #include "bluestore_types.h"
 
-class LBlockTracker{
+class ExtentManager{
   
 public:
 
@@ -32,7 +32,7 @@ public:
     virtual ~DeviceInterface() {}
     virtual uint64_t get_block_size() = 0;
 
-    virtual int read(uint64_t offset, uint32_t length, void* opaque, bufferlist* result) = 0;
+    virtual int read_block(uint64_t offset, uint32_t length, void* opaque, bufferlist* result) = 0;
 
   };
   struct CompressorInterface
@@ -41,14 +41,14 @@ public:
     virtual int decompress(uint32_t alg, const bufferlist& source, void* opaque, bufferlist* result) = 0;
   };
 
-  LBlockTracker(bluestore_lextent_map_t& lextents, DeviceInterface& device, CompressorInterface& compressor)
+  ExtentManager(bluestore_lextent_map_t& lextents, DeviceInterface& device, CompressorInterface& compressor)
     : m_lextents(lextents), m_device(device), m_compressor(compressor) {
   }
 
   int write(uint64_t offset, uint32_t length, void* opaque, const bufferlist& bl);
   int read(uint64_t offset, uint32_t length, void* opaque, bufferlist* result);
 
-private:
+protected:
 
   bluestore_pextent_map_t m_pextents;
   bluestore_lextent_map_t m_lextents;
