@@ -336,7 +336,7 @@ struct bluestore_lextent_t {
   uint32_t length;
   uint32_t flags;  /// or reserved
 
-  bluestore_lextent_t(PExtentRef pext, uint32_t o = 0, uint32_t l = 0, uint32_t f = 0)
+  bluestore_lextent_t(PExtentRef pext = 0, uint32_t o = 0, uint32_t l = 0, uint32_t f = 0)
     : pextent(pext), x_offset(o), length(l), flags(f) {}
 
   uint64_t end() const {

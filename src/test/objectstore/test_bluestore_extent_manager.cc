@@ -23,12 +23,12 @@
 //#include "include/stringify.h"
 
 typedef pair<uint64_t, uint32_t> ReadTuple;
-typedef vector< pair<ReadTuple> ReadList;
+typedef vector<ReadTuple> ReadList;
 
-class TestExtentManager 
-  : public ExtentManager, 
-    public DeviceInterface::DeviceInterface,
-    public DeviceInterface::CompressorInterface {
+class TestExtentManager
+    : public ExtentManager::DeviceInterface,
+      public ExtentManager::CompressorInterface, 
+      public ExtentManager {
 
   enum {
     PEXTENT_BASE = 0x12345, //just to have pextent offsets different from lextent ones
@@ -36,46 +36,50 @@ class TestExtentManager
   };
 
 public:
-
+  TestExtentManager() 
+    : ExtentManager::DeviceInterface(),
+      ExtentManager::CompressorInterface(),
+      ExtentManager( *this, *this) {
+  }
   ReadList m_reads;
 
   void prepareTestSet4SimpleRead() {
 
-    m_lextent[0] = bluestore_lextent_t(0, 0, 0x8000);
-    m_pextent[0] = bluestore_pextent_t(PEXTENT_BASE + 0x00000, 1 * PEXTENT_ALLOC_UNIT);
+    m_lextents[0] = bluestore_lextent_t(0, 0, 0x8000);
+    m_pextents[0] = bluestore_pextent_t(PEXTENT_BASE + 0x00000, 1 * PEXTENT_ALLOC_UNIT);
 
-    m_lextent[0x8000] = bluestore_lextent_t(0x8000, 0, 0x2000);
-    m_pextent[1] = bluestore_pextent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT);
+    m_lextents[0x8000] = bluestore_lextent_t(0x8000, 0, 0x2000);
+    m_pextents[1] = bluestore_pextent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT);
 
     //hole at 0x10000~0x6000
 
-    m_lextent[0x16000] = bluestore_lextent_t(2, 0, 0x3000);
-    m_pextent[2] = bluestore_pextent_t(PEXTENT_BASE + 0x20000, 1 * PEXTENT_ALLOC_UNIT);
+    m_lextents[0x16000] = bluestore_lextent_t(2, 0, 0x3000);
+    m_pextents[2] = bluestore_pextent_t(PEXTENT_BASE + 0x20000, 1 * PEXTENT_ALLOC_UNIT);
 
-    m_lextent[0x19000] = bluestore_lextent_t(3, 0, 0x17610);
-    m_pextent[3] = bluestore_pextent_t(PEXTENT_BASE + 0x40000, 2 * PEXTENT_ALLOC_UNIT);
+    m_lextents[0x19000] = bluestore_lextent_t(3, 0, 0x17610);
+    m_pextents[3] = bluestore_pextent_t(PEXTENT_BASE + 0x40000, 2 * PEXTENT_ALLOC_UNIT);
 
-    m_lextent[0x19000] = bluestore_lextent_t(3, 0, 0x17610);
-    m_pextent[3] = bluestore_pextent_t(PEXTENT_BASE + 0x60000, 0x20000);
+    m_lextents[0x19000] = bluestore_lextent_t(3, 0, 0x17610);
+    m_pextents[3] = bluestore_pextent_t(PEXTENT_BASE + 0x60000, 0x20000);
 
     //hole at 0x36610~0x39000
 
-    m_lextent[0x39000] = bluestore_lextent_t(4, 0x0, 0x1900);
-    m_pextent[4] = bluestore_pextent_t(PEXTENT_BASE + 0x80000, 0x10000);
+    m_lextents[0x39000] = bluestore_lextent_t(4, 0x0, 0x1900);
+    m_pextents[4] = bluestore_pextent_t(PEXTENT_BASE + 0x80000, 0x10000);
 
-    m_lextent[0x3a900] = bluestore_lextent_t(5, 0x400, 0x1515);
-    m_pextent[5] = bluestore_pextent_t(PEXTENT_BASE + 0x90000, 0x30000);
+    m_lextents[0x3a900] = bluestore_lextent_t(5, 0x400, 0x1515);
+    m_pextents[5] = bluestore_pextent_t(PEXTENT_BASE + 0x90000, 0x30000);
 
-    m_lextent[0x4c215] = bluestore_lextent_t(6, 0x0, 0x3deb);
-    m_pextent[6] = bluestore_pextent_t(PEXTENT_BASE + 0xc0000, 0x10000);
+    m_lextents[0x4c215] = bluestore_lextent_t(6, 0x0, 0x3deb);
+    m_pextents[6] = bluestore_pextent_t(PEXTENT_BASE + 0xc0000, 0x10000);
 
     //hole at 0x50000~
   }
 
   void reset(bool total) {
     if (total){
-      m_lextent.clear();
-      m_pextent.clear();
+      m_lextents.clear();
+      m_pextents.clear();
     }
     m_reads.clear();
   }
@@ -87,11 +91,13 @@ protected:
 
   virtual int read_block(uint64_t offset, uint32_t length, void* opaque, bufferlist* result)
   {
-    ASSERT_TRUE(length > 0);
-    ASSERT_TRUE((length & get_block_size()) == 0);
-    ASSERT_TRUE((offset & get_block_size()) == 0);
-    
-    auto o0 = (offset - PEXTENT_BASE) << 4; //pblock no * 16 - 
+    uint64_t block_size = get_block_size();
+    offset -= PEXTENT_BASE;
+    assert(length > 0);
+    assert((length % block_size) == 0);
+    assert((offset % block_size) == 0);
+
+    auto o0 = (offset >> 12) << 4; //pblock no * 16
 
     bufferptr buf(length);
     for (unsigned o = 0; o < length; o++){
@@ -99,10 +105,14 @@ protected:
     }
     result->append(buf);
     m_reads.push_back(ReadList::value_type(offset, length));
+    return 0;
   }
 
   ////////////////CompressorInterface implementation////////
-  virtual int decompress(uint32_t alg, const bufferlist& source, void* opaque, bufferlist* result) { result->append(source); }
+  virtual int decompress(uint32_t alg, const bufferlist& source, void* opaque, bufferlist* result) { 
+    result->append(source); 
+    return 0;
+  }
 
 };
 
@@ -113,13 +123,13 @@ TEST(bluestore_extent_manager, read)
   mgr.reset(true);
   mgr.prepareTestSet4SimpleRead();
 
-  mgr.read(0, 128, NULL, res);
-  ASSERT_EQ(128u, res.size());
+  mgr.read(0, 128, NULL, &res);
+  ASSERT_EQ(128u, res.length());
   ASSERT_EQ(1u, mgr.m_reads.size());
   ASSERT_EQ(ReadTuple(0, 4096), mgr.m_reads[0]);
-  ASSERT_EQ(0, res[0]);
-  ASSERT_EQ(1u, res[1]);
-  ASSERT_EQ(127u, res[127]);
+  ASSERT_EQ(0u, unsigned(res[0]));
+  ASSERT_EQ(1u, unsigned(res[1]));
+  ASSERT_EQ(127u, unsigned(res[127]));
 
   mgr.reset(true);
   res.clear();

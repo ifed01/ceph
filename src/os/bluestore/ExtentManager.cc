@@ -128,9 +128,9 @@ int ExtentManager::read_extent_sparse(bluestore_pextent_t* pextent, void* opaque
   while (cur != end) {
 
     assert(cur->x_offset + cur->length <= pextent->length);
-    uint64_t x_off = pextent->offset + cur->x_offset;
-    uint64_t front_extra = x_off % block_size;
-    uint64_t r_off = x_off - front_extra;
+    uint64_t r_off = cur->x_offset;
+    uint64_t front_extra = r_off % block_size;
+    r_off -= front_extra;
 
     uint64_t x_len = cur->length;
     uint64_t r_len = ROUND_UP_TO(x_len + front_extra, block_size);

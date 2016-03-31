@@ -41,8 +41,8 @@ public:
     virtual int decompress(uint32_t alg, const bufferlist& source, void* opaque, bufferlist* result) = 0;
   };
 
-  ExtentManager(bluestore_lextent_map_t& lextents, DeviceInterface& device, CompressorInterface& compressor)
-    : m_lextents(lextents), m_device(device), m_compressor(compressor) {
+  ExtentManager(DeviceInterface& device, CompressorInterface& compressor)
+    : m_device(device), m_compressor(compressor) {
   }
 
   int write(uint64_t offset, uint32_t length, void* opaque, const bufferlist& bl);
