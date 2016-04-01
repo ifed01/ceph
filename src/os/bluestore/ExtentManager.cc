@@ -30,31 +30,42 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
   result->clear();
 
   bluestore_lextent_map_t::iterator bp = m_lextents.upper_bound(offset);
-  if (bp == m_lextents.begin()) {
-    result->append_zero(length);
-    return 0;
-  }
-  --bp;
-
   uint32_t l = length;
   uint64_t o = offset;
-  
+  if (bp == m_lextents.begin() && offset+length <= bp->first){
+    result->append_zero(length);
+    return 0;
+  } else if(bp == m_lextents.begin() ) {
+    o = bp->first;
+    l -= bp->first - offset;
+  } else
+    --bp;
+
   //build extent list to read
   pextents2read_t ext2read;
   while (l > 0 && bp != m_lextents.end()) {
     bluestore_pextent_t* eptr = get_pextent(bp->second.pextent);
     assert(eptr != nullptr);
-    pextents2read_t::iterator it = ext2read.find(eptr);
-
-    unsigned l2read = MIN(l, bp->second.length);
-    if (it != ext2read.end())
-      it->second.push_back(region_t(o, bp->second.x_offset, l2read));
-    else
-      ext2read[eptr].push_back(region_t(o, bp->second.x_offset, l2read));
-
-    o += bp->second.length;
+    unsigned l2read;
+    if(o >= bp->first && o < bp->first + bp->second.length) {
+      pextents2read_t::iterator it = ext2read.find(eptr);
+      unsigned r_off = o - bp->first;
+      l2read = MIN( l, bp->second.length - r_off );
+      if (it != ext2read.end())
+        it->second.push_back(region_t(o, r_off + bp->second.x_offset, l2read));
+      else
+        ext2read[eptr].push_back(region_t(o, r_off + bp->second.x_offset, l2read));
+      ++bp;
+    } else if(o >= bp->first + bp->second.length){
+      //handling the case when the first lookup get into the previous block due to the hole
+      l2read = 0;
+      ++bp;
+    } else {
+      //hole found
+      l2read = MIN( l, bp->first -o);
+    }
+    o += l2read;
     l -= l2read;
-    ++bp;
   }
 
   ready_regions_t ready_regions;
@@ -123,7 +134,6 @@ int ExtentManager::read_extent_total(bluestore_pextent_t* pextent, void* opaque,
 
 int ExtentManager::read_extent_sparse(bluestore_pextent_t* pextent, void* opaque, ExtentManager::regions2read_t::const_iterator cur, ExtentManager::regions2read_t::const_iterator end, ExtentManager::ready_regions_t* result)
 {
-  result->clear();
   uint64_t block_size = m_device.get_block_size();
   while (cur != end) {
 
