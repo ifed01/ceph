@@ -19,8 +19,6 @@
 #include <sstream>
 #include <vector>
 
-//#include "include/types.h"
-//#include "include/stringify.h"
 
 typedef pair<uint64_t, uint32_t> ReadTuple;
 typedef vector<ReadTuple> ReadList;
@@ -97,7 +95,7 @@ protected:
     assert((length % block_size) == 0);
     assert((offset % block_size) == 0);
 
-    auto o0 = (offset >> 12) << 4; //pblock no * 16
+    auto o0 = (offset >> 12); //pblock no
 
     bufferptr buf(length);
     for (unsigned o = 0; o < length; o++){
@@ -131,7 +129,68 @@ TEST(bluestore_extent_manager, read)
   ASSERT_EQ(1u, unsigned(res[1]));
   ASSERT_EQ(127u, unsigned(res[127]));
 
-  mgr.reset(true);
+  mgr.reset(false);
+  res.clear();
+
+  //read 0x7000~0x1000, 0x8000~0x2000, 0xa00~0x1000(unallocated)
+  mgr.read(0x7000, 0x4000, NULL, &res);
+  ASSERT_EQ(0x4000u, res.length());
+  ASSERT_EQ(2u, mgr.m_reads.size());
+  ASSERT_EQ(ReadTuple(0x7000, 0x1000), mgr.m_reads[0]);
+  ASSERT_EQ(ReadTuple(0, 0x2000), mgr.m_reads[1]);
+
+  ASSERT_EQ((0x7000 >> 12) & 0xff, unsigned(res[0]));
+  ASSERT_EQ(((0x7000 >> 12) + 1) & 0xff, unsigned(res[1]));
+  ASSERT_EQ(((0x7fff >> 12) + 0xfff) & 0xff, unsigned(res[0x0fff]));
+
+  ASSERT_EQ((0x10000>>12) & 0xff, unsigned(res[0x1000]));
+  ASSERT_EQ(((0x10001 >> 12)+1) & 0xff, unsigned(res[0x1001]));
+  ASSERT_EQ(((0x11fff >> 12) + 0xfff) & 0xff, unsigned(res[0x1fff]));
+
+  ASSERT_EQ(0u, unsigned(res[0x3000]));
+  ASSERT_EQ(0u, unsigned(res[0x3001]));
+  ASSERT_EQ(0u, unsigned(res[0x3fff]));
+
+  mgr.reset(false);
+  res.clear();
+
+  //read 0x7800~0x0800, 0x8000~0x0200
+  mgr.read(0x7800, 0x0a00, NULL, &res);
+  ASSERT_EQ(0x0a00u, res.length());
+  ASSERT_EQ(2u, mgr.m_reads.size());
+  ASSERT_EQ(ReadTuple(0x7000, 0x1000), mgr.m_reads[0]);
+  ASSERT_EQ(ReadTuple(0x8000, 0x1000), mgr.m_reads[1]);
+
+  ASSERT_EQ(0u, unsigned(res[0]));
+  ASSERT_EQ(1u, unsigned(res[1]));
+  ASSERT_EQ(0xff, unsigned(res[0x07ff]));
+
+  ASSERT_EQ((0x7800 >> 12) & 0xff, unsigned(res[0]));
+  ASSERT_EQ(((0x7801 >> 12) + 1) & 0xff, unsigned(res[1]));
+  ASSERT_EQ(((0x7fff >> 12) + 0xfff) & 0xff, unsigned(res[0x0fff]));
+
+  ASSERT_EQ((0x10000 >> 12) & 0xff, unsigned(res[0x0800]));
+  ASSERT_EQ(((0x10801 >> 12) + 1) & 0xff, unsigned(res[0x0801]));
+  ASSERT_EQ(((0x109ff >> 12) + 0x01ff) & 0xff, unsigned(res[0x09ff]));
+
+  mgr.reset(false);
+  res.clear();
+
+  //read 0x77f8~0x0808, 0x8000~0x0002
+  mgr.read(0x77f8, 0x080a, NULL, &res);
+  ASSERT_EQ(0x080au, res.length());
+  ASSERT_EQ(2u, mgr.m_reads.size());
+  ASSERT_EQ(ReadTuple(0x7000, 0x1000), mgr.m_reads[0]);
+  ASSERT_EQ(ReadTuple(0x8000, 0x1000), mgr.m_reads[1]);
+
+  ASSERT_EQ((0x77f8 >> 12) & 0xff, unsigned(res[0]));
+  ASSERT_EQ(((0x77f9 >> 12) + 1) & 0xff, unsigned(res[1]));
+  ASSERT_EQ(((0x7fff >> 12) + 0x807) & 0xff, unsigned(res[0x0807]));
+
+  ASSERT_EQ((0x10000 >> 12) & 0xff, unsigned(res[0x0808]));
+  ASSERT_EQ(((0x10000 >> 12) + 1) & 0xff, unsigned(res[0x0809]));
+
+  mgr.reset(false);
   res.clear();
 
 }
