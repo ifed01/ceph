@@ -14,6 +14,9 @@
 *
 */
 
+//FIXME: replace index access to m_reads with std::find in 
+//TEST(bluestore_extent_manager, read)
+
 #include "os/bluestore/ExtentManager.h"
 #include "gtest/gtest.h"
 #include <sstream>
@@ -366,10 +369,10 @@ TEST(bluestore_extent_manager, read_splitted_extent)
   mgr.read(0x100, 0x9500, NULL, &res);
   ASSERT_EQ(0x9500, res.length());
   ASSERT_EQ(4u, mgr.m_reads.size());
-  ASSERT_EQ(ReadTuple(0xa0000, 0x8000), mgr.m_reads[0]);
-  ASSERT_EQ(ReadTuple(0xa9000, 0x1000), mgr.m_reads[1]);
-  ASSERT_EQ(ReadTuple(0x10000, 0x1000), mgr.m_reads[2]);
-  ASSERT_EQ(ReadTuple(0x20000, 0x2000), mgr.m_reads[3]);
+  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0xa0000, 0x8000)), mgr.m_reads.end());
+  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0xa9000, 0x1000)), mgr.m_reads.end());
+  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x10000, 0x1000)), mgr.m_reads.end());
+  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x20000, 0x2000)), mgr.m_reads.end());
 
   ASSERT_EQ(unsigned(((0xa0000 >> 12) + 0) & 0xff), (unsigned char)res[0x0]);
   ASSERT_EQ(unsigned(((0xa7fff >> 12) + 0x7fff) & 0xff), (unsigned char)res[0x7fff]);
@@ -390,10 +393,81 @@ TEST(bluestore_extent_manager, read_splitted_extent)
   mgr.read(0xff, 0x9602, NULL, &res);
   ASSERT_EQ(0x9602, res.length());
   ASSERT_EQ(4u, mgr.m_reads.size());
-  ASSERT_EQ(ReadTuple(0xa0000, 0x8000), mgr.m_reads[0]);
-  ASSERT_EQ(ReadTuple(0xa9000, 0x1000), mgr.m_reads[1]);
-  ASSERT_EQ(ReadTuple(0x10000, 0x1000), mgr.m_reads[2]);
-  ASSERT_EQ(ReadTuple(0x20000, 0x2000), mgr.m_reads[3]);
+  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0xa0000, 0x8000)), mgr.m_reads.end());
+  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0xa9000, 0x1000)), mgr.m_reads.end());
+  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x10000, 0x1000)), mgr.m_reads.end());
+  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x20000, 0x2000)), mgr.m_reads.end());
+
+  ASSERT_EQ(0u, unsigned(res[0]));
+  ASSERT_EQ(unsigned(((0xa0000 >> 12) + 0) & 0xff), (unsigned char)res[0x1]);
+  ASSERT_EQ(unsigned(((0xa7fff >> 12) + 0x7fff) & 0xff), (unsigned char)res[0x8000]);
+  ASSERT_EQ(unsigned(((0x10000 >> 12) + 0) & 0xff), (unsigned char)res[0x8001]);
+  ASSERT_EQ(unsigned(((0x101ff >> 12) + 0x1ff) & 0xff), (unsigned char)res[0x8200]);
+  ASSERT_EQ(unsigned(((0x20000 >> 12) + 0) & 0xff), (unsigned char)res[0x8201]);
+  ASSERT_EQ(unsigned(((0x210ff >> 12) + 0x10ff) & 0xff), (unsigned char)res[0x9300]);
+  ASSERT_EQ(0u, unsigned(res[0x9301]));
+  ASSERT_EQ(0u, unsigned(res[0x9302]));
+  ASSERT_EQ(0u, unsigned(res[0x9400]));
+  ASSERT_EQ(unsigned(((0xa9000 >> 12) + 0) & 0xff), (unsigned char)res[0x9401]);
+  ASSERT_EQ(unsigned(((0xa91ff >> 12) + 0x1ff) & 0xff), (unsigned char)res[0x9600]);
+  ASSERT_EQ(0u, unsigned(res[0x9601]));
+
+  mgr.reset(false);
+  res.clear();
+}
+
+TEST(bluestore_extent_manager, read_splitted_extent_compressed)
+{
+  TestExtentManager mgr;
+  bufferlist res;
+  mgr.reset(true);
+  mgr.prepareTestSet4SplitPExtentRead(true);
+
+  //0x50~0xb0 (unalloc), 0x100~0x1200
+  mgr.read(0x50, 0x12b0, NULL, &res);
+  ASSERT_EQ(0x12b0, res.length());
+  ASSERT_EQ(1u, mgr.m_reads.size());
+  ASSERT_EQ(ReadTuple(0xa0000, 0x10000), mgr.m_reads[0]);
+
+  ASSERT_EQ(0u, unsigned(res[0]));
+  ASSERT_EQ(0u, unsigned(res[1]));
+  ASSERT_EQ(0u, unsigned(res[0xaf]));
+
+  ASSERT_EQ(unsigned(((0xa0000 >> 12) + 0) & 0xff), (unsigned char)res[0xb0]);
+
+  mgr.reset(false);
+  res.clear();
+
+  // 0x100~0x8000, 0x8100~0x200, 0x8300~0x1100, 0x9400~100 (unalloc), 0x9500~0x100
+  mgr.read(0x100, 0x9500, NULL, &res);
+  ASSERT_EQ(0x9500, res.length());
+  ASSERT_EQ(3u, mgr.m_reads.size());
+  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0xa0000, 0x10000)), mgr.m_reads.end());
+  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x10000, 0x10000)), mgr.m_reads.end());
+  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x20000, 0x20000)), mgr.m_reads.end());
+
+  ASSERT_EQ(unsigned(((0xa0000 >> 12) + 0) & 0xff), (unsigned char)res[0x0]);
+  ASSERT_EQ(unsigned(((0xa7fff >> 12) + 0x7fff) & 0xff), (unsigned char)res[0x7fff]);
+  ASSERT_EQ(unsigned(((0x10000 >> 12) + 0) & 0xff), (unsigned char)res[0x8000]);
+  ASSERT_EQ(unsigned(((0x101ff >> 12) + 0x1ff) & 0xff), (unsigned char)res[0x81ff]);
+  ASSERT_EQ(unsigned(((0x20000 >> 12) + 0) & 0xff), (unsigned char)res[0x8200]);
+  ASSERT_EQ(unsigned(((0x210ff >> 12) + 0x10ff) & 0xff), (unsigned char)res[0x92ff]);
+  ASSERT_EQ(0u, unsigned(res[0x9300]));
+  ASSERT_EQ(0u, unsigned(res[0x9301]));
+  ASSERT_EQ(0u, unsigned(res[0x93ff]));
+  ASSERT_EQ(unsigned(((0xa9000 >> 12) + 0) & 0xff), (unsigned char)res[0x9400]);
+  ASSERT_EQ(unsigned(((0xa90ff >> 12) + 0xff) & 0xff), (unsigned char)res[0x94ff]);
+
+  mgr.reset(false);
+  res.clear();
+
+  // 0xff~1, 0x100~0x8000, 0x8100~0x200, 0x8300~0x1100, 0x9400~100 (unalloc), 0x9500~0x200, 0x9700~1
+  mgr.read(0xff, 0x9602, NULL, &res);
+  ASSERT_EQ(0x9602, res.length());
+  ASSERT_EQ(3u, mgr.m_reads.size());
+  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0xa0000, 0x10000)), mgr.m_reads.end());
+  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x10000, 0x10000)), mgr.m_reads.end());
+  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x20000, 0x20000)), mgr.m_reads.end());
 
   ASSERT_EQ(0u, unsigned(res[0]));
   ASSERT_EQ(unsigned(((0xa0000 >> 12) + 0) & 0xff), (unsigned char)res[0x1]);
