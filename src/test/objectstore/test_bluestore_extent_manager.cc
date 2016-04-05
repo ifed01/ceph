@@ -104,17 +104,17 @@ public:
     //hole at 0~100
     m_lextents[0x100] = bluestore_lextent_t(0, 0, 0x8000);
     m_blobs[0] = bluestore_blob_t(0xa000, f);
-    m_blobs[0].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0xa0000, 1 * PEXTENT_ALLOC_UNIT / 2));
-    m_blobs[0].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0xb0000, 1 * PEXTENT_ALLOC_UNIT / 2));
+    m_blobs[0].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0xa0000, 1 * PEXTENT_ALLOC_UNIT / 2));
+    m_blobs[0].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0xb0000, 1 * PEXTENT_ALLOC_UNIT / 2));
 
     m_lextents[0x8100] = bluestore_lextent_t(1, 0, 0x200);
     m_blobs[1] = bluestore_blob_t(0x1000, f);
-    m_blobs[1].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT / 2));
-    m_blobs[1].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0x18000, 1 * PEXTENT_ALLOC_UNIT / 2));
+    m_blobs[1].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT / 2));
+    m_blobs[1].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x18000, 1 * PEXTENT_ALLOC_UNIT / 2));
 
     m_lextents[0x8300] = bluestore_lextent_t(2, 0, 0x1100);
     m_blobs[2] = bluestore_blob_t(0x2000, f);
-    m_blobs[2].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0x20000, 1 * PEXTENT_ALLOC_UNIT));
+    m_blobs[2].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x20000, 1 * PEXTENT_ALLOC_UNIT));
 
     //hole at 0x9400~0x100
 
@@ -125,10 +125,10 @@ public:
 
     m_lextents[0x10100] = bluestore_lextent_t(3, 0x100, 0x12f00);
     m_blobs[3] = bluestore_blob_t(0x2bff1, f);
-    m_blobs[3].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0x30000, 0x8000));
-    m_blobs[3].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0x40000, 0x6000));
-    m_blobs[3].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0x50000, 0xc000));
-    m_blobs[3].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0x60000, 0x12000));
+    m_blobs[3].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x30000, 0x8000));
+    m_blobs[3].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x40000, 0x6000));
+    m_blobs[3].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x50000, 0xc000));
+    m_blobs[3].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x60000, 0x12000));
 
     //hole at 0x23000~0x300
     m_lextents[0x23300] = bluestore_lextent_t(3, 0x13300, 0x1100);
@@ -533,6 +533,7 @@ TEST(bluestore_extent_manager, read_splitted_blob_compressed)
   res.clear();
 }
 
+<<<<<<< HEAD
 TEST(bluestore_extent_manager, read_splitted_extent_compressed)
 {
   TestExtentManager mgr;
@@ -604,6 +605,8 @@ TEST(bluestore_extent_manager, read_splitted_extent_compressed)
   res.clear();
 }
 
+=======
+>>>>>>> more UT for multi extents
 TEST(bluestore_extent_manager, read_splitted_blob_multi_extent)
 {
   TestExtentManager mgr;
