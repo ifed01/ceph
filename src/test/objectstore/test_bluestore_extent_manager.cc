@@ -14,9 +14,6 @@
 *
 */
 
-//FIXME: replace index access to m_reads with std::find in 
-//TEST(bluestore_extent_manager, read)
-
 #include "os/bluestore/ExtentManager.h"
 #include "gtest/gtest.h"
 #include <sstream>
@@ -43,48 +40,54 @@ public:
       ExtentManager( *this, *this) {
   }
   ReadList m_reads;
+  bool checkRead( const ReadTuple& r ) {
+    return std::find(m_reads.begin(), m_reads.end(), r) != mgr.m_reads.end();
 
   void prepareTestSet4SimpleRead( bool compress )
 
+    unsigned f = compress ? bluestore_blob_t::BLOB_COMPRESSED : 0;
+
     m_lextents[0] = bluestore_lextent_t(0, 0, 0x8000);
-    m_pextents[0] = bluestore_pextent_t(PEXTENT_BASE + 0x00000, 1 * PEXTENT_ALLOC_UNIT, compress ? 1 : 0);
+    m_blobs[0] = bluestore_blob_t(0x8000, bluestore_pextent_t(PEXTENT_BASE + 0x00000, 1 * PEXTENT_ALLOC_UNIT), f);
 
     m_lextents[0x8000] = bluestore_lextent_t(1, 0, 0x2000);
-    m_pextents[1] = bluestore_pextent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT, compress ? 1 : 0);
+    m_blobs[1] = bluestore_blob_t(0x4000, bluestore_pextent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT), f);
 
     //hole at 0x0a000~0xc000
 
     m_lextents[0x16000] = bluestore_lextent_t(2, 0, 0x3000);
-    m_pextents[2] = bluestore_pextent_t(PEXTENT_BASE + 0x20000, 1 * PEXTENT_ALLOC_UNIT, compress ? 1 : 0);
+    m_blobs[2] = bluestore_blob_t(0x3000, bluestore_pextent_t(PEXTENT_BASE + 0x20000, 1 * PEXTENT_ALLOC_UNIT), f);
 
     m_lextents[0x19000] = bluestore_lextent_t(3, 0, 0x17610);
-    m_pextents[3] = bluestore_pextent_t(PEXTENT_BASE + 0x40000, 2 * PEXTENT_ALLOC_UNIT, compress ? 1 : 0);
+    m_blobs[3] = bluestore_blob_t(0x18000, bluestore_pextent_t(PEXTENT_BASE + 0x40000, 2 * PEXTENT_ALLOC_UNIT), f);
 
     //hole at 0x30610~0x29f0
 
     m_lextents[0x33000] = bluestore_lextent_t(4, 0x0, 0x1900);
-    m_pextents[4] = bluestore_pextent_t(PEXTENT_BASE + 0x80000, 1 * PEXTENT_ALLOC_UNIT, compress ? 1 : 0);
+    m_blobs[4] = bluestore_blob_t(0x2000, bluestore_pextent_t(PEXTENT_BASE + 0x80000, 1 * PEXTENT_ALLOC_UNIT), f);
 
     m_lextents[0x34900] = bluestore_lextent_t(5, 0x400, 0x1515);
-    m_pextents[5] = bluestore_pextent_t(PEXTENT_BASE + 0x90000, 3 * PEXTENT_ALLOC_UNIT, compress ? 1 : 0);
+    m_blobs[5] = bluestore_blob_t(0x2000, bluestore_pextent_t(PEXTENT_BASE + 0x90000, 3 * PEXTENT_ALLOC_UNIT), f);
 
     m_lextents[0x35e15] = bluestore_lextent_t(6, 0x0, 0xa1eb);
-    m_pextents[6] = bluestore_pextent_t(PEXTENT_BASE + 0xc0000, 1 * PEXTENT_ALLOC_UNIT, compress ? 1 : 0);
+    m_blobs[6] = bluestore_blob_t(0xb000, bluestore_pextent_t(PEXTENT_BASE + 0xc0000, 1 * PEXTENT_ALLOC_UNIT), f);
 
     //hole at 0x40000~
   }
 
   void prepareTestSet4SplitPExtentRead(bool compress) {
 
+    unsigned f = compress ? bluestore_blob_t::BLOB_COMPRESSED : 0;
+
     //hole at 0~100
     m_lextents[0x100] = bluestore_lextent_t(0, 0, 0x8000);
-    m_pextents[0] = bluestore_pextent_t(PEXTENT_BASE + 0xa0000, 1 * PEXTENT_ALLOC_UNIT, compress ? 1 : 0);
+    m_blobs[0] = bluestore_blob_t(0xa000, bluestore_pextent_t(PEXTENT_BASE + 0xa0000, 1 * PEXTENT_ALLOC_UNIT), f);
 
     m_lextents[0x8100] = bluestore_lextent_t(1, 0, 0x200);
-    m_pextents[1] = bluestore_pextent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT, compress ? 1 : 0);
+    m_blobs[1] = bluestore_blob_t(0x1000, bluestore_pextent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT), f);
 
     m_lextents[0x8300] = bluestore_lextent_t(2, 0, 0x1100);
-    m_pextents[2] = bluestore_pextent_t(PEXTENT_BASE + 0x20000, 2 * PEXTENT_ALLOC_UNIT, compress ? 1 : 0);
+    m_blobs[2] = bluestore_blob_t(0x2000, bluestore_pextent_t(PEXTENT_BASE + 0x20000, 2 * PEXTENT_ALLOC_UNIT), f);
 
     //hole at 0x9400~0x100
 
@@ -96,7 +99,7 @@ public:
   void reset(bool total) {
     if (total){
       m_lextents.clear();
-      m_pextents.clear();
+      m_blobs.clear();
     }
     m_reads.clear();
   }
@@ -145,7 +148,7 @@ TEST(bluestore_extent_manager, read)
   mgr.read(0, 128, NULL, &res);
   ASSERT_EQ(128u, res.length());
   ASSERT_EQ(1u, mgr.m_reads.size());
-  ASSERT_EQ(ReadTuple(0, 4096), mgr.m_reads[0]);
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0, 4096)));
   ASSERT_EQ(0u, unsigned(res[0]));
   ASSERT_EQ(1u, unsigned(res[1]));
   ASSERT_EQ(127u, unsigned(res[127]));
@@ -157,8 +160,8 @@ TEST(bluestore_extent_manager, read)
   mgr.read(0x7000, 0x4000, NULL, &res);
   ASSERT_EQ(0x4000u, res.length());
   ASSERT_EQ(2u, mgr.m_reads.size());
-  ASSERT_EQ(ReadTuple(0x7000, 0x1000), mgr.m_reads[0]);
-  ASSERT_EQ(ReadTuple(0x10000, 0x2000), mgr.m_reads[1]);
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x7000, 0x1000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x10000, 0x2000)));
 
   ASSERT_EQ(unsigned((0x7000 >> 12) & 0xff), unsigned(res[0]));
   ASSERT_EQ(unsigned(((0x7001 >> 12) + 1) & 0xff), unsigned(res[1]));
@@ -182,8 +185,8 @@ TEST(bluestore_extent_manager, read)
   mgr.read(0x7800, 0x0a00, NULL, &res);
   ASSERT_EQ(0x0a00u, res.length());
   ASSERT_EQ(2u, mgr.m_reads.size());
-  ASSERT_EQ(ReadTuple(0x7000, 0x1000), mgr.m_reads[0]);
-  ASSERT_EQ(ReadTuple(0x10000, 0x1000), mgr.m_reads[1]);
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x7000, 0x1000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x10000, 0x1000)));
 
   ASSERT_EQ(unsigned((0x7800 >> 12) & 0xff), unsigned(res[0]));
   ASSERT_EQ(unsigned(((0x7801 >> 12) + 1) & 0xff), unsigned(res[1]));
@@ -200,8 +203,8 @@ TEST(bluestore_extent_manager, read)
   mgr.read(0x77f8, 0x080a, NULL, &res);
   ASSERT_EQ(0x080au, res.length());
   ASSERT_EQ(2u, mgr.m_reads.size());
-  ASSERT_EQ(ReadTuple(0x7000, 0x1000), mgr.m_reads[0]);
-  ASSERT_EQ(ReadTuple(0x10000, 0x1000), mgr.m_reads[1]);
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x7000, 0x1000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x10000, 0x1000)));
 
   ASSERT_EQ(unsigned(((0x77f8 >> 12) + 0x07f8) & 0xff), (unsigned char)res[0]);
   ASSERT_EQ(unsigned(((0x77f9 >> 12) + 0x07f9) & 0xff), (unsigned char)res[1]);
@@ -229,8 +232,8 @@ TEST(bluestore_extent_manager, read)
   mgr.read(0x15ffe, 0x1a614, NULL, &res);
   ASSERT_EQ(0x1a614u, res.length());
   ASSERT_EQ(2u, mgr.m_reads.size());
-  ASSERT_EQ(ReadTuple(0x20000, 0x3000), mgr.m_reads[0]);
-  ASSERT_EQ(ReadTuple(0x40000, 0x18000), mgr.m_reads[1]);
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x20000, 0x3000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x40000, 0x18000)));
 
   ASSERT_EQ(0u, unsigned(res[0x0000]));
   ASSERT_EQ(0u, unsigned(res[0x0001]));
@@ -249,9 +252,9 @@ TEST(bluestore_extent_manager, read)
   mgr.read(0x15ffe, 0x1e003, NULL, &res);
   ASSERT_EQ(0x1e003u, res.length());
   ASSERT_EQ(3u, mgr.m_reads.size());
-  ASSERT_EQ(ReadTuple(0x20000, 0x3000), mgr.m_reads[0]);
-  ASSERT_EQ(ReadTuple(0x40000, 0x18000), mgr.m_reads[1]);
-  ASSERT_EQ(ReadTuple(0x80000, 0x2000), mgr.m_reads[2]);
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x20000, 0x3000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x40000, 0x18000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x80000, 0x2000)));
 
   ASSERT_EQ(0u, unsigned(res[0x0000]));
   ASSERT_EQ(0u, unsigned(res[0x0001]));
@@ -273,7 +276,7 @@ TEST(bluestore_extent_manager, read)
   mgr.read(0x34902, 0x2, NULL, &res);
   ASSERT_EQ(0x2, res.length());
   ASSERT_EQ(1u, mgr.m_reads.size());
-  ASSERT_EQ(ReadTuple(0x90000, 0x1000), mgr.m_reads[0]);
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x90000, 0x1000)));
 
   ASSERT_EQ(unsigned(((0x90402 >> 12) + 2)& 0xff), (unsigned char)res[0x0]);
   ASSERT_EQ(unsigned(((0x90403 >> 12) + 3)& 0xff), (unsigned char)res[0x1]);
@@ -285,7 +288,7 @@ TEST(bluestore_extent_manager, read)
   mgr.read(0x34902, 0x1001, NULL, &res);
   ASSERT_EQ(0x1001, res.length());
   ASSERT_EQ(1u, mgr.m_reads.size());
-  ASSERT_EQ(ReadTuple(0x90000, 0x2000), mgr.m_reads[0]);
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x90000, 0x2000)));
 
   ASSERT_EQ(unsigned(((0x90402 >> 12) + 2) & 0xff), (unsigned char)res[0x0]);
   ASSERT_EQ(unsigned(((0x90402 >> 12) + 3) & 0xff), (unsigned char)res[0x1]);
@@ -299,9 +302,9 @@ TEST(bluestore_extent_manager, read)
   mgr.read(0x348fe, 0x1601, NULL, &res);
   ASSERT_EQ(0x1601, res.length());
   ASSERT_EQ(3u, mgr.m_reads.size());
-  ASSERT_EQ(ReadTuple(0x81000, 0x1000), mgr.m_reads[0]);
-  ASSERT_EQ(ReadTuple(0x90000, 0x2000), mgr.m_reads[1]);
-  ASSERT_EQ(ReadTuple(0xc0000, 0x1000), mgr.m_reads[2]);
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x81000, 0x1000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x90000, 0x2000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xc0000, 0x1000)));
 
   ASSERT_EQ(unsigned(((0x818fe >> 12) + 0x18fe) & 0xff), (unsigned char)res[0x0]);
   ASSERT_EQ(unsigned(((0x818ff >> 12) + 0x18ff) & 0xff), (unsigned char)res[0x1]);
@@ -319,7 +322,7 @@ TEST(bluestore_extent_manager, read)
   mgr.read(0x3fff0, 0x12010, NULL, &res);
   ASSERT_EQ(0x12010, res.length());
   ASSERT_EQ(1u, mgr.m_reads.size());
-  ASSERT_EQ(ReadTuple(0xca000, 0x1000), mgr.m_reads[0]);
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xca000, 0x1000)));
 
   ASSERT_EQ(unsigned(((0xca000 >> 12) + 0xa1db) & 0xff), (unsigned char)res[0x0]);
   ASSERT_EQ(unsigned(((0xca00f >> 12) + 0xa1ea) & 0xff), (unsigned char)res[0xf]);
@@ -354,7 +357,7 @@ TEST(bluestore_extent_manager, read_splitted_extent)
   mgr.read(0x50, 0x12b0, NULL, &res);
   ASSERT_EQ(0x12b0, res.length());
   ASSERT_EQ(1u, mgr.m_reads.size());
-  ASSERT_EQ(ReadTuple(0xa0000, 0x2000), mgr.m_reads[0]);
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xa0000, 0x2000)));
 
   ASSERT_EQ(0u, unsigned(res[0]));
   ASSERT_EQ(0u, unsigned(res[1]));
@@ -369,10 +372,10 @@ TEST(bluestore_extent_manager, read_splitted_extent)
   mgr.read(0x100, 0x9500, NULL, &res);
   ASSERT_EQ(0x9500, res.length());
   ASSERT_EQ(4u, mgr.m_reads.size());
-  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0xa0000, 0x8000)), mgr.m_reads.end());
-  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0xa9000, 0x1000)), mgr.m_reads.end());
-  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x10000, 0x1000)), mgr.m_reads.end());
-  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x20000, 0x2000)), mgr.m_reads.end());
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xa0000, 0x8000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xa9000, 0x1000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x10000, 0x1000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x20000, 0x2000)));
 
   ASSERT_EQ(unsigned(((0xa0000 >> 12) + 0) & 0xff), (unsigned char)res[0x0]);
   ASSERT_EQ(unsigned(((0xa7fff >> 12) + 0x7fff) & 0xff), (unsigned char)res[0x7fff]);
@@ -393,10 +396,10 @@ TEST(bluestore_extent_manager, read_splitted_extent)
   mgr.read(0xff, 0x9602, NULL, &res);
   ASSERT_EQ(0x9602, res.length());
   ASSERT_EQ(4u, mgr.m_reads.size());
-  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0xa0000, 0x8000)), mgr.m_reads.end());
-  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0xa9000, 0x1000)), mgr.m_reads.end());
-  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x10000, 0x1000)), mgr.m_reads.end());
-  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x20000, 0x2000)), mgr.m_reads.end());
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xa0000, 0x8000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xa9000, 0x1000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x10000, 0x1000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x20000, 0x2000)));
 
   ASSERT_EQ(0u, unsigned(res[0]));
   ASSERT_EQ(unsigned(((0xa0000 >> 12) + 0) & 0xff), (unsigned char)res[0x1]);
@@ -427,7 +430,7 @@ TEST(bluestore_extent_manager, read_splitted_extent_compressed)
   mgr.read(0x50, 0x12b0, NULL, &res);
   ASSERT_EQ(0x12b0, res.length());
   ASSERT_EQ(1u, mgr.m_reads.size());
-  ASSERT_EQ(ReadTuple(0xa0000, 0x10000), mgr.m_reads[0]);
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xa0000, 0x10000)));
 
   ASSERT_EQ(0u, unsigned(res[0]));
   ASSERT_EQ(0u, unsigned(res[1]));
@@ -442,9 +445,9 @@ TEST(bluestore_extent_manager, read_splitted_extent_compressed)
   mgr.read(0x100, 0x9500, NULL, &res);
   ASSERT_EQ(0x9500, res.length());
   ASSERT_EQ(3u, mgr.m_reads.size());
-  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0xa0000, 0x10000)), mgr.m_reads.end());
-  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x10000, 0x10000)), mgr.m_reads.end());
-  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x20000, 0x20000)), mgr.m_reads.end());
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xa0000, 0x10000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x10000, 0x10000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x20000, 0x20000)));
 
   ASSERT_EQ(unsigned(((0xa0000 >> 12) + 0) & 0xff), (unsigned char)res[0x0]);
   ASSERT_EQ(unsigned(((0xa7fff >> 12) + 0x7fff) & 0xff), (unsigned char)res[0x7fff]);
@@ -465,9 +468,9 @@ TEST(bluestore_extent_manager, read_splitted_extent_compressed)
   mgr.read(0xff, 0x9602, NULL, &res);
   ASSERT_EQ(0x9602, res.length());
   ASSERT_EQ(3u, mgr.m_reads.size());
-  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0xa0000, 0x10000)), mgr.m_reads.end());
-  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x10000, 0x10000)), mgr.m_reads.end());
-  ASSERT_NE( std::find(mgr.m_reads.begin(), mgr.m_reads.end(), ReadTuple(0x20000, 0x20000)), mgr.m_reads.end());
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xa0000, 0x10000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x10000, 0x10000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x20000, 0x20000)));
 
   ASSERT_EQ(0u, unsigned(res[0]));
   ASSERT_EQ(unsigned(((0xa0000 >> 12) + 0) & 0xff), (unsigned char)res[0x1]);

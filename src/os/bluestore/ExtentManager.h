@@ -38,7 +38,7 @@ public:
   struct CompressorInterface
   {
     virtual ~CompressorInterface() {}
-    virtual int decompress(uint32_t alg, const bufferlist& source, void* opaque, bufferlist* result) = 0;
+    virtual int decompress(const bufferlist& source, void* opaque, bufferlist* result) = 0;
   };
 
   ExtentManager(DeviceInterface& device, CompressorInterface& compressor)
@@ -50,7 +50,7 @@ public:
 
 protected:
 
-  bluestore_pextent_map_t m_pextents;
+  bluestore_blob_map_t m_blobs;
   bluestore_lextent_map_t m_lextents;
   DeviceInterface& m_device;
   CompressorInterface& m_compressor;
@@ -58,9 +58,9 @@ protected:
   //intermediate data structures used while reading
   struct region_t {
     uint64_t logical_offset;
-    uint32_t x_offset, length;
+    uint64_t x_offset, length;
 
-    region_t(uint64_t offset, uint32_t x_offs, uint32_t len)
+    region_t(uint64_t offset, uint64_t x_offs, uint32_t len)
       : logical_offset(offset), x_offset(x_offs), length(len) {
     }
     region_t(const region_t& from)
@@ -68,12 +68,14 @@ protected:
     }
   };
   typedef list<region_t> regions2read_t;
-  typedef map<bluestore_pextent_t*, regions2read_t> pextents2read_t;
+  typedef map<bluestore_blob_t*, regions2read_t> blobs2read_t;
+  typedef map<bluestore_extent_t*, regions2read_t> extents2read_t;
   typedef map<uint64_t, bufferlist> ready_regions_t;
 
-  bluestore_pextent_t* get_pextent( PExtentRef pextent);
-  int read_extent_total(bluestore_pextent_t*, void* opaque, bufferlist* result);
-  int read_extent_sparse(bluestore_pextent_t*, void* opaque, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, ready_regions_t* result);
+  bluestore_blob_t* get_pextent( BlobRef pextent);
+  int read_whole_blob(const bluestore_blob_t*, void* opaque, bufferlist* result);
+  int read_extent_sparse(const bluestore_extent_t* extent, void* opaque, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, ready_regions_t* result);
+  int regions2read_to_extents2read(const bluestore_blob_t* blob, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, extents2read_t* result);
 };
 
 #endif

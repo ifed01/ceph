@@ -16,11 +16,11 @@
 
 #include "ExtentManager.h"
 
-bluestore_pextent_t* ExtentManager::get_pextent(PExtentRef pextent)
+bluestore_blob_t* ExtentManager::get_blob(BlobRef blob)
 {
-  bluestore_pextent_t* res = nullptr;
-  bluestore_pextent_map_t::iterator it = m_pextents.find(pextent);
-  if (it != m_pextents.end())
+  bluestore_blob_t* res = nullptr;
+  bluestore_blob_map_t::iterator it = m_blobs.find(blob);
+  if (it != m_blobs.end())
     res = &it->second;
   return res;
 }
@@ -29,40 +29,40 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
 {
   result->clear();
 
-  bluestore_lextent_map_t::iterator bp = m_lextents.upper_bound(offset);
+  bluestore_lextent_map_t::iterator lext = m_lextents.upper_bound(offset);
   uint32_t l = length;
   uint64_t o = offset;
-  if (bp == m_lextents.begin() && offset+length <= bp->first){
+  if (lext == m_lextents.begin() && offset+length <= lext->first){
     result->append_zero(length);
     return 0;
-  } else if(bp == m_lextents.begin() ) {
-    o = bp->first;
-    l -= bp->first - offset;
+  } else if(lext == m_lextents.begin() ) {
+    o = lext->first;
+    l -= lext->first - offset;
   } else
-    --bp;
+    --lext;
 
-  //build extent list to read
-  pextents2read_t ext2read;
-  while (l > 0 && bp != m_lextents.end()) {
-    bluestore_pextent_t* eptr = get_pextent(bp->second.pextent);
-    assert(eptr != nullptr);
+  //build blob list to read
+  blobs2read_t blobs2read;
+  while (l > 0 && lext != m_lextents.end()) {
+    bluestore_blob_t* bptr = get_blob(lext->second.blob);
+    assert(bptr != nullptr);
     unsigned l2read;
-    if(o >= bp->first && o < bp->first + bp->second.length) {
-      pextents2read_t::iterator it = ext2read.find(eptr);
-      unsigned r_off = o - bp->first;
-      l2read = MIN( l, bp->second.length - r_off );
-      if (it != ext2read.end())
-        it->second.push_back(region_t(o, r_off + bp->second.x_offset, l2read));
+    if(o >= lext->first && o < lext->first + lext->second.length) {
+      blobs2read_t::iterator it = blobs2read.find(bptr);
+      unsigned r_off = o - lext->first;
+      l2read = MIN( l, lext->second.length - r_off );
+      if (it != blobs2read.end())
+        it->second.push_back(region_t(o, r_off + lext->second.x_offset, l2read));
       else
-        ext2read[eptr].push_back(region_t(o, r_off + bp->second.x_offset, l2read));
-      ++bp;
-    } else if(o >= bp->first + bp->second.length){
+        blobs2read[bptr].push_back(region_t(o, r_off + lext->second.x_offset, l2read));
+      ++lext;
+    } else if(o >= lext->first + lext->second.length){
       //handling the case when the first lookup get into the previous block due to the hole
       l2read = 0;
-      ++bp;
+      ++lext;
     } else {
       //hole found
-      l2read = MIN( l, bp->first -o);
+      l2read = MIN( l, lext->first -o);
     }
     o += l2read;
     l -= l2read;
@@ -70,20 +70,20 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
 
   ready_regions_t ready_regions;
 
-  //enumerate and read/decompress desired extents
-  pextents2read_t::iterator e2r_it = ext2read.begin();
-  while (e2r_it != ext2read.end()) {
-    bluestore_pextent_t* eptr = e2r_it->first;
-    regions2read_t r2r = e2r_it->second;
+  //enumerate and read/decompress desired blobs
+  blobs2read_t::iterator b2r_it = blobs2read.begin();
+  while (b2r_it != blobs2read.end()) {
+    bluestore_blob_t* bptr = b2r_it->first;
+    regions2read_t r2r = b2r_it->second;
     regions2read_t::const_iterator r2r_it = r2r.cbegin();
-    if (eptr->compression) {
+    if (bptr->has_flag(bluestore_blob_t::BLOB_COMPRESSED)) {
       bufferlist compressed_bl, raw_bl;
       
-      int r = read_extent_total(eptr, opaque, &compressed_bl);
+      int r = read_whole_blob(bptr, opaque, &compressed_bl);
       if (r < 0)
 	return r;
 
-      r = m_compressor.decompress(eptr->compression, compressed_bl, opaque, &raw_bl);
+      r = m_compressor.decompress(compressed_bl, opaque, &raw_bl);
       if (r < 0)
 	return r;
 
@@ -93,14 +93,22 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
       }
 
     } else {
-      int r = read_extent_sparse(eptr, opaque, r2r_it, r2r.cend(), &ready_regions);
+      extents2read_t e2r;
+      int r = regions2read_to_extents2read(bptr, r2r_it, r2r.cend(), &e2r);
       if (r < 0)
 	return r;
+
+      extents2read_t::const_iterator it = e2r.cbegin();
+      while (it != e2r.cend()) {
+	int r = read_extent_sparse(it->first, opaque, it->second.cbegin(), it->second.cend(), &ready_regions);
+	if (r < 0)
+	  return r;
+      }
     }
-    ++e2r_it;
+    ++b2r_it;
   }
 
-  //form a resulting buffer
+  //generate a resulting buffer
   ready_regions_t::iterator rr_it = ready_regions.begin();
   o = offset;
 
@@ -117,27 +125,46 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
   return 0;
 }
 
-int ExtentManager::read_extent_total(bluestore_pextent_t* pextent, void* opaque, bufferlist* result)
+int ExtentManager::read_whole_blob(xibar bluestore_blob_t* blob, void* opaque, bufferlist* result)
 {
   result->clear();
+  uint64_t block_size = m_device.get_block_size();
 
-  uint64_t r_len = ROUND_UP_TO(pextent->length, m_device.get_block_size());
-  bufferlist bl;
-//  dout(30) << __func__ << "  reading " << pextent->offset << "~" << r_len << dendl;
-  int r = m_device.read_block(pextent->offset, r_len, opaque, &bl);
-  if (r < 0) {
-    return r;
+  uint32_t l = blob->length;
+  auto it = blob->extents.cbegin();
+  while (it != blob->extents.cend() && l > 0){
+    uint32_t r_len = MIN(l, it->length);
+    uint32_t x_len = ROUND_UP_TO(r_len, block_size);
+
+    bufferlist bl;
+    //  dout(30) << __func__ << "  reading " << it->offset << "~" << x_len << dendl;
+    int r = m_device.read_block(it->offset, x_len, opaque, &bl);
+    if (r < 0) {
+      return r;
+    }
+    if (x_len == r_len){
+      result->claim_append(bl);
+    } else {
+      bufferlist u;
+      u.substr_of(bl, 0, r_len);
+      result->claim_append(u);
+    }
+    l -= r_len;
+    ++it;
   }
-  result->substr_of(bl, 0, pextent->length);
   return 0;
 }
 
-int ExtentManager::read_extent_sparse(bluestore_pextent_t* pextent, void* opaque, ExtentManager::regions2read_t::const_iterator cur, ExtentManager::regions2read_t::const_iterator end, ExtentManager::ready_regions_t* result)
+int ExtentManager::read_extent_sparse(const bluestore_extent_t* extent, void* opaque, ExtentManager::regions2read_t::const_iterator cur, ExtentManager::regions2read_t::const_iterator end, ExtentManager::ready_regions_t* result)
 {
+  //FIXME: this is a trivial implementation that read each region independently - can be improved to read close regions together.
+
   uint64_t block_size = m_device.get_block_size();
   while (cur != end) {
 
-    assert(cur->x_offset + cur->length <= pextent->length);
+    assert(cur->x_offset + cur->length <= extent->length);
+
+
     uint64_t r_off = cur->x_offset;
     uint64_t front_extra = r_off % block_size;
     r_off -= front_extra;
@@ -147,7 +174,7 @@ int ExtentManager::read_extent_sparse(bluestore_pextent_t* pextent, void* opaque
 
 //    dout(30) << __func__ << "  reading " << r_off << "~" << r_len << dendl;
     bufferlist bl;
-    int r = m_device.read_block(r_off + pextent->offset, r_len, opaque, &bl);
+    int r = m_device.read_block(r_off + extent->offset, r_len, opaque, &bl);
     if (r < 0) {
       return r;
     }
@@ -160,3 +187,58 @@ int ExtentManager::read_extent_sparse(bluestore_pextent_t* pextent, void* opaque
   }
   return 0;
 }
+
+int ExtentManager::regions2read_to_extents2read(const bluestore_blob_t* blob, ExtentManager::regions2read_t::const_iterator cur, ExtentManager::regions2read_t::const_iterator end, ExtentManager::extents2read_t* result)
+{
+  result->clear();
+  
+  vector<bluestore_extent_t>::const_iterator ext_it = blob->extents.cbegin();
+  vector<bluestore_extent_t>::const_iterator ext_end = blob->extents.cend();
+  
+  uint64_t ext_pos = 0;
+  uint64_t l = 0;
+  while (cur != end && ext_it != ext_end) {
+
+    //bypass preceeding extents
+    while (cur->x_offs  >= ext_pos + ext_it->length && ext_it != ext_end) {
+      ext_pos += ext_it->length;
+      ++ext_it;
+    }
+    l = cur->length;
+    uint64_t r_offs = cur->x_offs - ext_pos;
+    uint64_t l_offs = cur->logical_offset;
+    while (l > 0 && ext_it != ext_end) {
+
+      assert(blob->length >= ext_pos + r_offs);
+
+      uint64_t r_len = MIN(blob->length - ext_pos - r_offs, ext_it->length - x_offs);
+      if (r_len > 0) {
+	r_len = MIN(r_len, l);
+	bluestore_extent_t* eptr = &(*ext_it);
+	extents2read_t::iterator res_it = result->find(eptr);
+	if (res_it != result->end())
+	  res_it->second.push_back(region_t(l_offs, r_offs, r_len));
+	else
+	  (*result)[eptr].push_back(region_t(l_offs, r_offs, r_len));
+	l -= r_len;
+	l_offs += r_len + r_offs;
+      }
+
+      //leave extent pointer as-is if current region's been fully processed - lookup will start from it for the next region
+      if (l != 0) {
+	ext_pos += ext_it->length;
+	r_offs = 0;
+	++ext_it;
+      }
+    }
+
+    ++cur;
+    assert(cur == ext_end || l_offs <= cur->logical_offset); //region offsets to be ordered ascending and with no overlaps. Overwise ext_it(ext_pos) to be enumerated from the beginning on each region
+  }
+
+  if (cur != end || l > 0)
+    return -EFAULT;
+
+  return 0;
+}
+

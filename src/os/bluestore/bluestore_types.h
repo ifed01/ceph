@@ -310,34 +310,97 @@ struct bluestore_wal_transaction_t {
 };
 WRITE_CLASS_ENCODER(bluestore_wal_transaction_t)
 
-struct bluestore_pextent_t : public bluestore_extent_t
+struct bluestore_blob_t
 {
-  uint32_t compression;
+  enum {
+    BLOB_COMPRESSED = 1
+  };
+  enum {
+    CSUM_NONE = 0,
+    CSUM_XXHASH32 = 1,
+    CSUM_XXHASH64 = 2,
+    CSUM_CRC32C = 3,
+    CSUM_CRC16 = 4,
+  };
+  vector<bluestore_extent_t> extents;
+  uint32_t length;
+  uint32_t flags;
 
-  bluestore_pextent_t(uint64_t o = 0, uint32_t l = 0, uint32_t f = 0, uint32_t _calg = 0)
-    : bluestore_extent_t(o, l, f), compression(_calg) {}
+  uint8_t csum_type;                    ///< CSUM_*
+  uint8_t csum_block_order;
+  uint16_t num_refs;               ///< reference count (always 1 when in onode)
+  vector<char> csum_data;          ///< opaque vector of csum data
+
+  bluestore_blob_t(uint32_t l = 0, uint32_t f = 0)
+    : length(l), 
+    flags(f),
+    csum_type(CSUM_NONE),
+    csum_block_order(12),
+    num_refs(1) {}
+
+  bluestore_blob_t(uint32_t l, const bluestore_extent& ext, uint32_t f = 0)
+    : length(l),
+    flags(f),
+    csum_type(CSUM_NONE),
+    csum_block_order(12),
+    num_refs(1) {
+    extents.push_back(ext);
+  }
 
   /*void encode(bufferlist& bl) const;
   void decode(bufferlist::iterator& p);*/
   void dump(Formatter *f) const;
 
-};
-//WRITE_CLASS_ENCODER(bluestore_pextent_t)
+  bool has_flag(unsigned f) const {
+    return flags & f;
+  }
+  void set_flag(unsigned f) {
+    flags |= f;
+  }
+  void clear_flag(unsigned f) {
+    flags &= ~f;
+  }
 
-//typedef boost::intrusive_ptr<bluestore_pextent_t> ExtentRef;
-typedef uint64_t PExtentRef;
+  uint32_t get_ondisk_length() const {
+    uint32_t len = 0;
+    for (auto &p : extentes) {
+      len += p.length;
+    }
+    return len;
+  }
+
+  uint32_t get_csum_block_size() const {
+    return 1 << csum_block_order;
+  }
+
+  size_t get_csum_value_size() const {
+    switch (csum_type) {
+    case CSUM_NONE: return 0;
+    case CSUM_XXHASH32: return 4;
+    case CSUM_XXHASH64: return 8;
+    case CSUM_CRC32C: return 4;
+    case CSUM_CRC16: return 2;
+    default: return 0;
+    }
+  }
+
+};
+//WRITE_CLASS_ENCODER(bluestore_blob_t)
+
+//typedef boost::intrusive_ptr<bluestore_blob_t> ExtentRef;
+typedef uint64_t BlobRef;
 
 /// lextent: logical data block back by the extent
 struct bluestore_lextent_t {
   static string get_flags_string(unsigned flags);
 
-  PExtentRef pextent;
-  uint32_t x_offset; // relative offset within the pextent 
+  BlobRef blob;
+  uint32_t x_offset; // relative offset within the blob 
   uint32_t length;
   uint32_t flags;  /// or reserved
 
-  bluestore_lextent_t(PExtentRef pext = 0, uint32_t o = 0, uint32_t l = 0, uint32_t f = 0)
-    : pextent(pext), x_offset(o), length(l), flags(f) {}
+  bluestore_lextent_t(BlobRef _blob = 0, uint32_t o = 0, uint32_t l = 0, uint32_t f = 0)
+    : blob(_blob), x_offset(o), length(l), flags(f) {}
 
   uint64_t end() const {
     return x_offset + length;
@@ -354,13 +417,13 @@ struct bluestore_lextent_t {
   }
 
   void encode(bufferlist& bl) const {
-    ::encode(pextent, bl);
+    ::encode(blob, bl);
     ::encode(x_offset, bl);
     ::encode(length, bl);
     ::encode(flags, bl);
   }
   void decode(bufferlist::iterator& p) {
-    ::decode(pextent, p);
+    ::decode(blob, p);
     ::decode(x_offset, p);
     ::decode(length, p);
     ::decode(flags, p);
@@ -371,6 +434,6 @@ struct bluestore_lextent_t {
 WRITE_CLASS_ENCODER(bluestore_lextent_t)
 
 typedef map<uint64_t, bluestore_lextent_t> bluestore_lextent_map_t;
-typedef map<PExtentRef, bluestore_pextent_t> bluestore_pextent_map_t;
+typedef map<BlobRef, bluestore_blob_t> bluestore_blob_map_t;
 
 #endif
