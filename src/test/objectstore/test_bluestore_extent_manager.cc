@@ -76,7 +76,7 @@ public:
     //hole at 0x40000~
   }
 
-  void prepareTestSet4SplitPExtentRead(bool compress) {
+  void prepareTestSet4SplitBlobRead(bool compress) {
 
     unsigned f = compress ? bluestore_blob_t::BLOB_COMPRESSED : 0;
 
@@ -96,6 +96,48 @@ public:
 
     //hole at 0x9700~
   }
+
+  void prepareTestSet4SplitBlobMultiExtentRead(bool compress) {
+
+    unsigned f = compress ? bluestore_blob_t::BLOB_COMPRESSED : 0;
+
+    //hole at 0~100
+    m_lextents[0x100] = bluestore_lextent_t(0, 0, 0x8000);
+    m_blobs[0] = bluestore_blob_t(0xa000, f);
+    m_blobs[0].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0xa0000, 1 * PEXTENT_ALLOC_UNIT / 2));
+    m_blobs[0].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0xb0000, 1 * PEXTENT_ALLOC_UNIT / 2));
+
+    m_lextents[0x8100] = bluestore_lextent_t(1, 0, 0x200);
+    m_blobs[1] = bluestore_blob_t(0x1000, f);
+    m_blobs[1].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT / 2));
+    m_blobs[1].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0x18000, 1 * PEXTENT_ALLOC_UNIT / 2));
+
+    m_lextents[0x8300] = bluestore_lextent_t(2, 0, 0x1100);
+    m_blobs[2] = bluestore_blob_t(0x2000, f);
+    m_blobs[2].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0x20000, 1 * PEXTENT_ALLOC_UNIT));
+
+    //hole at 0x9400~0x100
+
+    m_lextents[0x9500] = bluestore_lextent_t(0, 0x9400, 0x200);
+
+    //hole at 0x9700~0x6600
+    //hole at 0x10000~0x100
+
+    m_lextents[0x10100] = bluestore_lextent_t(3, 0x100, 0x12f00);
+    m_blobs[3] = bluestore_blob_t(0x2bff1, f);
+    m_blobs[3].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0x30000, 0x8000));
+    m_blobs[3].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0x40000, 0x6000));
+    m_blobs[3].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0x50000, 0xc000));
+    m_blobs[3].extent.push_back(bluestore_extent_t(PEXTENT_BASE + 0x60000, 0x12000));
+
+    //hole at 0x23000~0x300
+    m_lextents[0x23300] = bluestore_lextent_t(3, 0x13300, 0x1100);
+    //hole at 0x24400~0x5700
+    m_lextents[0x29b00] = bluestore_lextent_t(3, 0x19b00, 0x10000);
+    m_lextents[0x39b00] = bluestore_lextent_t(3, 0x29b00, 0x3000);
+    //hole at 3bff1~
+  }
+
 
   void reset(bool total) {
     if (total){
@@ -347,12 +389,12 @@ TEST(bluestore_extent_manager, read)
   res.clear();
 }
 
-TEST(bluestore_extent_manager, read_splitted_extent)
+TEST(bluestore_extent_manager, read_splitted_blob)
 {
   TestExtentManager mgr;
   bufferlist res;
   mgr.reset(true);
-  mgr.prepareTestSet4SplitPExtentRead(false);
+  mgr.prepareTestSet4SplitBlobRead(false);
 
   //0x50~0xb0 (unalloc), 0x100~0x1200
   mgr.read(0x50, 0x12b0, NULL, &res);
@@ -420,12 +462,12 @@ TEST(bluestore_extent_manager, read_splitted_extent)
   res.clear();
 }
 
-TEST(bluestore_extent_manager, read_splitted_extent_compressed)
+TEST(bluestore_extent_manager, read_splitted_blob_compressed)
 {
   TestExtentManager mgr;
   bufferlist res;
   mgr.reset(true);
-  mgr.prepareTestSet4SplitPExtentRead(true);
+  mgr.prepareTestSet4SplitBlobRead(true);
 
   //0x50~0xb0 (unalloc), 0x100~0x1200
   mgr.read(0x50, 0x12b0, NULL, &res);
@@ -560,4 +602,81 @@ TEST(bluestore_extent_manager, read_splitted_extent_compressed)
 
   mgr.reset(false);
   res.clear();
+}
+
+TEST(bluestore_extent_manager, read_splitted_blob_multi_extent)
+{
+  TestExtentManager mgr;
+  bufferlist res;
+  mgr.reset(true);
+  mgr.prepareTestSet4SplitBlobRead(false);
+
+  //0x50~0xb0 (unalloc), 0x100~0x9500
+  mgr.read(0x50, 0x95b0, NULL, &res);
+  ASSERT_EQ(0x95b0u, res.length());
+  ASSERT_EQ(2u, mgr.m_reads.size());
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xa0000, 0x8000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xb0000, 0x2000)));
+
+  ASSERT_EQ(0u, unsigned(res[0]));
+  ASSERT_EQ(0u, unsigned(res[1]));
+  ASSERT_EQ(0u, unsigned(res[0xaf]));
+
+  ASSERT_EQ(unsigned(((0xa0000 >> 12) + 0) & 0xff), (unsigned char)res[0xb0]);
+  ASSERT_EQ(unsigned(((0xa7fff >> 12) + 0x7fff) & 0xff), (unsigned char)res[0x80af]);
+  ASSERT_EQ(unsigned(((0xb0000 >> 12) + 0) & 0xff), (unsigned char)res[0x80b0]);
+  ASSERT_EQ(unsigned(((0xb14ff >> 12) + 0x14ff) & 0xff), (unsigned char)res[0x95af]);
+
+  mgr.reset(false);
+  res.clear();
+
+  // 0x100~0x8000, 0x8100~0x200, 0x8300~0x1100, 0x9400~100 (unalloc), 0x9500~0x100
+/*mgr.read(0x100, 0x9500, NULL, &res);
+  ASSERT_EQ(0x9500u, res.length());
+  ASSERT_EQ(4u, mgr.m_reads.size());
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xa0000, 0x8000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xa9000, 0x1000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x10000, 0x1000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x20000, 0x2000)));
+
+  ASSERT_EQ(unsigned(((0xa0000 >> 12) + 0) & 0xff), (unsigned char)res[0x0]);
+  ASSERT_EQ(unsigned(((0xa7fff >> 12) + 0x7fff) & 0xff), (unsigned char)res[0x7fff]);
+  ASSERT_EQ(unsigned(((0x10000 >> 12) + 0) & 0xff), (unsigned char)res[0x8000]);
+  ASSERT_EQ(unsigned(((0x101ff >> 12) + 0x1ff) & 0xff), (unsigned char)res[0x81ff]);
+  ASSERT_EQ(unsigned(((0x20000 >> 12) + 0) & 0xff), (unsigned char)res[0x8200]);
+  ASSERT_EQ(unsigned(((0x210ff >> 12) + 0x10ff) & 0xff), (unsigned char)res[0x92ff]);
+  ASSERT_EQ(0u, unsigned(res[0x9300]));
+  ASSERT_EQ(0u, unsigned(res[0x9301]));
+  ASSERT_EQ(0u, unsigned(res[0x93ff]));
+  ASSERT_EQ(unsigned(((0xa9000 >> 12) + 0) & 0xff), (unsigned char)res[0x9400]);
+  ASSERT_EQ(unsigned(((0xa90ff >> 12) + 0xff) & 0xff), (unsigned char)res[0x94ff]);
+
+  mgr.reset(false);
+  res.clear();
+
+  // 0xff~1, 0x100~0x8000, 0x8100~0x200, 0x8300~0x1100, 0x9400~100 (unalloc), 0x9500~0x200, 0x9700~1
+  mgr.read(0xff, 0x9602, NULL, &res);
+  ASSERT_EQ(0x9602u, res.length());
+  ASSERT_EQ(4u, mgr.m_reads.size());
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xa0000, 0x8000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0xa9000, 0x1000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x10000, 0x1000)));
+  ASSERT_TRUE(mgr.checkRead(ReadTuple(0x20000, 0x2000)));
+
+  ASSERT_EQ(0u, unsigned(res[0]));
+  ASSERT_EQ(unsigned(((0xa0000 >> 12) + 0) & 0xff), (unsigned char)res[0x1]);
+  ASSERT_EQ(unsigned(((0xa7fff >> 12) + 0x7fff) & 0xff), (unsigned char)res[0x8000]);
+  ASSERT_EQ(unsigned(((0x10000 >> 12) + 0) & 0xff), (unsigned char)res[0x8001]);
+  ASSERT_EQ(unsigned(((0x101ff >> 12) + 0x1ff) & 0xff), (unsigned char)res[0x8200]);
+  ASSERT_EQ(unsigned(((0x20000 >> 12) + 0) & 0xff), (unsigned char)res[0x8201]);
+  ASSERT_EQ(unsigned(((0x210ff >> 12) + 0x10ff) & 0xff), (unsigned char)res[0x9300]);
+  ASSERT_EQ(0u, unsigned(res[0x9301]));
+  ASSERT_EQ(0u, unsigned(res[0x9302]));
+  ASSERT_EQ(0u, unsigned(res[0x9400]));
+  ASSERT_EQ(unsigned(((0xa9000 >> 12) + 0) & 0xff), (unsigned char)res[0x9401]);
+  ASSERT_EQ(unsigned(((0xa91ff >> 12) + 0x1ff) & 0xff), (unsigned char)res[0x9600]);
+  ASSERT_EQ(0u, unsigned(res[0x9601]));
+
+  mgr.reset(false);
+  res.clear();*/
 }
