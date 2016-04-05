@@ -603,7 +603,7 @@ void bluestore_wal_transaction_t::generate_test_instances(list<bluestore_wal_tra
 // bluestore_blob_t
 void bluestore_blob_t::dump(Formatter *f) const
 {
-  f->dump_unsigned("length", blob);
+  f->dump_unsigned("length", length);
   f->dump_unsigned("flags", flags);
   //FIXME: more fields to dump
 }

@@ -73,7 +73,7 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
   //enumerate and read/decompress desired blobs
   blobs2read_t::iterator b2r_it = blobs2read.begin();
   while (b2r_it != blobs2read.end()) {
-    bluestore_blob_t* bptr = b2r_it->first;
+    const bluestore_blob_t* bptr = b2r_it->first;
     regions2read_t r2r = b2r_it->second;
     regions2read_t::const_iterator r2r_it = r2r.cbegin();
     if (bptr->has_flag(bluestore_blob_t::BLOB_COMPRESSED)) {
@@ -103,6 +103,7 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
 	int r = read_extent_sparse(it->first, opaque, it->second.cbegin(), it->second.cend(), &ready_regions);
 	if (r < 0)
 	  return r;
+	++it;
       }
     }
     ++b2r_it;
@@ -125,7 +126,7 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
   return 0;
 }
 
-int ExtentManager::read_whole_blob(xibar bluestore_blob_t* blob, void* opaque, bufferlist* result)
+int ExtentManager::read_whole_blob(const bluestore_blob_t* blob, void* opaque, bufferlist* result)
 {
   result->clear();
   uint64_t block_size = m_device.get_block_size();
@@ -200,21 +201,21 @@ int ExtentManager::regions2read_to_extents2read(const bluestore_blob_t* blob, Ex
   while (cur != end && ext_it != ext_end) {
 
     //bypass preceeding extents
-    while (cur->x_offs  >= ext_pos + ext_it->length && ext_it != ext_end) {
+    while (cur->x_offset  >= ext_pos + ext_it->length && ext_it != ext_end) {
       ext_pos += ext_it->length;
       ++ext_it;
     }
     l = cur->length;
-    uint64_t r_offs = cur->x_offs - ext_pos;
+    uint64_t r_offs = cur->x_offset - ext_pos;
     uint64_t l_offs = cur->logical_offset;
     while (l > 0 && ext_it != ext_end) {
 
       assert(blob->length >= ext_pos + r_offs);
 
-      uint64_t r_len = MIN(blob->length - ext_pos - r_offs, ext_it->length - x_offs);
+      uint64_t r_len = MIN(blob->length - ext_pos - r_offs, ext_it->length - r_offs);
       if (r_len > 0) {
 	r_len = MIN(r_len, l);
-	bluestore_extent_t* eptr = &(*ext_it);
+	const bluestore_extent_t* eptr = &(*ext_it);
 	extents2read_t::iterator res_it = result->find(eptr);
 	if (res_it != result->end())
 	  res_it->second.push_back(region_t(l_offs, r_offs, r_len));
@@ -233,7 +234,7 @@ int ExtentManager::regions2read_to_extents2read(const bluestore_blob_t* blob, Ex
     }
 
     ++cur;
-    assert(cur == ext_end || l_offs <= cur->logical_offset); //region offsets to be ordered ascending and with no overlaps. Overwise ext_it(ext_pos) to be enumerated from the beginning on each region
+    assert(cur == end || l_offs <= cur->logical_offset); //region offsets to be ordered ascending and with no overlaps. Overwise ext_it(ext_pos) to be enumerated from the beginning on each region
   }
 
   if (cur != end || l > 0)

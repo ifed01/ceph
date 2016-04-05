@@ -68,11 +68,11 @@ protected:
     }
   };
   typedef list<region_t> regions2read_t;
-  typedef map<bluestore_blob_t*, regions2read_t> blobs2read_t;
-  typedef map<bluestore_extent_t*, regions2read_t> extents2read_t;
+  typedef map<const bluestore_blob_t*, regions2read_t> blobs2read_t;
+  typedef map<const bluestore_extent_t*, regions2read_t> extents2read_t;
   typedef map<uint64_t, bufferlist> ready_regions_t;
 
-  bluestore_blob_t* get_pextent( BlobRef pextent);
+  bluestore_blob_t* get_blob( BlobRef pextent);
   int read_whole_blob(const bluestore_blob_t*, void* opaque, bufferlist* result);
   int read_extent_sparse(const bluestore_extent_t* extent, void* opaque, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, ready_regions_t* result);
   int regions2read_to_extents2read(const bluestore_blob_t* blob, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, extents2read_t* result);

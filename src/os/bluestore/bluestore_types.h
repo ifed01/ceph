@@ -338,7 +338,7 @@ struct bluestore_blob_t
     csum_block_order(12),
     num_refs(1) {}
 
-  bluestore_blob_t(uint32_t l, const bluestore_extent& ext, uint32_t f = 0)
+  bluestore_blob_t(uint32_t l, const bluestore_extent_t& ext, uint32_t f = 0)
     : length(l),
     flags(f),
     csum_type(CSUM_NONE),
@@ -363,7 +363,7 @@ struct bluestore_blob_t
 
   uint32_t get_ondisk_length() const {
     uint32_t len = 0;
-    for (auto &p : extentes) {
+    for (auto &p : extents) {
       len += p.length;
     }
     return len;
