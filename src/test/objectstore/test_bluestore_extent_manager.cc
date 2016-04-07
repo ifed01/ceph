@@ -23,9 +23,22 @@
 typedef pair<uint64_t, uint32_t> ReadTuple;
 typedef vector<ReadTuple> ReadList;
 
+struct CheckTuple {
+  bluestore_blob_t::CSumType type;
+  uint32_t csum_block_size;
+  vector<char> csum_data;
+  bufferlist source;
+
+  CheckTuple( bluestore_blob_t::CSumType _type, uint32_t _csum_block_size, const vector<char>& _csum_data, const bufferlist& _source)
+    : type(_type), csum_block_size(_csum_block_size), csum_data(_csum_data), source(_source) {
+  }
+};
+typedef vector<CheckTuple> CheckList;
+
 class TestExtentManager
     : public ExtentManager::DeviceInterface,
       public ExtentManager::CompressorInterface, 
+      public ExtentManager::CheckSumVerifyInterface, 
       public ExtentManager {
 
   enum {
@@ -37,14 +50,29 @@ public:
   TestExtentManager() 
     : ExtentManager::DeviceInterface(),
       ExtentManager::CompressorInterface(),
-      ExtentManager( *this, *this) {
+      ExtentManager( *this, *this, *this) {
   }
   ReadList m_reads;
+  CheckList m_checks;
+
   bool checkRead( const ReadTuple& r ) {
     return std::find(m_reads.begin(), m_reads.end(), r) != m_reads.end();
   }
 
-  void prepareTestSet4SimpleRead( bool compress )
+  void setup_csum() {
+    for( auto it = m_blobs.begin(); it != m_blobs.end(); it++) {
+      it->csum_type = bluestore_blob_t::CSUM_CRC32C;
+      it->csum_block_order = 13; //read block size = 8192
+      uint64_t size = ROUND_UP_TO(it->length, it->get_csum_block_size() );
+      size_t blocks = size / it->get_csum_block_size();
+      it->csum_data.resize(it->get_csum_value_size() * blocks);
+	
+      //fill corresponding csum with block number to be able to verify that proper csum value is passed
+      for( size_t i = 0; i < it->csum_data.size(); i += it->get_csum_value_size()) 
+	it->csum_data[i] = i / it->get_csum_value_size();
+    }
+  }
+  void prepareTestSet4SimpleRead(bool compress, bool csum_enable = false) {
 
     unsigned f = compress ? bluestore_blob_t::BLOB_COMPRESSED : 0;
 
@@ -74,9 +102,13 @@ public:
     m_blobs[6] = bluestore_blob_t(0xb000, bluestore_extent_t(PEXTENT_BASE + 0xc0000, 1 * PEXTENT_ALLOC_UNIT), f);
 
     //hole at 0x40000~
+
+    if( csum_enable ){
+      setup_csum();
+    }
   }
 
-  void prepareTestSet4SplitBlobRead(bool compress) {
+  void prepareTestSet4SplitBlobRead(bool compress, bool csum_enable = false) {
 
     unsigned f = compress ? bluestore_blob_t::BLOB_COMPRESSED : 0;
 
@@ -95,9 +127,13 @@ public:
     m_lextents[0x9500] = bluestore_lextent_t(0, 0x9400, 0x200);
 
     //hole at 0x9700~
+
+    if( csum_enable ){
+      setup_csum();
+    }
   }
 
-  void prepareTestSet4SplitBlobMultiExtentRead(bool compress) {
+  void prepareTestSet4SplitBlobMultiExtentRead(bool compress, bool csum_enable = false) {
 
     unsigned f = compress ? bluestore_blob_t::BLOB_COMPRESSED : 0;
 
@@ -130,12 +166,16 @@ public:
     m_blobs[3].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x50000, 0xc000));
     m_blobs[3].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x60000, 0x12000));
 
-    //hole at 0x23000~0x300
-    m_lextents[0x23300] = bluestore_lextent_t(3, 0x13300, 0x1100);
-    //hole at 0x24400~0x5700
-    m_lextents[0x29b00] = bluestore_lextent_t(3, 0x19b00, 0x10000);
-    m_lextents[0x39b00] = bluestore_lextent_t(3, 0x29b00, 0x3000);
-    //hole at 3bff1~
+    //hole at 0x1d000~0x300
+    m_lextents[0x1d300] = bluestore_lextent_t(3, 0xd300, 0x1100);
+    //hole at 0x1e400~0x5700
+    m_lextents[0x23b00] = bluestore_lextent_t(3, 0x13b00, 0x10000);
+    m_lextents[0x33b00] = bluestore_lextent_t(3, 0x23b00, 0x3000);
+    //hole at 36ff1~
+
+    if( csum_enable ){
+      setup_csum();
+    }
   }
 
 
@@ -145,6 +185,7 @@ public:
       m_blobs.clear();
     }
     m_reads.clear();
+    m_checks.clear();
   }
 
 
@@ -176,6 +217,11 @@ protected:
   ////////////////CompressorInterface implementation////////
   virtual int decompress(const bufferlist& source, void* opaque, bufferlist* result) { 
     result->append(source); 
+    return 0;
+  }
+  ////////////////CheckSumVerifyInterface implementation////////
+  virtual int verify(bluestore_blob_t::CSumType type, uint32_t csum_block_size, const vector<char>& csum_data, const bufferlist& source, void* opaque) {
+    m_checks.push_back(CheckList::value_type(type, csum_block_size, csum_data, source));
     return 0;
   }
 
@@ -533,7 +579,6 @@ TEST(bluestore_extent_manager, read_splitted_blob_compressed)
   res.clear();
 }
 
-<<<<<<< HEAD
 TEST(bluestore_extent_manager, read_splitted_extent_compressed)
 {
   TestExtentManager mgr;
@@ -605,8 +650,6 @@ TEST(bluestore_extent_manager, read_splitted_extent_compressed)
   res.clear();
 }
 
-=======
->>>>>>> more UT for multi extents
 TEST(bluestore_extent_manager, read_splitted_blob_multi_extent)
 {
   TestExtentManager mgr;

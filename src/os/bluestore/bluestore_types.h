@@ -315,7 +315,7 @@ struct bluestore_blob_t
   enum {
     BLOB_COMPRESSED = 1
   };
-  enum {
+  enum CSumType{
     CSUM_NONE = 0,
     CSUM_XXHASH32 = 1,
     CSUM_XXHASH64 = 2,

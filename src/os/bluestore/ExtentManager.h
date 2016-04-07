@@ -40,9 +40,14 @@ public:
     virtual ~CompressorInterface() {}
     virtual int decompress(const bufferlist& source, void* opaque, bufferlist* result) = 0;
   };
+  struct CSumVerifyInterface
+  {
+    virtual ~CSumVerifyInterface() {}
+    virtual int verify(bluestore_blob_t::CSumType, uint32_t csum_block_size, const vector<char>& csum_data, const bufferlist& source, void* opaque) = 0;
+  };
 
-  ExtentManager(DeviceInterface& device, CompressorInterface& compressor)
-    : m_device(device), m_compressor(compressor) {
+  ExtentManager(DeviceInterface& device, CompressorInterface& compressor, CSumVerifyInterface& csum_verifier)
+    : m_device(device), m_compressor(compressor), m_csum_verifier(csum_verifier) {
   }
 
   int write(uint64_t offset, uint32_t length, void* opaque, const bufferlist& bl);
@@ -54,17 +59,20 @@ protected:
   bluestore_lextent_map_t m_lextents;
   DeviceInterface& m_device;
   CompressorInterface& m_compressor;
+  CSumVerifyInterface& m_csum_verifier;
 
   //intermediate data structures used while reading
   struct region_t {
     uint64_t logical_offset;
-    uint64_t x_offset, length;
+    uint64_t blob_xoffset,   //region offset within the blob
+             ext_xoffset,    //region offset within the pextent
+	     length;
 
-    region_t(uint64_t offset, uint64_t x_offs, uint32_t len)
-      : logical_offset(offset), x_offset(x_offs), length(len) {
+    region_t(uint64_t offset, uint64_t b_offs, uint64_t x_offs, uint32_t len)
+      : logical_offset(offset), blob_xoffset(b), ext_xoffset(x_offs), length(len) {
     }
     region_t(const region_t& from)
-      : logical_offset(from.logical_offset), x_offset(from.x_offset), length(from.length) {
+      : logical_offset(from.logical_offset), blob_xoffset(from.blob_xoffset), ext_xoffset(from.ext_xoffset), length(from.length) {
     }
   };
   typedef list<region_t> regions2read_t;
@@ -77,10 +85,10 @@ protected:
   uint64_t get_read_block_size(const bluestore_blob_t*) const;
   
   int read_whole_blob(const bluestore_blob_t*, void* opaque, bufferlist* result);
-  int read_extent_sparse(const bluestore_extent_t* extent, void* opaque, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, ready_regions_t* result);
-  int regions2read_to_extents2read(const bluestore_blob_t* blob, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, extents2read_t* result);
+  int read_extent_sparse(const bluestore_blob_t*, const bluestore_extent_t* extent, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, void* opaque, ready_regions_t* result);
+  int blob2read_to_extents2read(const bluestore_blob_t* blob, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, extents2read_t* result);
 
-  int verify_csum( const bluestore_blob_t* blob, uint64_t x_offset, const bufferlist& bl) const;
+  int verify_csum( const bluestore_blob_t* blob, uint64_t x_offset, const bufferlist& bl, void* opaque) const;
 };
 
 #endif
