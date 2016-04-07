@@ -148,11 +148,12 @@ int ExtentManager::read_whole_blob(const bluestore_blob_t* blob, void* opaque, b
 
   uint64_t block_size = m_device.get_block_size();
 
-  //uint32_t l = blob->length;
+  uint32_t l = blob->length;
   uint64_t ext_pos = 0;
   auto it = blob->extents.cbegin();
   while (it != blob->extents.cend() && l > 0){
     uint32_t r_len = MIN(l, it->length);
+    //uint32_t r_len = it->length;
     uint32_t x_len = ROUND_UP_TO(r_len, block_size);
 
     bufferlist bl;
@@ -169,7 +170,7 @@ int ExtentManager::read_whole_blob(const bluestore_blob_t* blob, void* opaque, b
       u.substr_of(bl, 0, r_len);
       result->claim_append(u);
     }
-    //l -= r_len;
+    l -= r_len;
     ext_pos += it->length;
     ++it;
   }
@@ -284,18 +285,18 @@ int ExtentManager::verify_csum(const bluestore_blob_t* blob, uint64_t blob_xoffs
   uint64_t block0 = blob_xoffset / block_size;
   uint64_t blocks = bl.length() / block_size;
 
-  assert((blob->csum_data.size() >= (block0 + blocks) * csum_len);
+  assert(blob->csum_data.size() >= (block0 + blocks) * csum_len);
 
   vector<char> csum_data;
   csum_data.resize( blob->get_csum_value_size() * blocks);
 
-  vector<char>::const_iterator start = blob->cbegin();
-  vector<char>::const_iterator end = blob->cbegin();
+  vector<char>::const_iterator start = blob->csum_data.cbegin();
+  vector<char>::const_iterator end = blob->csum_data.cbegin();
   start += block0 * csum_len;
   end += (block0+blocks) * csum_len;
 
   std::copy( start, end, csum_data.begin());
 
-  int r = m_csum_verifier.verify( blob->csum_type, blob->get_csum_block_size(), csum_data, bl, opaque );
+  int r = m_csum_verifier.verify( (bluestore_blob_t::CSumType)blob->csum_type, blob->get_csum_block_size(), csum_data, bl, opaque );
   return r;
 }

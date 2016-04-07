@@ -40,13 +40,13 @@ public:
     virtual ~CompressorInterface() {}
     virtual int decompress(const bufferlist& source, void* opaque, bufferlist* result) = 0;
   };
-  struct CSumVerifyInterface
+  struct CheckSumVerifyInterface
   {
-    virtual ~CSumVerifyInterface() {}
+    virtual ~CheckSumVerifyInterface() {}
     virtual int verify(bluestore_blob_t::CSumType, uint32_t csum_block_size, const vector<char>& csum_data, const bufferlist& source, void* opaque) = 0;
   };
 
-  ExtentManager(DeviceInterface& device, CompressorInterface& compressor, CSumVerifyInterface& csum_verifier)
+  ExtentManager(DeviceInterface& device, CompressorInterface& compressor, CheckSumVerifyInterface& csum_verifier)
     : m_device(device), m_compressor(compressor), m_csum_verifier(csum_verifier) {
   }
 
@@ -59,7 +59,7 @@ protected:
   bluestore_lextent_map_t m_lextents;
   DeviceInterface& m_device;
   CompressorInterface& m_compressor;
-  CSumVerifyInterface& m_csum_verifier;
+  CheckSumVerifyInterface& m_csum_verifier;
 
   //intermediate data structures used while reading
   struct region_t {
@@ -69,7 +69,7 @@ protected:
 	     length;
 
     region_t(uint64_t offset, uint64_t b_offs, uint64_t x_offs, uint32_t len)
-      : logical_offset(offset), blob_xoffset(b), ext_xoffset(x_offs), length(len) {
+      : logical_offset(offset), blob_xoffset(b_offs), ext_xoffset(x_offs), length(len) {
     }
     region_t(const region_t& from)
       : logical_offset(from.logical_offset), blob_xoffset(from.blob_xoffset), ext_xoffset(from.ext_xoffset), length(from.length) {
