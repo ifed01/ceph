@@ -72,10 +72,15 @@ protected:
   typedef map<const bluestore_extent_t*, regions2read_t> extents2read_t;
   typedef map<uint64_t, bufferlist> ready_regions_t;
 
+
   bluestore_blob_t* get_blob( BlobRef pextent);
+  uint64_t get_read_block_size(const bluestore_blob_t*) const;
+  
   int read_whole_blob(const bluestore_blob_t*, void* opaque, bufferlist* result);
   int read_extent_sparse(const bluestore_extent_t* extent, void* opaque, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, ready_regions_t* result);
   int regions2read_to_extents2read(const bluestore_blob_t* blob, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, extents2read_t* result);
+
+  int verify_csum( const bluestore_blob_t* blob, uint64_t x_offset, const bufferlist& bl) const;
 };
 
 #endif

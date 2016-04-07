@@ -25,6 +25,14 @@ bluestore_blob_t* ExtentManager::get_blob(BlobRef blob)
   return res;
 }
 
+uint64_t ExtentManager::get_read_block_size(const bluestore_blob_t* blob) const
+{
+  uint64_t block_size = m_device.get_block_size();
+  if(blob->csum_type != bluestore_blob_t::CSUM_NONE)
+    block_size = MAX( blob->get_csum_block_size(), block_size);
+  return block_size;
+}
+
 int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferlist* result)
 {
   result->clear();
@@ -82,6 +90,13 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
       int r = read_whole_blob(bptr, opaque, &compressed_bl);
       if (r < 0)
 	return r;
+      if(bptr->csum_type != bluestore_blob_t::CSUM_NONE){
+        r = verify_csum(bptr, 0, compressed_bl);
+        if (r < 0) {
+          dout(20) << __func__ << "  blob reading " << r2r_it->logical_offset << "~" << bptr->length <<" csum verification failed."<< dendl;
+          return r;
+        }
+      }
 
       r = m_compressor.decompress(compressed_bl, opaque, &raw_bl);
       if (r < 0)
@@ -126,12 +141,15 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
   return 0;
 }
 
+
 int ExtentManager::read_whole_blob(const bluestore_blob_t* blob, void* opaque, bufferlist* result)
 {
   result->clear();
+
   uint64_t block_size = m_device.get_block_size();
 
-  uint32_t l = blob->length;
+  //uint32_t l = blob->length;
+  uint64_t ext_pos = 0;
   auto it = blob->extents.cbegin();
   while (it != blob->extents.cend() && l > 0){
     uint32_t r_len = MIN(l, it->length);
@@ -143,6 +161,7 @@ int ExtentManager::read_whole_blob(const bluestore_blob_t* blob, void* opaque, b
     if (r < 0) {
       return r;
     }
+
     if (x_len == r_len){
       result->claim_append(bl);
     } else {
@@ -150,9 +169,11 @@ int ExtentManager::read_whole_blob(const bluestore_blob_t* blob, void* opaque, b
       u.substr_of(bl, 0, r_len);
       result->claim_append(u);
     }
-    l -= r_len;
+    //l -= r_len;
+    ext_pos += it->length;
     ++it;
   }
+
   return 0;
 }
 
@@ -199,7 +220,6 @@ int ExtentManager::regions2read_to_extents2read(const bluestore_blob_t* blob, Ex
   uint64_t ext_pos = 0;
   uint64_t l = 0;
   while (cur != end && ext_it != ext_end) {
-
     //bypass preceeding extents
     while (cur->x_offset  >= ext_pos + ext_it->length && ext_it != ext_end) {
       ext_pos += ext_it->length;
@@ -243,3 +263,8 @@ int ExtentManager::regions2read_to_extents2read(const bluestore_blob_t* blob, Ex
   return 0;
 }
 
+int ExtentManager::verify_csum(const bluestore_blob_t* blob, uint64_t x_offset, const bufferlist& bl) const
+{
+  //FIXME: to implement
+  return 0;
+}
