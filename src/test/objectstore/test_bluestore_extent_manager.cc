@@ -32,7 +32,7 @@ struct CheckTuple {
   vector<char> csum_data;
   bufferlist source;
 
-  CheckTuple( bluestore_blob_t::CSumType _type, uint32_t _csum_block_size, const vector<char>& _csum_data, const bufferlist& _source)
+  CheckTuple(bluestore_blob_t::CSumType _type, uint32_t _csum_block_size, const vector<char>& _csum_data, const bufferlist& _source)
     : type(_type), csum_block_size(_csum_block_size), csum_data(_csum_data), source(_source) {
   }
 };
@@ -40,8 +40,8 @@ typedef vector<CheckTuple> CheckList;
 
 class TestExtentManager
     : public ExtentManager::DeviceInterface,
-      public ExtentManager::CompressorInterface, 
-      public ExtentManager::CheckSumVerifyInterface, 
+      public ExtentManager::CompressorInterface,
+      public ExtentManager::CheckSumVerifyInterface,
       public ExtentManager {
 
   enum {
@@ -50,29 +50,29 @@ class TestExtentManager
   };
 
 public:
-  TestExtentManager() 
+  TestExtentManager()
     : ExtentManager::DeviceInterface(),
       ExtentManager::CompressorInterface(),
       ExtentManager::CheckSumVerifyInterface(),
-      ExtentManager( *this, *this, *this) {
+      ExtentManager(*this, *this, *this) {
   }
   ReadList m_reads;
   CheckList m_checks;
 
-  bool checkRead( const ReadTuple& r ) {
+  bool checkRead(const ReadTuple& r) {
     return std::find(m_reads.begin(), m_reads.end(), r) != m_reads.end();
   }
 
   void setup_csum() {
-    for( auto it = m_blobs.begin(); it != m_blobs.end(); it++) {
+    for(auto it = m_blobs.begin(); it != m_blobs.end(); it++) {
       it->second.csum_type = bluestore_blob_t::CSUM_CRC32C;
       it->second.csum_block_order = 13; //read block size = 8192
-      uint64_t size = ROUND_UP_TO(it->second.length, it->second.get_csum_block_size() );
+      uint64_t size = ROUND_UP_TO(it->second.length, it->second.get_csum_block_size());
       size_t blocks = size / it->second.get_csum_block_size();
       it->second.csum_data.resize(it->second.get_csum_value_size() * blocks);
-	
+
       //fill corresponding csum with block number to be able to verify that proper csum value is passed
-      for( size_t i = 0; i < it->second.csum_data.size(); i += it->second.get_csum_value_size()) 
+      for(size_t i = 0; i < it->second.csum_data.size(); i += it->second.get_csum_value_size())
 	it->second.csum_data[i] = i / it->second.get_csum_value_size();
     }
   }
@@ -107,7 +107,7 @@ public:
 
     //hole at 0x40000~
 
-    if( csum_enable ){
+    if(csum_enable){
       setup_csum();
     }
   }
@@ -132,7 +132,7 @@ public:
 
     //hole at 0x9700~
 
-    if( csum_enable ){
+    if(csum_enable){
       setup_csum();
     }
   }
@@ -177,7 +177,7 @@ public:
     m_lextents[0x33b00] = bluestore_lextent_t(3, 0x23b00, 0x3000);
     //hole at 36ff1~
 
-    if( csum_enable ){
+    if(csum_enable){
       setup_csum();
     }
   }
@@ -219,8 +219,8 @@ protected:
   }
 
   ////////////////CompressorInterface implementation////////
-  virtual int decompress(const bufferlist& source, void* opaque, bufferlist* result) { 
-    result->append(source); 
+  virtual int decompress(const bufferlist& source, void* opaque, bufferlist* result) {
+    result->append(source);
     return 0;
   }
   ////////////////CheckSumVerifyInterface implementation////////
@@ -321,7 +321,7 @@ TEST(bluestore_extent_manager, read)
   mgr.reset(false);
   res.clear();
 
-  //read 0x15ffe~2, 0x16000~0x3000, 0x19000~0x17610, 0x30610~2 
+  //read 0x15ffe~2, 0x16000~0x3000, 0x19000~0x17610, 0x30610~2
   mgr.read(0x15ffe, 0x1a614, NULL, &res);
   ASSERT_EQ(0x1a614u, res.length());
   ASSERT_EQ(2u, mgr.m_reads.size());
@@ -537,7 +537,7 @@ TEST(bluestore_extent_manager, read_checksum)
   mgr.reset(false);
   res.clear();
 
-  //read 0x15ffe~2, 0x16000~0x3000, 0x19000~0x17610, 0x30610~2 
+  //read 0x15ffe~2, 0x16000~0x3000, 0x19000~0x17610, 0x30610~2
   mgr.read(0x15ffe, 0x1a614, NULL, &res);
   ASSERT_EQ(0x1a614u, res.length());
   ASSERT_EQ(2u, mgr.m_reads.size());
@@ -951,19 +951,19 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent)
   mgr.reset(false);
   res.clear();
 
-  //0x10000~0x100 (unalloc), 
-  //0x10100~0xcf00  
+  //0x10000~0x100 (unalloc),
+  //0x10100~0xcf00
   //               -> 0x30100~0x7f00 -> 0x30000~0x8000,
   //               -> 0x40000~0x5000 -> 0x40000~0x5000
   //0x1d000~0x300 (unalloc)
-  //0x1d300~0x1100 
+  //0x1d300~0x1100
   //               -> 0x45300~0xd00 -> 0x45000~0x1000
   //               -> 0x50000~0x400 -> 0x50000~0x1000
   //0x1e400~0x5700 (unalloc)
-  //0x23b00~0x10000 
+  //0x23b00~0x10000
   //               -> 0x55b00~0x6500 -> 0x55000~0x7000
   //               -> 0x60000~0x9b00 -> 0x60000~0xa000
-  //0x33b00~0x3000 
+  //0x33b00~0x3000
   //               -> 0x69b00~0x3000 -> 0x69000~0x4000
   //0x36b00~0x5600 (unalloc)
 
@@ -1019,8 +1019,8 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent_checksum)
   mgr.reset(true);
   mgr.prepareTestSet4SplitBlobMultiExtentRead(false, true);
 
-  //0x50~0xb0 (unalloc), 
-  //0x100~0x7500  
+  //0x50~0xb0 (unalloc),
+  //0x100~0x7500
   //               -> 0xa0000~0x6000,
   //               -> 0xb0000~0x2000,
   mgr.read(0x50, 0x75b0, NULL, &res);
@@ -1044,7 +1044,7 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent_checksum)
   res.clear();
 
 
-  //0x100~0x8100  
+  //0x100~0x8100
   //               -> 0xa0000~0x6000,
   //               -> 0xb0000~0x2000,
   //0x8100~0x200
@@ -1082,19 +1082,19 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent_checksum)
   mgr.reset(false);
   res.clear();
 
-  //0x10000~0x100 (unalloc), 
-  //0x10100~0xcf00  
+  //0x10000~0x100 (unalloc),
+  //0x10100~0xcf00
   //               -> 0x30100~0x7f00 -> 0x30000~0x8000,
   //               -> 0x40000~0x5000 -> 0x40000~0x6000
   //0x1d000~0x300 (unalloc)
-  //0x1d300~0x1100 
+  //0x1d300~0x1100
   //               -> 0x45300~0xd00 -> 0x44000~0x2000
   //               -> 0x50000~0x400 -> 0x50000~0x2000
   //0x1e400~0x5700 (unalloc)
-  //0x23b00~0x10000 
+  //0x23b00~0x10000
   //               -> 0x55b00~0x6500 -> 0x54000~0x8000
   //               -> 0x60000~0x9b00 -> 0x60000~0xa000
-  //0x33b00~0x3000 
+  //0x33b00~0x3000
   //               -> 0x69b00~0x3000 -> 0x68000~0x6000
   //0x36b00~0x5600 (unalloc)
 
@@ -1152,8 +1152,8 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent_compressed)
   mgr.reset(true);
   mgr.prepareTestSet4SplitBlobMultiExtentRead(true);
 
-  //0x50~0xb0 (unalloc), 
-  //0x100~0x7500  
+  //0x50~0xb0 (unalloc),
+  //0x100~0x7500
   //               -> 0xa0000~0x6000,
   //               -> 0xb0000~0x4000,
   mgr.read(0x50, 0x75b0, NULL, &res);
@@ -1175,7 +1175,7 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent_compressed)
   res.clear();
 
 
-  //0x100~0x8100  
+  //0x100~0x8100
   //               -> 0xa0000~0x6000,
   //               -> 0xb0000~0x4000,
   //0x8100~0x200
@@ -1212,19 +1212,19 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent_compressed)
   mgr.reset(false);
   res.clear();
 
-  //0x10000~0x100 (unalloc), 
-  //0x10100~0xcf00  
+  //0x10000~0x100 (unalloc),
+  //0x10100~0xcf00
   //               -> 0x30100~0x7f00 -> 0x30000~0x8000,
   //               -> 0x40000~0x5000 -> 0x40000~0x6000
   //0x1d000~0x300 (unalloc)
-  //0x1d300~0x1100 
-  //               -> 0x45300~0xd00 -> 0x40000~0x6000 ( duplicate )
+  //0x1d300~0x1100
+  //               -> 0x45300~0xd00 -> 0x40000~0x6000 (duplicate)
   //               -> 0x50000~0x400 -> 0x50000~0xc000
   //0x1e400~0x5700 (unalloc)
-  //0x23b00~0x10000 
-  //               -> 0x55b00~0x6500 -> 0x50000~0xc000 ( duplicate )
+  //0x23b00~0x10000
+  //               -> 0x55b00~0x6500 -> 0x50000~0xc000 (duplicate)
   //               -> 0x60000~0x9b00 -> 0x60000~0xd000
-  //0x33b00~0x3000 
+  //0x33b00~0x3000
   //               -> 0x69b00~0x3000 -> 0x60000~0xd000 (duplicate)
   //0x36b00~0x5600 (unalloc)
 

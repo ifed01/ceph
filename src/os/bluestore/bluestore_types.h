@@ -16,7 +16,6 @@
 #define CEPH_OSD_BLUESTORE_BLUESTORE_TYPES_H
 
 #include <ostream>
-#include <boost/intrusive_ptr.hpp>
 #include "include/types.h"
 #include "include/interval_set.h"
 #include "include/utime.h"
@@ -326,13 +325,13 @@ struct bluestore_blob_t
   uint32_t length;
   uint32_t flags;
 
-  uint8_t csum_type;                    ///< CSUM_*
+  uint8_t csum_type;               ///< CSUM_*
   uint8_t csum_block_order;
   uint16_t num_refs;               ///< reference count (always 1 when in onode)
   vector<char> csum_data;          ///< opaque vector of csum data
 
   bluestore_blob_t(uint32_t l = 0, uint32_t f = 0)
-    : length(l), 
+    : length(l),
     flags(f),
     csum_type(CSUM_NONE),
     csum_block_order(12),
@@ -395,9 +394,9 @@ struct bluestore_lextent_t {
   static string get_flags_string(unsigned flags);
 
   BlobRef blob;
-  uint32_t x_offset; // relative offset within the blob 
+  uint32_t x_offset; ///< relative offset within the blob
   uint32_t length;
-  uint32_t flags;  /// or reserved
+  uint32_t flags;    /// or reserved
 
   bluestore_lextent_t(BlobRef _blob = 0, uint32_t o = 0, uint32_t l = 0, uint32_t f = 0)
     : blob(_blob), x_offset(o), length(l), flags(f) {}

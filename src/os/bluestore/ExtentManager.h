@@ -24,7 +24,7 @@
 #include "bluestore_types.h"
 
 class ExtentManager{
-  
+
 public:
 
   struct DeviceInterface
@@ -66,7 +66,7 @@ protected:
     uint64_t logical_offset;
     uint64_t blob_xoffset,   //region offset within the blob
              ext_xoffset,    //region offset within the pextent
-	     length;
+             length;
 
     region_t(uint64_t offset, uint64_t b_offs, uint64_t x_offs, uint32_t len)
       : logical_offset(offset), blob_xoffset(b_offs), ext_xoffset(x_offs), length(len) {
@@ -81,14 +81,14 @@ protected:
   typedef map<uint64_t, bufferlist> ready_regions_t;
 
 
-  bluestore_blob_t* get_blob( BlobRef pextent);
+  bluestore_blob_t* get_blob(BlobRef pextent);
   uint64_t get_read_block_size(const bluestore_blob_t*) const;
-  
+
   int read_whole_blob(const bluestore_blob_t*, void* opaque, bufferlist* result);
   int read_extent_sparse(const bluestore_blob_t*, const bluestore_extent_t* extent, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, void* opaque, ready_regions_t* result);
   int blob2read_to_extents2read(const bluestore_blob_t* blob, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, extents2read_t* result);
 
-  int verify_csum( const bluestore_blob_t* blob, uint64_t x_offset, const bufferlist& bl, void* opaque) const;
+  int verify_csum(const bluestore_blob_t* blob, uint64_t x_offset, const bufferlist& bl, void* opaque) const;
 };
 
 #endif

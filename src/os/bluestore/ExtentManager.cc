@@ -35,11 +35,11 @@ uint64_t ExtentManager::get_read_block_size(const bluestore_blob_t* blob) const
 {
   uint64_t block_size = m_device.get_block_size();
   if(blob->csum_type != bluestore_blob_t::CSUM_NONE)
-    block_size = MAX( blob->get_csum_block_size(), block_size);
+    block_size = MAX(blob->get_csum_block_size(), block_size);
   return block_size;
 }
 
-int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferlist* result)
+int ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferlist* result)
 {
   result->clear();
 
@@ -49,7 +49,7 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
   if (lext == m_lextents.begin() && offset+length <= lext->first){
     result->append_zero(length);
     return 0;
-  } else if(lext == m_lextents.begin() ) {
+  } else if(lext == m_lextents.begin()) {
     o = lext->first;
     l -= lext->first - offset;
   } else
@@ -64,7 +64,7 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
     if(o >= lext->first && o < lext->first + lext->second.length) {
       blobs2read_t::iterator it = blobs2read.find(bptr);
       unsigned r_off = o - lext->first;
-      l2read = MIN( l, lext->second.length - r_off );
+      l2read = MIN(l, lext->second.length - r_off);
       if (it != blobs2read.end())
         it->second.push_back(region_t(o, r_off + lext->second.x_offset, 0, l2read));
       else
@@ -76,7 +76,7 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
       ++lext;
     } else {
       //hole found
-      l2read = MIN( l, lext->first -o);
+      l2read = MIN(l, lext->first -o);
     }
     o += l2read;
     l -= l2read;
@@ -92,7 +92,7 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
     regions2read_t::const_iterator r2r_it = r2r.cbegin();
     if (bptr->has_flag(bluestore_blob_t::BLOB_COMPRESSED)) {
       bufferlist compressed_bl, raw_bl;
-      
+
       int r = read_whole_blob(bptr, opaque, &compressed_bl);
       if (r < 0)
 	return r;
@@ -134,7 +134,7 @@ int  ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferl
   ready_regions_t::iterator rr_it = ready_regions.begin();
   o = offset;
 
-  while ( rr_it != ready_regions.end()) {
+  while (rr_it != ready_regions.end()) {
     if (o < rr_it->first)
       result->append_zero(rr_it->first - o);
     o = rr_it->first + rr_it->second.length();
@@ -157,7 +157,7 @@ int ExtentManager::read_whole_blob(const bluestore_blob_t* blob, void* opaque, b
   uint32_t l = blob->length;
   uint64_t ext_pos = 0;
   auto it = blob->extents.cbegin();
-  while (it != blob->extents.cend() && l>0){
+  while (it != blob->extents.cend() && l > 0){
     uint32_t r_len = MIN(l, it->length);
     //uint32_t r_len = it->length;
     uint32_t x_len = ROUND_UP_TO(r_len, block_size);
@@ -186,10 +186,10 @@ int ExtentManager::read_whole_blob(const bluestore_blob_t* blob, void* opaque, b
 
 int ExtentManager::read_extent_sparse(const bluestore_blob_t* blob, const bluestore_extent_t* extent, ExtentManager::regions2read_t::const_iterator cur, ExtentManager::regions2read_t::const_iterator end, void* opaque, ExtentManager::ready_regions_t* result)
 {
-  //FIXME: this is a trivial implementation that read each region independently - can be improved to read neighboring and/or close enough regions together.
+  //FIXME: this is a trivial implementation that reads each region independently - can be improved to read neighboring and/or close enough regions together.
 
   uint64_t block_size = get_read_block_size(blob);
-  
+
   assert((extent->length % block_size) == 0);   // all physical extents has to be aligned with read block size
 
   while (cur != end) {
@@ -210,11 +210,11 @@ int ExtentManager::read_extent_sparse(const bluestore_blob_t* blob, const bluest
     if (r < 0) {
       return r;
     }
-    r = verify_csum( blob, cur->blob_xoffset, bl, opaque);
+    r = verify_csum(blob, cur->blob_xoffset, bl, opaque);
     if (r < 0) {
       return r;
     }
-	
+
     bufferlist u;
     u.substr_of(bl, front_extra, x_len);
     (*result)[cur->logical_offset].claim_append(u);
@@ -227,15 +227,15 @@ int ExtentManager::read_extent_sparse(const bluestore_blob_t* blob, const bluest
 int ExtentManager::blob2read_to_extents2read(const bluestore_blob_t* blob, ExtentManager::regions2read_t::const_iterator cur, ExtentManager::regions2read_t::const_iterator end, ExtentManager::extents2read_t* result)
 {
   result->clear();
-  
+
   vector<bluestore_extent_t>::const_iterator ext_it = blob->extents.cbegin();
   vector<bluestore_extent_t>::const_iterator ext_end = blob->extents.cend();
-  
+
   uint64_t ext_pos = 0;
   uint64_t l = 0;
   while (cur != end && ext_it != ext_end) {
-    
-    assert(cur->ext_xoffset == 0); 
+
+  assert(cur->ext_xoffset == 0);
 
     //bypass preceeding extents
     while (cur->blob_xoffset  >= ext_pos + ext_it->length && ext_it != ext_end) {
@@ -275,8 +275,8 @@ int ExtentManager::blob2read_to_extents2read(const bluestore_blob_t* blob, Exten
   }
 
   if (cur != end || l > 0) {
-    assert( l==0 );
-    assert( cur == end );
+    assert(l == 0);
+    assert(cur == end);
     return -EFAULT;
   }
 
@@ -287,25 +287,25 @@ int ExtentManager::verify_csum(const bluestore_blob_t* blob, uint64_t blob_xoffs
 {
   uint64_t block_size = blob->get_csum_block_size();
   size_t csum_len = blob->get_csum_value_size();
-  
+
   assert((blob_xoffset % block_size) == 0);
   assert((bl.length() % block_size) == 0);
-  
+
   uint64_t block0 = blob_xoffset / block_size;
   uint64_t blocks = bl.length() / block_size;
 
   assert(blob->csum_data.size() >= (block0 + blocks) * csum_len);
 
   vector<char> csum_data;
-  csum_data.resize( blob->get_csum_value_size() * blocks);
+  csum_data.resize(blob->get_csum_value_size() * blocks);
 
   vector<char>::const_iterator start = blob->csum_data.cbegin();
   vector<char>::const_iterator end = blob->csum_data.cbegin();
   start += block0 * csum_len;
   end += (block0+blocks) * csum_len;
 
-  std::copy( start, end, csum_data.begin());
+  std::copy(start, end, csum_data.begin());
 
-  int r = m_csum_verifier.verify( (bluestore_blob_t::CSumType)blob->csum_type, blob->get_csum_block_size(), csum_data, bl, opaque );
+  int r = m_csum_verifier.verify((bluestore_blob_t::CSumType)blob->csum_type, blob->get_csum_block_size(), csum_data, bl, opaque);
   return r;
 }
