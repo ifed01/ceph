@@ -15,6 +15,12 @@
 */
 
 #include "ExtentManager.h"
+#include "common/debug.h"
+
+#define dout_subsys ceph_subsys_bluestore
+#undef dout_prefix
+#define dout_prefix *_dout << "ext_mgr:"
+
 
 bluestore_blob_t* ExtentManager::get_blob(BlobRef blob)
 {
@@ -151,7 +157,7 @@ int ExtentManager::read_whole_blob(const bluestore_blob_t* blob, void* opaque, b
   uint32_t l = blob->length;
   uint64_t ext_pos = 0;
   auto it = blob->extents.cbegin();
-  while (it != blob->extents.cend() && l > 0){
+  while (it != blob->extents.cend() && l>0){
     uint32_t r_len = MIN(l, it->length);
     //uint32_t r_len = it->length;
     uint32_t x_len = ROUND_UP_TO(r_len, block_size);
@@ -253,7 +259,7 @@ int ExtentManager::blob2read_to_extents2read(const bluestore_blob_t* blob, Exten
 	else
 	  (*result)[eptr].push_back(region_t(l_offs, ext_pos, r_offs, r_len));
 	l -= r_len;
-	l_offs += r_len + r_offs;
+	l_offs += r_len;
       }
 
       //leave extent pointer as-is if current region's been fully processed - lookup will start from it for the next region
@@ -268,8 +274,11 @@ int ExtentManager::blob2read_to_extents2read(const bluestore_blob_t* blob, Exten
     assert(cur == end || l_offs <= cur->logical_offset); //region offsets to be ordered ascending and with no overlaps. Overwise ext_it(ext_pos) to be enumerated from the beginning on each region
   }
 
-  if (cur != end || l > 0)
+  if (cur != end || l > 0) {
+    assert( l==0 );
+    assert( cur == end );
     return -EFAULT;
+  }
 
   return 0;
 }
