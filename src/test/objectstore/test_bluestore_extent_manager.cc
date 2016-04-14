@@ -39,9 +39,9 @@ struct CheckTuple {
 typedef vector<CheckTuple> CheckList;
 
 class TestExtentManager
-    : public ExtentManager::DeviceInterface,
-      public ExtentManager::CompressorInterface,
-      public ExtentManager::CheckSumVerifyInterface,
+    : public ExtentManager::BlockOpInterface,
+      public ExtentManager::CompressorInterface, 
+      public ExtentManager::CheckSumVerifyInterface, 
       public ExtentManager {
 
   enum {
@@ -51,10 +51,10 @@ class TestExtentManager
 
 public:
   TestExtentManager() 
-    : ExtentManager::DeviceInterface(),
+    : ExtentManager::BlockOpInterface(),
       ExtentManager::CompressorInterface(),
       ExtentManager::CheckSumVerifyInterface(),
-      ExtentManager(*this, *this, *this) {
+      ExtentManager( *this, *this, *this) {
   }
   ReadList m_reads;
   CheckList m_checks;
@@ -218,7 +218,34 @@ protected:
     return 0;
   }
 
+  virtual int write_block(uint64_t offset, uint32_t length, const bufferlist& data, void* opaque)
+  {
+
+  }
+  virtual int zero_block(uint64_t offset, uint32_t length, void* opaque)
+  {
+
+  }
+
+
+  //method to allocate pextents, depending on the store state can return single or multiple pextents if there is no contiguous extent available
+  virtual int allocate_blocks(uint32_t length, void* opaque, bluestore_extent_vector_t* result)
+  {
+
+  }
+
+  virtual int release_block(uint64_t offset, uint32_t length, void* opaque)
+  {
+
+  }
+
   ////////////////CompressorInterface implementation////////
+  virtual int compress(ExtentManager::CompressInfo* cinfo, uint32_t source_offs, uint32_t length, const bufferlist& source, void* opaque, bufferlist* result)
+  {
+    result->substr_of(source, input_offs, length);
+    return 0;
+  }
+
   virtual int decompress(const bufferlist& source, void* opaque, bufferlist* result) {
     result->append(source);
     return 0;
