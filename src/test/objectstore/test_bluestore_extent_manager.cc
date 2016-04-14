@@ -80,29 +80,29 @@ public:
 
     unsigned f = compress ? bluestore_blob_t::BLOB_COMPRESSED : 0;
 
-    m_lextents[0] = bluestore_lextent_t(0, 0, 0x8000);
-    m_blobs[0] = bluestore_blob_t(0x8000, bluestore_extent_t(PEXTENT_BASE + 0x00000, 1 * PEXTENT_ALLOC_UNIT), f);
+    m_lextents[0] = bluestore_lextent_t(10, 0, 0x8000, 0);
+    m_blobs[10] = bluestore_blob_t(0x8000, bluestore_extent_t(PEXTENT_BASE + 0x00000, 1 * PEXTENT_ALLOC_UNIT), f);
 
-    m_lextents[0x8000] = bluestore_lextent_t(1, 0, 0x2000);
+    m_lextents[0x8000] = bluestore_lextent_t(1, 0, 0x2000, 0);
     m_blobs[1] = bluestore_blob_t(0x4000, bluestore_extent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT), f);
 
     //hole at 0x0a000~0xc000
 
-    m_lextents[0x16000] = bluestore_lextent_t(2, 0, 0x3000);
+    m_lextents[0x16000] = bluestore_lextent_t(2, 0, 0x3000, 0);
     m_blobs[2] = bluestore_blob_t(0x3000, bluestore_extent_t(PEXTENT_BASE + 0x20000, 1 * PEXTENT_ALLOC_UNIT), f);
 
-    m_lextents[0x19000] = bluestore_lextent_t(3, 0, 0x17610);
+    m_lextents[0x19000] = bluestore_lextent_t(3, 0, 0x17610, 0);
     m_blobs[3] = bluestore_blob_t(0x18000, bluestore_extent_t(PEXTENT_BASE + 0x40000, 2 * PEXTENT_ALLOC_UNIT), f);
 
     //hole at 0x30610~0x29f0
 
-    m_lextents[0x33000] = bluestore_lextent_t(4, 0x0, 0x1900);
+    m_lextents[0x33000] = bluestore_lextent_t(4, 0x0, 0x1900, 0);
     m_blobs[4] = bluestore_blob_t(0x2000, bluestore_extent_t(PEXTENT_BASE + 0x80000, 1 * PEXTENT_ALLOC_UNIT), f);
 
-    m_lextents[0x34900] = bluestore_lextent_t(5, 0x400, 0x1515);
+    m_lextents[0x34900] = bluestore_lextent_t(5, 0x400, 0x1515, 0);
     m_blobs[5] = bluestore_blob_t(0x2000, bluestore_extent_t(PEXTENT_BASE + 0x90000, 3 * PEXTENT_ALLOC_UNIT), f);
 
-    m_lextents[0x35e15] = bluestore_lextent_t(6, 0x0, 0xa1eb);
+    m_lextents[0x35e15] = bluestore_lextent_t(6, 0x0, 0xa1eb, 0);
     m_blobs[6] = bluestore_blob_t(0xb000, bluestore_extent_t(PEXTENT_BASE + 0xc0000, 1 * PEXTENT_ALLOC_UNIT), f);
 
     //hole at 0x40000~
@@ -117,18 +117,18 @@ public:
     unsigned f = compress ? bluestore_blob_t::BLOB_COMPRESSED : 0;
 
     //hole at 0~100
-    m_lextents[0x100] = bluestore_lextent_t(0, 0, 0x8000);
-    m_blobs[0] = bluestore_blob_t(0xa000, bluestore_extent_t(PEXTENT_BASE + 0xa0000, 1 * PEXTENT_ALLOC_UNIT), f);
+    m_lextents[0x100] = bluestore_lextent_t(100, 0, 0x8000, 0);
+    m_blobs[100] = bluestore_blob_t(0xa000, bluestore_extent_t(PEXTENT_BASE + 0xa0000, 1 * PEXTENT_ALLOC_UNIT), f);
 
-    m_lextents[0x8100] = bluestore_lextent_t(1, 0, 0x200);
+    m_lextents[0x8100] = bluestore_lextent_t(1, 0, 0x200, 0);
     m_blobs[1] = bluestore_blob_t(0x2000, bluestore_extent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT), f);
 
-    m_lextents[0x8300] = bluestore_lextent_t(2, 0, 0x1100);
+    m_lextents[0x8300] = bluestore_lextent_t(2, 0, 0x1100, 0);
     m_blobs[2] = bluestore_blob_t(0x2000, bluestore_extent_t(PEXTENT_BASE + 0x20000, 2 * PEXTENT_ALLOC_UNIT), f);
 
     //hole at 0x9400~0x100
 
-    m_lextents[0x9500] = bluestore_lextent_t(0, 0x9400, 0x200);
+    m_lextents[0x9500] = bluestore_lextent_t(100, 0x9400, 0x200, 0);
 
     //hole at 0x9700~
 
@@ -142,28 +142,28 @@ public:
     unsigned f = compress ? bluestore_blob_t::BLOB_COMPRESSED : 0;
 
     //hole at 0~100
-    m_lextents[0x100] = bluestore_lextent_t(0, 0, 0x8000);
-    m_blobs[0] = bluestore_blob_t(0xa000, f);
-    m_blobs[0].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0xa0000, 0x6000));
-    m_blobs[0].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0xb0000, 0x6000));
+    m_lextents[0x100] = bluestore_lextent_t(100, 0, 0x8000, 0);
+    m_blobs[100] = bluestore_blob_t(0xa000, f);
+    m_blobs[100].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0xa0000, 0x6000));
+    m_blobs[100].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0xb0000, 0x6000));
 
-    m_lextents[0x8100] = bluestore_lextent_t(1, 0, 0x200);
+    m_lextents[0x8100] = bluestore_lextent_t(1, 0, 0x200, 0);
     m_blobs[1] = bluestore_blob_t(0x2000, f);
     m_blobs[1].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT / 2));
     m_blobs[1].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x18000, 1 * PEXTENT_ALLOC_UNIT / 2));
 
-    m_lextents[0x8300] = bluestore_lextent_t(2, 0, 0x1100);
+    m_lextents[0x8300] = bluestore_lextent_t(2, 0, 0x1100, 0);
     m_blobs[2] = bluestore_blob_t(0x2000, f);
     m_blobs[2].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x20000, 1 * PEXTENT_ALLOC_UNIT));
 
     //hole at 0x9400~0x100
 
-    m_lextents[0x9500] = bluestore_lextent_t(0, 0x9400, 0x200);
+    m_lextents[0x9500] = bluestore_lextent_t(100, 0x9400, 0x200, 0);
 
     //hole at 0x9700~0x6600
     //hole at 0x10000~0x100
 
-    m_lextents[0x10100] = bluestore_lextent_t(3, 0x100, 0xcf00);
+    m_lextents[0x10100] = bluestore_lextent_t(3, 0x100, 0xcf00, 0);
     m_blobs[3] = bluestore_blob_t(0x26b00, f);
     m_blobs[3].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x30000, 0x8000));
     m_blobs[3].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x40000, 0x6000));
@@ -171,10 +171,10 @@ public:
     m_blobs[3].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x60000, 0x12000));
 
     //hole at 0x1d000~0x300
-    m_lextents[0x1d300] = bluestore_lextent_t(3, 0xd300, 0x1100);
+    m_lextents[0x1d300] = bluestore_lextent_t(3, 0xd300, 0x1100, 0);
     //hole at 0x1e400~0x5700
-    m_lextents[0x23b00] = bluestore_lextent_t(3, 0x13b00, 0x10000);
-    m_lextents[0x33b00] = bluestore_lextent_t(3, 0x23b00, 0x3000);
+    m_lextents[0x23b00] = bluestore_lextent_t(3, 0x13b00, 0x10000, 0);
+    m_lextents[0x33b00] = bluestore_lextent_t(3, 0x23b00, 0x3000, 0);
     //hole at 36ff1~
 
     if(csum_enable){
@@ -220,29 +220,29 @@ protected:
 
   virtual int write_block(uint64_t offset, uint32_t length, const bufferlist& data, void* opaque)
   {
-
+    return 0;
   }
   virtual int zero_block(uint64_t offset, uint32_t length, void* opaque)
   {
-
+    return 0;
   }
 
 
   //method to allocate pextents, depending on the store state can return single or multiple pextents if there is no contiguous extent available
   virtual int allocate_blocks(uint32_t length, void* opaque, bluestore_extent_vector_t* result)
   {
-
+    return 0;
   }
 
   virtual int release_block(uint64_t offset, uint32_t length, void* opaque)
   {
-
+    return 0;
   }
 
   ////////////////CompressorInterface implementation////////
   virtual int compress(ExtentManager::CompressInfo* cinfo, uint32_t source_offs, uint32_t length, const bufferlist& source, void* opaque, bufferlist* result)
   {
-    result->substr_of(source, input_offs, length);
+    result->substr_of(source, source_offs, length);
     return 0;
   }
 
@@ -251,17 +251,16 @@ protected:
     return 0;
   }
   ////////////////CheckSumVerifyInterface implementation////////
-  virtual int calculate(bluestore_blob_t::CSumType, uint32_t csum_block_size, uint32_t source_offs, const bufferlist& source, void* opaque, vector<char>* csum_data)
+  virtual int calculate(bluestore_blob_t::CSumType, uint32_t csum_value_size, uint32_t csum_block_size, uint32_t source_offs, const bufferlist& source, void* opaque, vector<char>* csum_data)
   {
     //FIXME: to implement
     return 0;
   }
-  virtual int verify(bluestore_blob_t::CSumType type, uint32_t csum_block_size, const vector<char>& csum_data, const bufferlist& source, void* opaque)
+  virtual int verify(bluestore_blob_t::CSumType type, uint32_t csum_value_size, uint32_t csum_block_size, const bufferlist& source, void* opaque, const vector<char>& csum_data)
   {
     m_checks.push_back(CheckList::value_type(type, csum_block_size, csum_data, source));
     return 0;
   }
-
 };
 
 TEST(bluestore_extent_manager, read)
