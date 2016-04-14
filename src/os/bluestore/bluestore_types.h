@@ -101,6 +101,7 @@ struct bluestore_extent_t {
 WRITE_CLASS_ENCODER(bluestore_extent_t)
 
 ostream& operator<<(ostream& out, const bluestore_extent_t& bp);
+typedef vector<bluestore_extent_t> bluestore_extent_vector_t;
 
 /// extent_map: a map of reference counted extents
 struct bluestore_extent_ref_map_t {
@@ -321,7 +322,7 @@ struct bluestore_blob_t
     CSUM_CRC32C = 3,
     CSUM_CRC16 = 4,
   };
-  vector<bluestore_extent_t> extents;
+  bluestore_extent_vector_t extents;
   uint32_t length;
   uint32_t flags;
 
@@ -388,6 +389,10 @@ struct bluestore_blob_t
 
 //typedef boost::intrusive_ptr<bluestore_blob_t> ExtentRef;
 typedef uint64_t BlobRef;
+enum {
+  UNDEF_BLOB_REF = 0,
+  FIRST_BLOB_REF = 1,
+};
 
 /// lextent: logical data block back by the extent
 struct bluestore_lextent_t {
@@ -398,7 +403,7 @@ struct bluestore_lextent_t {
   uint32_t length;
   uint32_t flags;    /// or reserved
 
-  bluestore_lextent_t(BlobRef _blob = 0, uint32_t o = 0, uint32_t l = 0, uint32_t f = 0)
+  bluestore_lextent_t(BlobRef _blob, uint32_t o, uint32_t l, uint32_t f)
     : blob(_blob), x_offset(o), length(l), flags(f) {}
 
   uint64_t end() const {
