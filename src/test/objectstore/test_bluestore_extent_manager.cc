@@ -40,8 +40,8 @@ typedef vector<CheckTuple> CheckList;
 
 class TestExtentManager
     : public ExtentManager::BlockOpInterface,
-      public ExtentManager::CompressorInterface, 
-      public ExtentManager::CheckSumVerifyInterface, 
+      public ExtentManager::CompressorInterface,
+      public ExtentManager::CheckSumVerifyInterface,
       public ExtentManager {
 
   enum {
@@ -54,7 +54,7 @@ public:
     : ExtentManager::BlockOpInterface(),
       ExtentManager::CompressorInterface(),
       ExtentManager::CheckSumVerifyInterface(),
-      ExtentManager( *this, *this, *this) {
+      ExtentManager(*this, *this, *this) {
   }
   ReadList m_reads;
   CheckList m_checks;

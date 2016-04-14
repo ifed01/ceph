@@ -26,10 +26,18 @@
 class ExtentManager{
 
 public:
+  struct CheckSumInfo{
+    uint8_t csum_type;               //  enum bluestore_blob_t::CSumType
+    uint8_t csum_block_order;
+  };
+ 
+  struct CompressInfo{
+    uint8_t compress_type;
+  };
 
   struct BlockOpInterface
   {
-    virtual ~BlockInterface() {}
+    virtual ~BlockOpInterface() {}
     virtual uint64_t get_block_size() = 0;
 
     virtual int read_block(uint64_t offset, uint32_t length, void* opaque, bufferlist* result) = 0;
@@ -57,14 +65,6 @@ public:
     virtual int verify(bluestore_blob_t::CSumType, uint32_t csum_block_size, const bufferlist& source, void* opaque, const vector<char>& csum_data ) = 0;
   };
 
-  struct CheckSumInfo{
-    uint8_t csum_type;               //  enum bluestore_blob_t::CSumType
-    uint8_t csum_block_order;
-  };
-  
-  struct CompressInfo{
-    uint8_t compress_type;
-  };
 
   ExtentManager(BlockOpInterface& blockop_inf, CompressorInterface& compressor, CheckSumVerifyInterface& csum_verifier)
     : m_blockop_inf(blockop_inf), m_compressor(compressor), m_csum_verifier(csum_verifier) {
@@ -131,14 +131,14 @@ protected:
   //Intended to reduce blobs lookup.
   struct live_lextent_t : public bluestore_lextent_t
   {
-    bluestore_blob_map_t::iterator blob_interator;
+    bluestore_blob_map_t::iterator blob_iterator;
     
     live_lextent_t(bluestore_blob_map_t::iterator blob_it, BlobRef blob_ref, uint32_t o, uint32_t l, uint32_t f)
       : bluestore_lextent_t(blob_ref, o, l, f),
       blob_iterator(blob_it)
     {}
   };
-  typedef map<uint64_t, live_lextentt_t> live_lextent_map_t;
+  typedef map<uint64_t, live_lextent_t> live_lextent_map_t;
 
   int apply_lextents(
     live_lextent_map_t& new_lextents,
