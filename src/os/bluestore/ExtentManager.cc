@@ -347,7 +347,7 @@ int ExtentManager::verify_csum(const bluestore_blob_t* blob, uint64_t blob_xoffs
   return r;
 }
 
-int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, ExtentManager::CheckSumInfo* check_info, ExtentManager::CompressInfo* compress_info)
+int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, ExtentManager::CompressInfo* compress_info)
 {
   int r;
   auto lext_begin = m_lextents.begin();
@@ -408,8 +408,8 @@ int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, Ex
   }
   
   r = compress_info && bl.length() > get_min_alloc_size() ?
-    write_compressed(offset, bl, opaque, check_info, compress_info) :
-    write_uncompressed(offset, bl, opaque, check_info);
+    write_compressed(offset, bl, opaque, &check_info, compress_info) :
+    write_uncompressed(offset, bl, opaque, &check_info);
 
   if (r > 0) {
     update_lextents(updated_lextents.begin(), updated_lextents.end());
@@ -420,7 +420,7 @@ int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, Ex
     }
     release_lextents(removed_lextents.begin(), removed_lextents.end(), true, true, opaque);
   }
-  return r;
+  return r >= 0 ? bl.length() : r;
 }
 
 int ExtentManager::write_uncompressed(uint64_t offset, const bufferlist& bl, void* opaque, ExtentManager::CheckSumInfo* check_info)
@@ -578,12 +578,12 @@ int ExtentManager::write_blob(bluestore_blob_t& blob, uint64_t input_offs, const
 
     uint64_t aligned_len = ROUND_UP_TO(l, m_blockop_inf.get_block_size());
     if (input_offs == 0 && aligned_len == bl.length()) //fast track, no need for input data slicing
-      r = m_blockop_inf.write_block(ext.offset, aligned_len, bl, opaque);
+      r = m_blockop_inf.write_block(ext.offset, bl, opaque);
     else {
       bufferlist tmp_bl;
       tmp_bl.substr_of(bl, input_offs, l);
       tmp_bl.append_zero(aligned_len - l);
-      r = m_blockop_inf.write_block(ext.offset, aligned_len, tmp_bl, opaque);
+      r = m_blockop_inf.write_block(ext.offset, tmp_bl, opaque);
     }
     ++ext_pos;
     input_offs += l;

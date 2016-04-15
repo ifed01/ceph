@@ -41,7 +41,7 @@ public:
     virtual uint64_t get_block_size() = 0;
 
     virtual int read_block(uint64_t offset, uint32_t length, void* opaque, bufferlist* result) = 0;
-    virtual int write_block(uint64_t offset, uint32_t length, const bufferlist& data, void* opaque) = 0;
+    virtual int write_block(uint64_t offset, const bufferlist& data, void* opaque) = 0;
     virtual int zero_block(uint64_t offset, uint32_t length, void* opaque) = 0;
 
     //method to allocate pextents, depending on the store state can return single or multiple pextents if there is no contiguous extent available
@@ -70,7 +70,7 @@ public:
     : m_blockop_inf(blockop_inf), m_compressor(compressor), m_csum_verifier(csum_verifier) {
   }
 
-  int write(uint64_t offset, const bufferlist& bl, void* opaque, CheckSumInfo* check_info, CompressInfo* compress_info);
+  int write(uint64_t offset, const bufferlist& bl, void* opaque, const CheckSumInfo& check_info, CompressInfo* compress_info);
   int read(uint64_t offset, uint32_t length, void* opaque, bufferlist* result);
 
 protected:
