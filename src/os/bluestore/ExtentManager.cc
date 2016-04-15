@@ -89,7 +89,7 @@ int ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferli
   bluestore_lextent_map_t::iterator lext = m_lextents.upper_bound(offset);
   uint32_t l = length;
   uint64_t o = offset;
-  if (lext == m_lextents.begin() && offset+length <= lext->first){
+  if (lext == m_lextents.begin() && offset+ length <= lext->first){
     result->append_zero(length);
     return 0;
   } else if(lext == m_lextents.begin()) {
@@ -103,9 +103,9 @@ int ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferli
   while (l > 0 && lext != m_lextents.end()) {
     bluestore_blob_t* bptr = get_blob(lext->second.blob);
     assert(bptr != nullptr);
-    unsigned l2read;
+    uint32_t l2read;
     if(o >= lext->first && o < lext->first + lext->second.length) {
-      unsigned r_off = o - lext->first;
+      uint32_t r_off = o - lext->first;
       l2read = MIN(l, lext->second.length - r_off);
       regions2read_t& regions = blobs2read[bptr];
       regions.push_back(region_t(o, r_off + lext->second.x_offset, 0, l2read));
@@ -428,7 +428,7 @@ int ExtentManager::write_uncompressed(uint64_t offset, const bufferlist& bl, voi
   int r = 0;
   live_lextent_map_t new_lextents;
   uint64_t o = offset;
-  unsigned l = bl.length();
+  uint32_t l = bl.length();
   //create new lextents & blobs
   while (l > 0 && r >= 0) {
     BlobRef blob_ref = UNDEF_BLOB_REF;
@@ -508,14 +508,11 @@ int ExtentManager::allocate_raw_blob(uint32_t length, void* opaque, const Extent
 
   //allocate space for the new blob
   uint32_t to_allocate = ROUND_UP_TO(processed, get_min_alloc_size());
-  int r = m_blockop_inf.allocate_blocks(to_allocate, opaque, &(blob.extents));
-  if (r >= 0)
-  {
+  int r = m_blockop_inf.allocate_blocks(to_allocate, opaque, &blob.extents);
+  if (r >= 0) {
     r = processed;
     *res_blob_it = blob_it;
-  }
-  else
-  {
+  } else {
     m_blobs.erase(blob_it);
     *blob_ref = UNDEF_BLOB_REF;
     *res_blob_it = m_blobs.end();
@@ -559,7 +556,7 @@ int ExtentManager::compress_and_allocate_blob(
 int ExtentManager::write_blob(bluestore_blob_t& blob, uint64_t input_offs, const bufferlist& bl, void* opaque)
 {
   int r = 0;
-  unsigned ext_pos = 0;
+  uint32_t ext_pos = 0;
   assert(input_offs <= bl.length());
   uint64_t len = bl.length() - input_offs;
   assert(blob.get_ondisk_length() >= len);
