@@ -10,16 +10,18 @@
 * This is free software; you can redistribute it and/or
 * modify it under the terms of the GNU Lesser General Public
 * License version 2.1, as published by the Free Software
-* Foundation.  See file COPYING.
+* Foundation.  See file COPYING
 *
 */
 
-#include "global/global_init.h"
-#include "common/ceph_argparse.h"
-#include "os/bluestore/ExtentManager.h"
-#include "gtest/gtest.h"
 #include <sstream>
 #include <vector>
+#include "gtest/gtest.h"
+#include "common/config.h"
+#include "common/ceph_argparse.h"
+#include "global/global_init.h"
+#include "global/global_context.h"
+#include "os/bluestore/ExtentManager.h"
 
 typedef pair<uint64_t, uint32_t> ReadTuple;
 typedef vector<ReadTuple> ReadList;
@@ -30,7 +32,7 @@ struct CheckTuple {
   vector<char> csum_data;
   bufferlist source;
 
-  CheckTuple( bluestore_blob_t::CSumType _type, uint32_t _csum_block_size, const vector<char>& _csum_data, const bufferlist& _source)
+  CheckTuple(bluestore_blob_t::CSumType _type, uint32_t _csum_block_size, const vector<char>& _csum_data, const bufferlist& _source)
     : type(_type), csum_block_size(_csum_block_size), csum_data(_csum_data), source(_source) {
   }
 };
@@ -38,8 +40,8 @@ typedef vector<CheckTuple> CheckList;
 
 class TestExtentManager
     : public ExtentManager::BlockOpInterface,
-      public ExtentManager::CompressorInterface, 
-      public ExtentManager::CheckSumVerifyInterface, 
+      public ExtentManager::CompressorInterface,
+      public ExtentManager::CheckSumVerifyInterface,
       public ExtentManager {
 
   enum {
@@ -52,25 +54,25 @@ public:
     : ExtentManager::BlockOpInterface(),
       ExtentManager::CompressorInterface(),
       ExtentManager::CheckSumVerifyInterface(),
-      ExtentManager( *this, *this, *this) {
+      ExtentManager(*this, *this, *this) {
   }
   ReadList m_reads;
   CheckList m_checks;
 
-  bool checkRead( const ReadTuple& r ) {
+  bool checkRead(const ReadTuple& r) {
     return std::find(m_reads.begin(), m_reads.end(), r) != m_reads.end();
   }
 
   void setup_csum() {
-    for( auto it = m_blobs.begin(); it != m_blobs.end(); it++) {
+    for(auto it = m_blobs.begin(); it != m_blobs.end(); it++) {
       it->second.csum_type = bluestore_blob_t::CSUM_CRC32C;
       it->second.csum_block_order = 13; //read block size = 8192
-      uint64_t size = ROUND_UP_TO(it->second.length, it->second.get_csum_block_size() );
+      uint64_t size = ROUND_UP_TO(it->second.length, it->second.get_csum_block_size());
       size_t blocks = size / it->second.get_csum_block_size();
       it->second.csum_data.resize(it->second.get_csum_value_size() * blocks);
-	
+
       //fill corresponding csum with block number to be able to verify that proper csum value is passed
-      for( size_t i = 0; i < it->second.csum_data.size(); i += it->second.get_csum_value_size()) 
+      for(size_t i = 0; i < it->second.csum_data.size(); i += it->second.get_csum_value_size())
 	it->second.csum_data[i] = i / it->second.get_csum_value_size();
     }
   }
@@ -78,34 +80,34 @@ public:
 
     unsigned f = compress ? bluestore_blob_t::BLOB_COMPRESSED : 0;
 
-    m_lextents[0] = bluestore_lextent_t(0, 0, 0x8000);
-    m_blobs[0] = bluestore_blob_t(0x8000, bluestore_extent_t(PEXTENT_BASE + 0x00000, 1 * PEXTENT_ALLOC_UNIT), f);
+    m_lextents[0] = bluestore_lextent_t(10, 0, 0x8000, 0);
+    m_blobs[10] = bluestore_blob_t(0x8000, bluestore_extent_t(PEXTENT_BASE + 0x00000, 1 * PEXTENT_ALLOC_UNIT), f);
 
-    m_lextents[0x8000] = bluestore_lextent_t(1, 0, 0x2000);
+    m_lextents[0x8000] = bluestore_lextent_t(1, 0, 0x2000, 0);
     m_blobs[1] = bluestore_blob_t(0x4000, bluestore_extent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT), f);
 
     //hole at 0x0a000~0xc000
 
-    m_lextents[0x16000] = bluestore_lextent_t(2, 0, 0x3000);
+    m_lextents[0x16000] = bluestore_lextent_t(2, 0, 0x3000, 0);
     m_blobs[2] = bluestore_blob_t(0x3000, bluestore_extent_t(PEXTENT_BASE + 0x20000, 1 * PEXTENT_ALLOC_UNIT), f);
 
-    m_lextents[0x19000] = bluestore_lextent_t(3, 0, 0x17610);
+    m_lextents[0x19000] = bluestore_lextent_t(3, 0, 0x17610, 0);
     m_blobs[3] = bluestore_blob_t(0x18000, bluestore_extent_t(PEXTENT_BASE + 0x40000, 2 * PEXTENT_ALLOC_UNIT), f);
 
     //hole at 0x30610~0x29f0
 
-    m_lextents[0x33000] = bluestore_lextent_t(4, 0x0, 0x1900);
+    m_lextents[0x33000] = bluestore_lextent_t(4, 0x0, 0x1900, 0);
     m_blobs[4] = bluestore_blob_t(0x2000, bluestore_extent_t(PEXTENT_BASE + 0x80000, 1 * PEXTENT_ALLOC_UNIT), f);
 
-    m_lextents[0x34900] = bluestore_lextent_t(5, 0x400, 0x1515);
+    m_lextents[0x34900] = bluestore_lextent_t(5, 0x400, 0x1515, 0);
     m_blobs[5] = bluestore_blob_t(0x2000, bluestore_extent_t(PEXTENT_BASE + 0x90000, 3 * PEXTENT_ALLOC_UNIT), f);
 
-    m_lextents[0x35e15] = bluestore_lextent_t(6, 0x0, 0xa1eb);
+    m_lextents[0x35e15] = bluestore_lextent_t(6, 0x0, 0xa1eb, 0);
     m_blobs[6] = bluestore_blob_t(0xb000, bluestore_extent_t(PEXTENT_BASE + 0xc0000, 1 * PEXTENT_ALLOC_UNIT), f);
 
     //hole at 0x40000~
 
-    if( csum_enable ){
+    if(csum_enable){
       setup_csum();
     }
   }
@@ -115,22 +117,22 @@ public:
     unsigned f = compress ? bluestore_blob_t::BLOB_COMPRESSED : 0;
 
     //hole at 0~100
-    m_lextents[0x100] = bluestore_lextent_t(0, 0, 0x8000);
-    m_blobs[0] = bluestore_blob_t(0xa000, bluestore_extent_t(PEXTENT_BASE + 0xa0000, 1 * PEXTENT_ALLOC_UNIT), f);
+    m_lextents[0x100] = bluestore_lextent_t(100, 0, 0x8000, 0);
+    m_blobs[100] = bluestore_blob_t(0xa000, bluestore_extent_t(PEXTENT_BASE + 0xa0000, 1 * PEXTENT_ALLOC_UNIT), f);
 
-    m_lextents[0x8100] = bluestore_lextent_t(1, 0, 0x200);
+    m_lextents[0x8100] = bluestore_lextent_t(1, 0, 0x200, 0);
     m_blobs[1] = bluestore_blob_t(0x2000, bluestore_extent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT), f);
 
-    m_lextents[0x8300] = bluestore_lextent_t(2, 0, 0x1100);
+    m_lextents[0x8300] = bluestore_lextent_t(2, 0, 0x1100, 0);
     m_blobs[2] = bluestore_blob_t(0x2000, bluestore_extent_t(PEXTENT_BASE + 0x20000, 2 * PEXTENT_ALLOC_UNIT), f);
 
     //hole at 0x9400~0x100
 
-    m_lextents[0x9500] = bluestore_lextent_t(0, 0x9400, 0x200);
+    m_lextents[0x9500] = bluestore_lextent_t(100, 0x9400, 0x200, 0);
 
     //hole at 0x9700~
 
-    if( csum_enable ){
+    if(csum_enable){
       setup_csum();
     }
   }
@@ -140,28 +142,28 @@ public:
     unsigned f = compress ? bluestore_blob_t::BLOB_COMPRESSED : 0;
 
     //hole at 0~100
-    m_lextents[0x100] = bluestore_lextent_t(0, 0, 0x8000);
-    m_blobs[0] = bluestore_blob_t(0xa000, f);
-    m_blobs[0].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0xa0000, 0x6000));
-    m_blobs[0].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0xb0000, 0x6000));
+    m_lextents[0x100] = bluestore_lextent_t(100, 0, 0x8000, 0);
+    m_blobs[100] = bluestore_blob_t(0xa000, f);
+    m_blobs[100].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0xa0000, 0x6000));
+    m_blobs[100].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0xb0000, 0x6000));
 
-    m_lextents[0x8100] = bluestore_lextent_t(1, 0, 0x200);
+    m_lextents[0x8100] = bluestore_lextent_t(1, 0, 0x200, 0);
     m_blobs[1] = bluestore_blob_t(0x2000, f);
     m_blobs[1].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x10000, 1 * PEXTENT_ALLOC_UNIT / 2));
     m_blobs[1].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x18000, 1 * PEXTENT_ALLOC_UNIT / 2));
 
-    m_lextents[0x8300] = bluestore_lextent_t(2, 0, 0x1100);
+    m_lextents[0x8300] = bluestore_lextent_t(2, 0, 0x1100, 0);
     m_blobs[2] = bluestore_blob_t(0x2000, f);
     m_blobs[2].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x20000, 1 * PEXTENT_ALLOC_UNIT));
 
     //hole at 0x9400~0x100
 
-    m_lextents[0x9500] = bluestore_lextent_t(0, 0x9400, 0x200);
+    m_lextents[0x9500] = bluestore_lextent_t(100, 0x9400, 0x200, 0);
 
     //hole at 0x9700~0x6600
     //hole at 0x10000~0x100
 
-    m_lextents[0x10100] = bluestore_lextent_t(3, 0x100, 0xcf00);
+    m_lextents[0x10100] = bluestore_lextent_t(3, 0x100, 0xcf00, 0);
     m_blobs[3] = bluestore_blob_t(0x26b00, f);
     m_blobs[3].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x30000, 0x8000));
     m_blobs[3].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x40000, 0x6000));
@@ -169,13 +171,13 @@ public:
     m_blobs[3].extents.push_back(bluestore_extent_t(PEXTENT_BASE + 0x60000, 0x12000));
 
     //hole at 0x1d000~0x300
-    m_lextents[0x1d300] = bluestore_lextent_t(3, 0xd300, 0x1100);
+    m_lextents[0x1d300] = bluestore_lextent_t(3, 0xd300, 0x1100, 0);
     //hole at 0x1e400~0x5700
-    m_lextents[0x23b00] = bluestore_lextent_t(3, 0x13b00, 0x10000);
-    m_lextents[0x33b00] = bluestore_lextent_t(3, 0x23b00, 0x3000);
+    m_lextents[0x23b00] = bluestore_lextent_t(3, 0x13b00, 0x10000, 0);
+    m_lextents[0x33b00] = bluestore_lextent_t(3, 0x23b00, 0x3000, 0);
     //hole at 36ff1~
 
-    if( csum_enable ){
+    if(csum_enable){
       setup_csum();
     }
   }
@@ -218,48 +220,47 @@ protected:
 
   virtual int write_block(uint64_t offset, uint32_t length, const bufferlist& data, void* opaque)
   {
-
+    return 0;
   }
   virtual int zero_block(uint64_t offset, uint32_t length, void* opaque)
   {
-
+    return 0;
   }
 
 
   //method to allocate pextents, depending on the store state can return single or multiple pextents if there is no contiguous extent available
   virtual int allocate_blocks(uint32_t length, void* opaque, bluestore_extent_vector_t* result)
   {
-
+    return 0;
   }
 
   virtual int release_block(uint64_t offset, uint32_t length, void* opaque)
   {
-
+    return 0;
   }
 
   ////////////////CompressorInterface implementation////////
   virtual int compress(ExtentManager::CompressInfo* cinfo, uint32_t source_offs, uint32_t length, const bufferlist& source, void* opaque, bufferlist* result)
   {
-    result->substr_of(source, input_offs, length);
+    result->substr_of(source, source_offs, length);
     return 0;
   }
 
   virtual int decompress(const bufferlist& source, void* opaque, bufferlist* result) {
-    result->append(source); 
+    result->append(source);
     return 0;
   }
   ////////////////CheckSumVerifyInterface implementation////////
-  virtual int calculate(bluestore_blob_t::CSumType, uint32_t csum_block_size, uint32_t source_offs, const bufferlist& source, void* opaque, vector<char>* csum_data)
+  virtual int calculate(bluestore_blob_t::CSumType, uint32_t csum_value_size, uint32_t csum_block_size, uint32_t source_offs, const bufferlist& source, void* opaque, vector<char>* csum_data)
   {
     //FIXME: to implement
     return 0;
   }
-  virtual int verify(bluestore_blob_t::CSumType type, uint32_t csum_block_size, const vector<char>& csum_data, const bufferlist& source, void* opaque) 
+  virtual int verify(bluestore_blob_t::CSumType type, uint32_t csum_value_size, uint32_t csum_block_size, const bufferlist& source, void* opaque, const vector<char>& csum_data)
   {
     m_checks.push_back(CheckList::value_type(type, csum_block_size, csum_data, source));
     return 0;
   }
-
 };
 
 TEST(bluestore_extent_manager, read)
@@ -352,7 +353,7 @@ TEST(bluestore_extent_manager, read)
   mgr.reset(false);
   res.clear();
 
-  //read 0x15ffe~2, 0x16000~0x3000, 0x19000~0x17610, 0x30610~2 
+  //read 0x15ffe~2, 0x16000~0x3000, 0x19000~0x17610, 0x30610~2
   mgr.read(0x15ffe, 0x1a614, NULL, &res);
   ASSERT_EQ(0x1a614u, res.length());
   ASSERT_EQ(2u, mgr.m_reads.size());
@@ -568,7 +569,7 @@ TEST(bluestore_extent_manager, read_checksum)
   mgr.reset(false);
   res.clear();
 
-  //read 0x15ffe~2, 0x16000~0x3000, 0x19000~0x17610, 0x30610~2 
+  //read 0x15ffe~2, 0x16000~0x3000, 0x19000~0x17610, 0x30610~2
   mgr.read(0x15ffe, 0x1a614, NULL, &res);
   ASSERT_EQ(0x1a614u, res.length());
   ASSERT_EQ(2u, mgr.m_reads.size());
@@ -982,19 +983,19 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent)
   mgr.reset(false);
   res.clear();
 
-  //0x10000~0x100 (unalloc), 
-  //0x10100~0xcf00  
+  //0x10000~0x100 (unalloc),
+  //0x10100~0xcf00
   //               -> 0x30100~0x7f00 -> 0x30000~0x8000,
   //               -> 0x40000~0x5000 -> 0x40000~0x5000
   //0x1d000~0x300 (unalloc)
-  //0x1d300~0x1100 
+  //0x1d300~0x1100
   //               -> 0x45300~0xd00 -> 0x45000~0x1000
   //               -> 0x50000~0x400 -> 0x50000~0x1000
   //0x1e400~0x5700 (unalloc)
-  //0x23b00~0x10000 
+  //0x23b00~0x10000
   //               -> 0x55b00~0x6500 -> 0x55000~0x7000
   //               -> 0x60000~0x9b00 -> 0x60000~0xa000
-  //0x33b00~0x3000 
+  //0x33b00~0x3000
   //               -> 0x69b00~0x3000 -> 0x69000~0x4000
   //0x36b00~0x5600 (unalloc)
 
@@ -1050,8 +1051,8 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent_checksum)
   mgr.reset(true);
   mgr.prepareTestSet4SplitBlobMultiExtentRead(false, true);
 
-  //0x50~0xb0 (unalloc), 
-  //0x100~0x7500  
+  //0x50~0xb0 (unalloc),
+  //0x100~0x7500
   //               -> 0xa0000~0x6000,
   //               -> 0xb0000~0x2000,
   mgr.read(0x50, 0x75b0, NULL, &res);
@@ -1075,7 +1076,7 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent_checksum)
   res.clear();
 
 
-  //0x100~0x8100  
+  //0x100~0x8100
   //               -> 0xa0000~0x6000,
   //               -> 0xb0000~0x2000,
   //0x8100~0x200
@@ -1113,19 +1114,19 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent_checksum)
   mgr.reset(false);
   res.clear();
 
-  //0x10000~0x100 (unalloc), 
-  //0x10100~0xcf00  
+  //0x10000~0x100 (unalloc),
+  //0x10100~0xcf00
   //               -> 0x30100~0x7f00 -> 0x30000~0x8000,
   //               -> 0x40000~0x5000 -> 0x40000~0x6000
   //0x1d000~0x300 (unalloc)
-  //0x1d300~0x1100 
+  //0x1d300~0x1100
   //               -> 0x45300~0xd00 -> 0x44000~0x2000
   //               -> 0x50000~0x400 -> 0x50000~0x2000
   //0x1e400~0x5700 (unalloc)
-  //0x23b00~0x10000 
+  //0x23b00~0x10000
   //               -> 0x55b00~0x6500 -> 0x54000~0x8000
   //               -> 0x60000~0x9b00 -> 0x60000~0xa000
-  //0x33b00~0x3000 
+  //0x33b00~0x3000
   //               -> 0x69b00~0x3000 -> 0x68000~0x6000
   //0x36b00~0x5600 (unalloc)
 
@@ -1183,8 +1184,8 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent_compressed)
   mgr.reset(true);
   mgr.prepareTestSet4SplitBlobMultiExtentRead(true);
 
-  //0x50~0xb0 (unalloc), 
-  //0x100~0x7500  
+  //0x50~0xb0 (unalloc),
+  //0x100~0x7500
   //               -> 0xa0000~0x6000,
   //               -> 0xb0000~0x4000,
   mgr.read(0x50, 0x75b0, NULL, &res);
@@ -1206,7 +1207,7 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent_compressed)
   res.clear();
 
 
-  //0x100~0x8100  
+  //0x100~0x8100
   //               -> 0xa0000~0x6000,
   //               -> 0xb0000~0x4000,
   //0x8100~0x200
@@ -1243,19 +1244,19 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent_compressed)
   mgr.reset(false);
   res.clear();
 
-  //0x10000~0x100 (unalloc), 
-  //0x10100~0xcf00  
+  //0x10000~0x100 (unalloc),
+  //0x10100~0xcf00
   //               -> 0x30100~0x7f00 -> 0x30000~0x8000,
   //               -> 0x40000~0x5000 -> 0x40000~0x6000
   //0x1d000~0x300 (unalloc)
-  //0x1d300~0x1100 
-  //               -> 0x45300~0xd00 -> 0x40000~0x6000 ( duplicate )
+  //0x1d300~0x1100
+  //               -> 0x45300~0xd00 -> 0x40000~0x6000 (duplicate)
   //               -> 0x50000~0x400 -> 0x50000~0xc000
   //0x1e400~0x5700 (unalloc)
-  //0x23b00~0x10000 
-  //               -> 0x55b00~0x6500 -> 0x50000~0xc000 ( duplicate )
+  //0x23b00~0x10000
+  //               -> 0x55b00~0x6500 -> 0x50000~0xc000 (duplicate)
   //               -> 0x60000~0x9b00 -> 0x60000~0xd000
-  //0x33b00~0x3000 
+  //0x33b00~0x3000
   //               -> 0x69b00~0x3000 -> 0x60000~0xd000 (duplicate)
   //0x36b00~0x5600 (unalloc)
 

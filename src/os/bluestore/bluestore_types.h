@@ -331,14 +331,34 @@ struct bluestore_blob_t
   uint16_t num_refs;               ///< reference count (always 1 when in onode)
   vector<char> csum_data;          ///< opaque vector of csum data
 
-  bluestore_blob_t(uint32_t l = 0, uint32_t f = 0)
+  bluestore_blob_t()
+    : length(0),
+    flags(0),
+    csum_type(CSUM_NONE),
+    csum_block_order(12),
+    num_refs(1) {}
+  bluestore_blob_t(uint32_t l, uint32_t f)
     : length(l),
     flags(f),
     csum_type(CSUM_NONE),
     csum_block_order(12),
     num_refs(1) {}
+  bluestore_blob_t(uint32_t l, uint32_t f, uint8_t _csum_type, uint8_t _csum_block_order)
+    : length(l),
+    flags(f),
+    csum_type(_csum_type),
+    csum_block_order(_csum_block_order),
+    num_refs(1) {}
+  bluestore_blob_t(const bluestore_blob_t& from)
+    : length(from.length),
+    flags(from.flags),
+    csum_type(from.csum_type),
+    csum_block_order(from.csum_block_order),
+    num_refs(from.num_refs),
+    csum_data(from.csum_data)
+  {}
 
-  bluestore_blob_t(uint32_t l, const bluestore_extent_t& ext, uint32_t f = 0)
+  bluestore_blob_t(uint32_t l, const bluestore_extent_t& ext, uint32_t f)
     : length(l),
     flags(f),
     csum_type(CSUM_NONE),
@@ -387,7 +407,6 @@ struct bluestore_blob_t
 };
 //WRITE_CLASS_ENCODER(bluestore_blob_t)
 
-//typedef boost::intrusive_ptr<bluestore_blob_t> ExtentRef;
 typedef uint64_t BlobRef;
 enum {
   UNDEF_BLOB_REF = 0,
@@ -403,8 +422,12 @@ struct bluestore_lextent_t {
   uint32_t length;
   uint32_t flags;    /// or reserved
 
+  bluestore_lextent_t()
+    : blob(UNDEF_BLOB_REF), x_offset(0), length(0), flags(0) {}
   bluestore_lextent_t(BlobRef _blob, uint32_t o, uint32_t l, uint32_t f)
     : blob(_blob), x_offset(o), length(l), flags(f) {}
+  bluestore_lextent_t(const bluestore_lextent_t& from)
+    : blob(from.blob), x_offset(from.x_offset), length(from.length), flags(from.flags) {}
 
   uint64_t end() const {
     return x_offset + length;
