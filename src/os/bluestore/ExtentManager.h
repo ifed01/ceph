@@ -29,10 +29,13 @@ public:
   struct CheckSumInfo{
     uint8_t csum_type;               //  enum bluestore_blob_t::CSumType
     uint8_t csum_block_order;
+    CheckSumInfo() : csum_type(bluestore_blob_t::CSUM_NONE), csum_block_order(12) {}
+    CheckSumInfo(uint8_t _type, uint8_t _csum_block_order) : csum_type(_type), csum_block_order(_csum_block_order) {}
   };
  
   struct CompressInfo{
     uint8_t compress_type;
+    CompressInfo() : compress_type(0xff) {}
   };
 
   struct BlockOpInterface
@@ -54,7 +57,7 @@ public:
   struct CompressorInterface
   {
     virtual ~CompressorInterface() {}
-    virtual int compress(CompressInfo* cinfo, uint32_t source_offs, uint32_t length, const bufferlist& source, void* opaque, bufferlist* result) = 0;
+    virtual int compress(const CompressInfo& cinfo, uint32_t source_offs, uint32_t length, const bufferlist& source, void* opaque, bufferlist* result) = 0;
     virtual int decompress(const bufferlist& source, void* opaque, bufferlist* result) = 0;
   };
   struct CheckSumVerifyInterface
@@ -70,8 +73,11 @@ public:
     : m_blockop_inf(blockop_inf), m_compressor(compressor), m_csum_verifier(csum_verifier) {
   }
 
-  int write(uint64_t offset, const bufferlist& bl, void* opaque, const CheckSumInfo& check_info, CompressInfo* compress_info);
+  int write(uint64_t offset, const bufferlist& bl, void* opaque, const CheckSumInfo& check_info, const CompressInfo* compress_info);
   int read(uint64_t offset, uint32_t length, void* opaque, bufferlist* result);
+
+  uint64_t get_max_blob_size() const;
+  uint64_t get_min_alloc_size() const;
 
 protected:
 
@@ -109,8 +115,6 @@ protected:
   void deref_blob(bluestore_blob_map_t::iterator blob_it);
 
   uint64_t get_read_block_size(const bluestore_blob_t*) const;
-  uint64_t get_max_blob_size() const;
-  uint64_t get_min_alloc_size() const;
 
   int read_whole_blob(const bluestore_blob_t*, void* opaque, bufferlist* result);
   int read_extent_sparse(const bluestore_blob_t*, const bluestore_extent_t* extent, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, void* opaque, ready_regions_t* result);
@@ -118,21 +122,21 @@ protected:
 
   int verify_csum(const bluestore_blob_t* blob, uint64_t x_offset, const bufferlist& bl, void* opaque) const;
 
-  int allocate_raw_blob(uint32_t length, void* opaque, CheckSumInfo* check_info, BlobRef* blob, bluestore_blob_map_t::iterator* res_blob_it);
+  int allocate_raw_blob(uint32_t length, void* opaque, const CheckSumInfo& check_info, BlobRef* blob, bluestore_blob_map_t::iterator* res_blob_it);
   int compress_and_allocate_blob(
     uint64_t input_offs,
     const bufferlist& raw_buffer,
     void* opaque,
-    CheckSumInfo* check_info,
-    CompressInfo* compress_info,
+    const CheckSumInfo& check_info,
+    const CompressInfo& compress_info,
     BlobRef* blob,
     bluestore_blob_map_t::iterator* res_blob_it,
     bufferlist* compressed_buffer);
 
   int write_blob(bluestore_blob_t& blob, uint64_t input_offs, const bufferlist& bl, void* opaque);
 
-  int write_uncompressed(uint64_t offset, const bufferlist& bl, void* opaque, CheckSumInfo* check_info);
-  int write_compressed(uint64_t offset, const bufferlist& bl, void* opaque, CheckSumInfo* check_info, CompressInfo* compress_info);
+  int write_uncompressed(uint64_t offset, const bufferlist& bl, void* opaque, const CheckSumInfo& check_info);
+  int write_compressed(uint64_t offset, const bufferlist& bl, void* opaque, const CheckSumInfo& check_info, const CompressInfo& compress_info);
 
   //Temporary struct to represent lextent along with corresponding pointer to a blob.
   //Valid during single write request handling call.
@@ -159,8 +163,7 @@ protected:
     live_lextent_map_t& new_lextents,
     const bufferlist& raw_buffer,
     std::vector<bufferlist>* compressed_buffers,
-    void* opaque,
-    CheckSumInfo* check_info);
+    void* opaque);
 
   void update_lextents(bluestore_lextent_map_t::iterator start, bluestore_lextent_map_t::iterator end);
   void update_lextents(live_lextent_map_t::iterator cur, live_lextent_map_t::iterator end);

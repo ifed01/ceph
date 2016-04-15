@@ -347,7 +347,7 @@ int ExtentManager::verify_csum(const bluestore_blob_t* blob, uint64_t blob_xoffs
   return r;
 }
 
-int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, ExtentManager::CompressInfo* compress_info)
+int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, const ExtentManager::CompressInfo* compress_info)
 {
   int r;
   auto lext_begin = m_lextents.begin();
@@ -408,8 +408,8 @@ int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, co
   }
   
   r = compress_info && bl.length() > get_min_alloc_size() ?
-    write_compressed(offset, bl, opaque, &check_info, compress_info) :
-    write_uncompressed(offset, bl, opaque, &check_info);
+    write_compressed(offset, bl, opaque, check_info, *compress_info) :
+    write_uncompressed(offset, bl, opaque, check_info);
 
   if (r > 0) {
     update_lextents(updated_lextents.begin(), updated_lextents.end());
@@ -423,14 +423,14 @@ int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, co
   return r >= 0 ? bl.length() : r;
 }
 
-int ExtentManager::write_uncompressed(uint64_t offset, const bufferlist& bl, void* opaque, ExtentManager::CheckSumInfo* check_info)
+int ExtentManager::write_uncompressed(uint64_t offset, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info)
 {
   int r = 0;
   live_lextent_map_t new_lextents;
   uint64_t o = offset;
   unsigned l = bl.length();
   //create new lextents & blobs
-  while (l > 0 && r == 0) {
+  while (l > 0 && r >= 0) {
     BlobRef blob_ref = UNDEF_BLOB_REF;
     bluestore_blob_map_t::iterator blob_it;
     int processed = allocate_raw_blob(l, opaque, check_info, &blob_ref, &blob_it);
@@ -446,15 +446,15 @@ int ExtentManager::write_uncompressed(uint64_t offset, const bufferlist& bl, voi
     }
   }
 
-  if (r == 0) {
-    r = apply_lextents(new_lextents, bl, NULL, opaque, check_info);
+  if (r >= 0) {
+    r = apply_lextents(new_lextents, bl, NULL, opaque);
     if (r < 0)
       release_lextents(new_lextents.begin(), new_lextents.end(), false, false, opaque); //FIXME: we may need to zero some of already written blobs, mark lextent somehow?
   }
   return r;
 }
 
-int ExtentManager::write_compressed(uint64_t offset, const bufferlist& bl, void* opaque, ExtentManager::CheckSumInfo* check_info, ExtentManager::CompressInfo* compress_info)
+int ExtentManager::write_compressed(uint64_t offset, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, const ExtentManager::CompressInfo& compress_info)
 {
   int r = 0;
   live_lextent_map_t new_lextents;
@@ -463,7 +463,7 @@ int ExtentManager::write_compressed(uint64_t offset, const bufferlist& bl, void*
   uint32_t l = bl.length();
   uint64_t input_offs = 0;
   //create new lextents & blobs
-  while (l > 0 && r == 0) {
+  while (l > 0 && r >= 0) {
     BlobRef blob_ref;
     bluestore_blob_map_t::iterator blob_it;
     size_t sz = compressed_buffers.size();
@@ -482,15 +482,15 @@ int ExtentManager::write_compressed(uint64_t offset, const bufferlist& bl, void*
     }
   }
 
-  if (r == 0) {
-    r = apply_lextents(new_lextents, bl, &compressed_buffers, opaque, check_info);
+  if (r >= 0) {
+    r = apply_lextents(new_lextents, bl, &compressed_buffers, opaque);
     if (r < 0)
       release_lextents(new_lextents.begin(), new_lextents.end(), false, false, opaque); //FIXME: we may need to zero some of already written blobs, mark lextent somehow?
   }
   return r;
 }
 
-int ExtentManager::allocate_raw_blob(uint32_t length, void* opaque, ExtentManager::CheckSumInfo* check_info, BlobRef* blob_ref, bluestore_blob_map_t::iterator* res_blob_it)
+int ExtentManager::allocate_raw_blob(uint32_t length, void* opaque, const ExtentManager::CheckSumInfo& check_info, BlobRef* blob_ref, bluestore_blob_map_t::iterator* res_blob_it)
 {
   uint32_t processed = MIN(length, get_max_blob_size());
 
@@ -503,12 +503,12 @@ int ExtentManager::allocate_raw_blob(uint32_t length, void* opaque, ExtentManage
   else
     *blob_ref = FIRST_BLOB_REF;
 
-  blob_it = m_blobs.emplace(*blob_ref, bluestore_blob_t(processed, 0, check_info->csum_type, check_info->csum_block_order)).first;
+  blob_it = m_blobs.emplace(*blob_ref, bluestore_blob_t(processed, 0, check_info.csum_type, check_info.csum_block_order)).first;
   bluestore_blob_t& blob = blob_it->second;
 
   //allocate space for the new blob
-  //uint32_t to_allocate = ROUND_UP_TO(processed, blob.get_csum_block_size());
-  int r = m_blockop_inf.allocate_blocks(processed, opaque, &(blob.extents));
+  uint32_t to_allocate = ROUND_UP_TO(processed, get_min_alloc_size());
+  int r = m_blockop_inf.allocate_blocks(to_allocate, opaque, &(blob.extents));
   if (r >= 0)
   {
     r = processed;
@@ -527,8 +527,8 @@ int ExtentManager::compress_and_allocate_blob(
     uint64_t input_offs,
     const bufferlist& bl,
     void* opaque,
-    ExtentManager::CheckSumInfo* check_info,
-    ExtentManager::CompressInfo* compress_info,
+    const ExtentManager::CheckSumInfo& check_info,
+    const ExtentManager::CompressInfo& compress_info,
     BlobRef* blob_ref,
     bluestore_blob_map_t::iterator* res_blob_it,
     bufferlist* compressed_buffer)
@@ -562,7 +562,7 @@ int ExtentManager::write_blob(bluestore_blob_t& blob, uint64_t input_offs, const
   unsigned ext_pos = 0;
   assert(input_offs <= bl.length());
   uint64_t len = bl.length() - input_offs;
-  assert(blob.get_ondisk_length() <= len);
+  assert(blob.get_ondisk_length() >= len);
 
   if (blob.csum_type != bluestore_blob_t::CSUM_NONE) {
     blob.csum_data.clear();
@@ -571,7 +571,7 @@ int ExtentManager::write_blob(bluestore_blob_t& blob, uint64_t input_offs, const
       derr << __func__ << " checksum("<< blob.csum_type<< ") calculation failure:" << r << dendl;
   }
 
-  while (len > 0 && r == 0) {
+  while (len > 0 && r >= 0) {
     assert(ext_pos < blob.extents.size());
     bluestore_extent_t& ext = blob.extents[ext_pos];
     uint64_t l = MIN(len, ext.length);
@@ -596,8 +596,7 @@ int ExtentManager::apply_lextents(
   live_lextent_map_t& new_lextents,
   const bufferlist& raw_buffer,
   std::vector<bufferlist>* compressed_buffers,
-  void* opaque,
-  ExtentManager::CheckSumInfo* check_info)
+  void* opaque)
 {
   int r = 0;
   uint64_t x_offs = 0;
@@ -605,7 +604,7 @@ int ExtentManager::apply_lextents(
   //write data to new lextents
   auto newext_it = new_lextents.begin();
 
-  while (newext_it != new_lextents.end() && r == 0) {
+  while (newext_it != new_lextents.end() && r >= 0) {
     bluestore_blob_t& blob = newext_it->second.blob_iterator->second;
     if (compressed_buffers && compressed_buffers->at(lext_pos).length() > 0 && blob.has_flag(bluestore_blob_t::BLOB_COMPRESSED) ) {
       r = write_blob(blob, 0, compressed_buffers->at(lext_pos), opaque);
@@ -617,7 +616,7 @@ int ExtentManager::apply_lextents(
     ++lext_pos;
     ++newext_it;
   }
-  if (r == 0)
+  if (r >= 0)
     update_lextents(new_lextents.begin(), new_lextents.end());
   return r;
 }

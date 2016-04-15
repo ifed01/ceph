@@ -71,6 +71,11 @@ struct bluestore_extent_t {
   bluestore_extent_t(uint64_t o=0, uint32_t l=0, uint32_t f=0)
     : offset(o), length(l), flags(f) {}
 
+  bool operator ==(const bluestore_extent_t& from) const {
+    return offset == from.offset &&
+      length == from.length &&
+      flags == from.flags;
+  }
   uint64_t end() const {
     return offset + length;
   }
@@ -367,6 +372,15 @@ struct bluestore_blob_t
     extents.push_back(ext);
   }
 
+  bool operator ==(const bluestore_blob_t& from) const {
+    return length == from.length &&
+      flags == from.flags &&
+      csum_type == from.csum_type &&
+      csum_block_order == from.csum_block_order &&
+      num_refs == from.num_refs &&
+      extents == from.extents &&
+      csum_data == from.csum_data;
+  }
   /*void encode(bufferlist& bl) const;
   void decode(bufferlist::iterator& p);*/
   void dump(Formatter *f) const;
@@ -429,6 +443,12 @@ struct bluestore_lextent_t {
   bluestore_lextent_t(const bluestore_lextent_t& from)
     : blob(from.blob), x_offset(from.x_offset), length(from.length), flags(from.flags) {}
 
+  bool operator ==(const bluestore_lextent_t& from) const {
+    return blob == from.blob &&
+      x_offset == from.x_offset &&
+      length == from.length &&
+      flags == from.flags;
+  }
   uint64_t end() const {
     return x_offset + length;
   }

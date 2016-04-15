@@ -32,14 +32,15 @@ struct WriteTuple
   uint32_t len;
   uint32_t csum;
   WriteTuple()
-    : offs(0), len(0), csum(0)
-  {}
+    : offs(0), len(0), csum(0) {}
   WriteTuple(uint64_t _offs, uint32_t _len, uint32_t _csum)
-    : offs(_offs), len(_len), csum(_csum)
-  {}
+    : offs(_offs), len(_len), csum(_csum) {}
   WriteTuple(const WriteTuple& from)
-    : offs(from.offs), len(from.len), csum(from.csum)
-  {}
+    : offs(from.offs), len(from.len), csum(from.csum) {}
+
+  bool operator==(const WriteTuple& from) const {
+    return offs == from.offs && len == from.len && csum == from.csum;
+  }
 };
 
 typedef vector<WriteTuple> WriteList;
@@ -78,6 +79,9 @@ public:
   WriteList m_writes;
   CheckList m_checks;
   uint64_t m_allocNextOffset;
+
+  const bluestore_lextent_map_t& lextents() const { return m_lextents; }
+  const bluestore_blob_map_t& blobs() const { return m_blobs; }
 
   bool checkRead(const OffsLenTuple& r) {
     return std::find(m_reads.begin(), m_reads.end(), r) != m_reads.end();
@@ -274,14 +278,14 @@ protected:
 
   virtual int write_block(uint64_t offset, const bufferlist& data, void* opaque)
   {
-    assert(length > 0);
-    assert(0u == data.length() % get_block_size());
-    m_writes.push_back(WriteList::value_type(offset, data.length(), data.crc32c(0)));
+    assert(data.length() > 0);
+    assert(0u == (data.length() % get_block_size()));
+    m_writes.push_back(WriteList::value_type(offset - PEXTENT_BASE, data.length(), data.crc32c(0)));
     return data.length();
   }
   virtual int zero_block(uint64_t offset, uint32_t length, void* opaque)
   {
-    ASSERT_EQ(0u, length % get_block_size());
+    assert(0u == (length % get_block_size()));
     m_zeros.push_back(OffsLenList::value_type(offset, length));
     return 0;
   }
@@ -291,8 +295,8 @@ protected:
   virtual int allocate_blocks(uint32_t length, void* opaque, bluestore_extent_vector_t* result)
   {
     assert(length != 0);
-    assert(0u == length % get_min_alloc_size());
-    result->push_back(bluestore_extent_vector::value_type(m_allocNextOffset + PEXTENT_BASE, length));
+    assert(0u == (length % get_min_alloc_size()));
+    result->push_back(bluestore_extent_vector_t::value_type(m_allocNextOffset + PEXTENT_BASE, length));
     m_allocNextOffset += length;
     return 0;
   }
@@ -301,14 +305,14 @@ protected:
   {
     assert(0u == (offset - PEXTENT_BASE) % get_min_alloc_size());
     assert(length != 0);
-    assert(0u == length % get_min_alloc_size());
-    m_releases->push_back(OffsLenTuple(offset, length));
+    assert(0u == (length % get_min_alloc_size()));
+    m_releases.push_back(OffsLenTuple(offset, length));
 
     return 0;
   }
 
   ////////////////CompressorInterface implementation////////
-  virtual int compress(ExtentManager::CompressInfo* cinfo, uint32_t source_offs, uint32_t length, const bufferlist& source, void* opaque, bufferlist* result)
+  virtual int compress(const ExtentManager::CompressInfo& cinfo, uint32_t source_offs, uint32_t length, const bufferlist& source, void* opaque, bufferlist* result)
   {
     result->substr_of(source, source_offs, length);
     return 0;
@@ -1376,31 +1380,31 @@ TEST(bluestore_extent_manager, write)
   bufferlist bl;
   mgr.reset(true);
 
-  CheckSumInfo check_info;
+  ExtentManager::CheckSumInfo check_info;
   int r;
-  uin64_t offset = 0u;
+  uint64_t offset = 0u;
 
   //Append 1 block(4K) data at offset 0
   mgr.prepareWriteData(offset, mgr.get_block_size(), &bl);
-  r = write(offset, bl, NULL, check_info, NULL);
-  ASSERT_EQ(bl.length(), r);
+  r = mgr.write(offset, bl, NULL, check_info, NULL);
+  ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
   ASSERT_EQ(0u, mgr.m_releases.size());
   ASSERT_TRUE(mgr.checkWrite(0u, bl.length(), bl));
-  ASSERT_TRUE( ROUND_UP_TO(bl.length(), mgr.get_min_alloc_size()), mgr.m_allocNextOffset);
+  ASSERT_EQ( ROUND_UP_TO(bl.length(), mgr.get_min_alloc_size()), mgr.m_allocNextOffset);
 
-  ASSERT_EQ(0u, mgr.m_lextents.size());
-  ASSERT_EQ(1u, mgr.m_blobs.size());
-  ASSERT_EQ(bluestore_extent_t(FIRST_BLOB_REF, 0u, bl.length(), 0), mgr.m_lextents[0]);
+  ASSERT_EQ(1u, mgr.lextents().size());
+  ASSERT_EQ(1u, mgr.blobs().size());
+  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF, 0u, bl.length(), 0) == mgr.lextents().at(0));
   {
-    bluestore_blob_t blob = mgr.m_blobs[FIRST_BLOB_REF];
+    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF);
     ASSERT_EQ(bl.length(), blob.length);
     ASSERT_EQ(0u, blob.flags);
     ASSERT_EQ(bluestore_blob_t::CSUM_NONE, blob.csum_type);
     ASSERT_EQ(1u, blob.num_refs);
     ASSERT_EQ(1u, blob.extents.size());
-    ASSERT_EQ( bluestore_extent_t( offset + PEXTENT_BASE, mgr.get_min_alloc_size()), blob.extents[0]);
+    ASSERT_TRUE( bluestore_extent_t( offset + PEXTENT_BASE, mgr.get_min_alloc_size()) == blob.extents.at(0));
   }
   offset += bl.length();
   mgr.reset(false);
