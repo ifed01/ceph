@@ -107,6 +107,28 @@ protected:
   typedef map<uint64_t, bufferlist> ready_regions_t;
 
 
+
+  //Temporary struct to represent lextent along with corresponding pointer to a blob.
+  //Valid during single write request handling call.
+  //Intended to reduce blobs lookup.
+  struct live_lextent_t : public bluestore_lextent_t
+  {
+    bluestore_blob_map_t::iterator blob_iterator;
+
+    live_lextent_t()
+      : bluestore_lextent_t()
+    {}
+    live_lextent_t(const live_lextent_t& from)
+      : bluestore_lextent_t(from),
+      blob_iterator(from.blob_iterator)
+    {}
+    live_lextent_t(bluestore_blob_map_t::iterator blob_it, BlobRef blob_ref, uint32_t o, uint32_t l, uint32_t f)
+      : bluestore_lextent_t(blob_ref, o, l, f),
+      blob_iterator(blob_it)
+    {}
+  };
+  typedef map<uint64_t, live_lextent_t> live_lextent_map_t;
+
   bluestore_blob_t* get_blob(BlobRef blob_ref);
   bluestore_blob_map_t::iterator get_blob_iterator(BlobRef blob_ref);
 
@@ -135,39 +157,25 @@ protected:
 
   int write_blob(bluestore_blob_t& blob, uint64_t input_offs, const bufferlist& bl, void* opaque);
 
-  int write_uncompressed(uint64_t offset, const bufferlist& bl, void* opaque, const CheckSumInfo& check_info);
-  int write_compressed(uint64_t offset, const bufferlist& bl, void* opaque, const CheckSumInfo& check_info, const CompressInfo& compress_info);
-
-  //Temporary struct to represent lextent along with corresponding pointer to a blob.
-  //Valid during single write request handling call.
-  //Intended to reduce blobs lookup.
-  struct live_lextent_t : public bluestore_lextent_t
-  {
-    bluestore_blob_map_t::iterator blob_iterator;
-
-    live_lextent_t()
-      : bluestore_lextent_t()
-    {}
-    live_lextent_t(const live_lextent_t& from)
-      : bluestore_lextent_t(from),
-      blob_iterator(from.blob_iterator)
-    {}
-    live_lextent_t(bluestore_blob_map_t::iterator blob_it, BlobRef blob_ref, uint32_t o, uint32_t l, uint32_t f)
-      : bluestore_lextent_t(blob_ref, o, l, f),
-      blob_iterator(blob_it)
-    {}
-  };
-  typedef map<uint64_t, live_lextent_t> live_lextent_map_t;
-
+  int write_uncompressed(uint64_t offset,
+    const bufferlist& bl,
+    void* opaque,
+    const CheckSumInfo& check_info,
+    live_lextent_map_t* new_lextents);
+  int write_compressed(uint64_t offset,
+    const bufferlist& bl,
+    void* opaque,
+    const CheckSumInfo& check_info,
+    const CompressInfo& compress_info,
+    live_lextent_map_t* new_lextents);
   int apply_lextents(
     live_lextent_map_t& new_lextents,
     const bufferlist& raw_buffer,
     std::vector<bufferlist>* compressed_buffers,
     void* opaque);
 
+  void add_lextents(live_lextent_map_t::iterator cur, live_lextent_map_t::iterator end);
   void update_lextents(bluestore_lextent_map_t::iterator start, bluestore_lextent_map_t::iterator end);
-  void update_lextents(live_lextent_map_t::iterator cur, live_lextent_map_t::iterator end);
-
   void release_lextents(live_lextent_map_t::iterator start, live_lextent_map_t::iterator end, bool zero, bool remove_from_primary_map, void* opaque);
 
 };

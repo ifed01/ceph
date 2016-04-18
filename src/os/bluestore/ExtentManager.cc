@@ -368,16 +368,14 @@ int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, co
 
 
   bluestore_lextent_map_t updated_lextents;
-  live_lextent_map_t  removed_lextents;
+  live_lextent_map_t  new_lextents, removed_lextents;
   list<BlobRef> m_blobs2ref;
   if (!append) {
     uint64_t write_end_offset = offset + bl.length();
     while (lext_it != lext_end && lext_it->first < write_end_offset) {
       
       uint64_t lext_end_offset = lext_it->first + lext_it->second.length;
-    
       if (lext_it->first >= offset &&  lext_end_offset <= write_end_offset) { //totally overlapped lextent
-
 	bluestore_lextent_t& lext = lext_it->second;
 	auto blob_it = get_blob_iterator(lext.blob);
 	removed_lextents[lext_it->first] = live_lextent_t(blob_it, lext.blob, lext.x_offset, lext.length, lext.flags );
@@ -406,10 +404,10 @@ int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, co
       ++lext_it;
     }
   }
-  
+
   r = compress_info && bl.length() > get_min_alloc_size() ?
-    write_compressed(offset, bl, opaque, check_info, *compress_info) :
-    write_uncompressed(offset, bl, opaque, check_info);
+    write_compressed(offset, bl, opaque, check_info, *compress_info, &new_lextents) :
+    write_uncompressed(offset, bl, opaque, check_info, &new_lextents);
 
   if (r > 0) {
     update_lextents(updated_lextents.begin(), updated_lextents.end());
@@ -419,14 +417,14 @@ int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, co
       ++it;
     }
     release_lextents(removed_lextents.begin(), removed_lextents.end(), true, true, opaque);
+    add_lextents(new_lextents.begin(), new_lextents.end());
   }
   return r >= 0 ? bl.length() : r;
 }
 
-int ExtentManager::write_uncompressed(uint64_t offset, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info)
+int ExtentManager::write_uncompressed(uint64_t offset, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, live_lextent_map_t* res_lextents)
 {
   int r = 0;
-  live_lextent_map_t new_lextents;
   uint64_t o = offset;
   uint32_t l = bl.length();
   //create new lextents & blobs
@@ -435,29 +433,27 @@ int ExtentManager::write_uncompressed(uint64_t offset, const bufferlist& bl, voi
     bluestore_blob_map_t::iterator blob_it;
     int processed = allocate_raw_blob(l, opaque, check_info, &blob_ref, &blob_it);
     if (processed < 0) {
-      release_lextents(new_lextents.begin(), new_lextents.end(), false, false, opaque);
+      release_lextents(res_lextents->begin(), res_lextents->end(), false, false, opaque);
+      res_lextents->clear();
       r = processed;
       //dout(0)<<" write failed, can't allocate"<< dendl;
     }
     else {
-      new_lextents[o] = live_lextent_t(blob_it, blob_ref, 0, processed, 0);
+      (*res_lextents)[o] = live_lextent_t(blob_it, blob_ref, 0, processed, 0);
       o += processed;
       l -= processed;
     }
   }
 
   if (r >= 0) {
-    r = apply_lextents(new_lextents, bl, NULL, opaque);
-    if (r < 0)
-      release_lextents(new_lextents.begin(), new_lextents.end(), false, false, opaque); //FIXME: we may need to zero some of already written blobs, mark lextent somehow?
+    r = apply_lextents(*res_lextents, bl, NULL, opaque);
   }
   return r;
 }
 
-int ExtentManager::write_compressed(uint64_t offset, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, const ExtentManager::CompressInfo& compress_info)
+int ExtentManager::write_compressed(uint64_t offset, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, const ExtentManager::CompressInfo& compress_info, live_lextent_map_t* res_lextents)
 {
   int r = 0;
-  live_lextent_map_t new_lextents;
   std::vector<bufferlist> compressed_buffers;
   uint64_t o = offset;
   uint32_t l = bl.length();
@@ -470,12 +466,13 @@ int ExtentManager::write_compressed(uint64_t offset, const bufferlist& bl, void*
     compressed_buffers.resize(sz + 1);
     int processed = compress_and_allocate_blob(input_offs, bl, opaque, check_info, compress_info, &blob_ref, &blob_it, &compressed_buffers[sz]);
     if (processed < 0) {
-      release_lextents(new_lextents.begin(), new_lextents.end(), false, false, opaque);
+      release_lextents(res_lextents->begin(), res_lextents->end(), false, false, opaque);
+      res_lextents->clear();
       r = processed;
       //dout(0)<<" write failed, can't allocate"<< dendl;
     }
     else {
-      new_lextents[o] = live_lextent_t(blob_it, blob_ref, 0, processed, 0);
+      (*res_lextents)[o] = live_lextent_t(blob_it, blob_ref, 0, processed, 0);
       o += processed;
       input_offs += processed;
       l -= processed;
@@ -483,9 +480,7 @@ int ExtentManager::write_compressed(uint64_t offset, const bufferlist& bl, void*
   }
 
   if (r >= 0) {
-    r = apply_lextents(new_lextents, bl, &compressed_buffers, opaque);
-    if (r < 0)
-      release_lextents(new_lextents.begin(), new_lextents.end(), false, false, opaque); //FIXME: we may need to zero some of already written blobs, mark lextent somehow?
+    r = apply_lextents(*res_lextents, bl, &compressed_buffers, opaque);
   }
   return r;
 }
@@ -613,12 +608,15 @@ int ExtentManager::apply_lextents(
     ++lext_pos;
     ++newext_it;
   }
-  if (r >= 0)
-    update_lextents(new_lextents.begin(), new_lextents.end());
+  if (r < 0) {
+    release_lextents(new_lextents.begin(), new_lextents.end(), false, false, opaque); //FIXME: we may need to zero some of already written blobs, mark lextent somehow?
+    new_lextents.clear();
+  }
+
   return r;
 }
 
-void ExtentManager::update_lextents(live_lextent_map_t::iterator cur, live_lextent_map_t::iterator end)
+void ExtentManager::add_lextents(live_lextent_map_t::iterator cur, live_lextent_map_t::iterator end)
 {
   //update specified lextents in the primary map
   while (cur != end) {

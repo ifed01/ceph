@@ -1512,9 +1512,9 @@ TEST(bluestore_extent_manager, write)
   ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 4, 0u, mgr.get_block_size(), 0) == mgr.lextents().at(0));
   ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 1, 0u, mgr.get_min_alloc_size() + mgr.get_block_size() * 2, 0) == mgr.lextents().at(0x1000));
   ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 2, 0u, 1, 0) == mgr.lextents().at(0x1000 + 0x12000));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 3, 0u, bl.length(), 0) == mgr.lextents().at(0x1000 + 0x12000 + 1));
+  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 3, 0u, 2 * mgr.get_min_alloc_size() + 2, 0) == mgr.lextents().at(0x1000 + 0x12000 + 1));
   {
-    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF);
+    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 4);
     ASSERT_EQ(bl.length(), blob.length);
     ASSERT_EQ(0u, blob.flags);
     ASSERT_EQ(bluestore_blob_t::CSUM_NONE, blob.csum_type);
