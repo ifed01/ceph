@@ -355,7 +355,8 @@ struct bluestore_blob_t
     csum_block_order(_csum_block_order),
     num_refs(1) {}
   bluestore_blob_t(const bluestore_blob_t& from)
-    : length(from.length),
+    : extents(from.extents),
+    length(from.length),
     flags(from.flags),
     csum_type(from.csum_type),
     csum_block_order(from.csum_block_order),

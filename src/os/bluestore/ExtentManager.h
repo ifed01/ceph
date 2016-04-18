@@ -115,12 +115,16 @@ protected:
   {
     bluestore_blob_map_t::iterator blob_iterator;
 
-    live_lextent_t()
+/*    live_lextent_t()
       : bluestore_lextent_t()
-    {}
+    {}*/
     live_lextent_t(const live_lextent_t& from)
       : bluestore_lextent_t(from),
       blob_iterator(from.blob_iterator)
+    {}
+    live_lextent_t(bluestore_blob_map_t::iterator blob_it)
+      : bluestore_lextent_t(),
+      blob_iterator(blob_it)
     {}
     live_lextent_t(bluestore_blob_map_t::iterator blob_it, BlobRef blob_ref, uint32_t o, uint32_t l, uint32_t f)
       : bluestore_lextent_t(blob_ref, o, l, f),
@@ -134,7 +138,7 @@ protected:
 
   void ref_blob(BlobRef blob_ref);
   void ref_blob(bluestore_blob_map_t::iterator blob_it);
-  void deref_blob(bluestore_blob_map_t::iterator blob_it);
+  void deref_blob(bluestore_blob_map_t::iterator blob_it, bool zero, void* opaque);
 
   uint64_t get_read_block_size(const bluestore_blob_t*) const;
 
