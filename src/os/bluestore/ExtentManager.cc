@@ -54,12 +54,30 @@ void ExtentManager::ref_blob(bluestore_blob_map_t::iterator blob_it)
   }
 }
 
-void ExtentManager::deref_blob(bluestore_blob_map_t::iterator blob_it)
+void ExtentManager::deref_blob(bluestore_blob_map_t::iterator blob_it, bool zero, void* opaque)
 {
   if (blob_it != m_blobs.end()) {
     blob_it->second.num_refs--;
-    if (blob_it->second.num_refs == 0)
+    if (blob_it->second.num_refs == 0) {
+
+      bluestore_blob_t* blob = &(blob_it->second);
+      auto end_ext = blob->extents.end();
+      auto ext = blob->extents.begin();
+      auto l = blob->length;
+      uint64_t x_offs = 0;
+      while (ext != end_ext) {
+      if (zero && x_offs < l){
+        uint32_t x_len = ROUND_UP_TO(MIN(ext->length, l - x_offs), m_blockop_inf.get_block_size());
+	m_blockop_inf.zero_block(ext->offset, x_len, opaque);
+      }
+      m_blockop_inf.release_block(ext->offset, ext->length, opaque);
+
+      x_offs += ext->length;
+      ++ext;
+      
+
       m_blobs.erase(blob_it);
+    }
   }
 }
 
@@ -640,23 +658,7 @@ void ExtentManager::release_lextents(live_lextent_map_t::iterator cur, live_lext
 
     auto blob_it = cur->second.blob_iterator;
     if (blob_it != m_blobs.end()) {
-      bluestore_blob_t* blob = &(blob_it->second);
-      auto end_ext = blob->extents.end();
-      auto ext = blob->extents.begin();
-      auto l = blob->length;
-      uint64_t x_offs = 0;
-      while (ext != end_ext) {
-	if (zero && x_offs < l){
-	  uint32_t x_len = ROUND_UP_TO(MIN(ext->length, l - x_offs), m_blockop_inf.get_block_size());
-
-	  m_blockop_inf.zero_block(ext->offset, x_len, opaque);
-	}
-	m_blockop_inf.release_block(ext->offset, ext->length, opaque);
-
-	x_offs += ext->length;
-	++ext;
-      }
-      deref_blob(blob_it);
+      deref_blob(blob_it, zero, opaque);
     }
     if (remove_from_primary_map) {
       auto ext_it = m_lextents.find(cur->first);
@@ -664,7 +666,7 @@ void ExtentManager::release_lextents(live_lextent_map_t::iterator cur, live_lext
 	if (blob_it == m_blobs.end())
 	  blob_it = get_blob_iterator(ext_it->second.blob);
 	deref_blob(blob_it);
-	m_lextents.erase(ext_it);
+	m_lextents.erase(ext_it, zero, opaque);
       }
     }
     ++cur;
