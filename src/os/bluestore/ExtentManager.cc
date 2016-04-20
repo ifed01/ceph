@@ -662,7 +662,7 @@ int ExtentManager::write_blob(bluestore_blob_t& blob, uint64_t input_offs, const
 
   if (blob.csum_type != bluestore_blob_t::CSUM_NONE) {
     blob.csum_data.clear();
-    r = m_csum_verifier.calculate((bluestore_blob_t::CSumType)blob.csum_type, blob.get_csum_value_size(), blob.get_csum_block_size(), input_offs, bl, opaque, &(blob.csum_data));
+    r = m_csum_verifier.calculate((bluestore_blob_t::CSumType)blob.csum_type, blob.get_csum_value_size(), blob.get_csum_block_size(), input_offs, len, bl, opaque, &(blob.csum_data));
     if (r < 0)
       derr << __func__ << " checksum("<< blob.csum_type<< ") calculation failure:" << r << dendl;
   }

@@ -64,7 +64,7 @@ public:
   {
     virtual ~CheckSumVerifyInterface() {}
 
-    virtual int calculate(bluestore_blob_t::CSumType, uint32_t csum_value_size, uint32_t csum_block_size, uint32_t source_offs, const bufferlist& source, void* opaque, vector<char>* csum_data) = 0;
+    virtual int calculate(bluestore_blob_t::CSumType, uint32_t csum_value_size, uint32_t csum_block_size, uint32_t source_offs, uint32_t source_len, const bufferlist& source, void* opaque, vector<char>* csum_data) = 0;
     virtual int verify(bluestore_blob_t::CSumType, uint32_t csum_value_size, uint32_t csum_block_size, const bufferlist& source, void* opaque, const vector<char>& csum_data ) = 0;
   };
 
