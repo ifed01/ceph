@@ -439,9 +439,8 @@ int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, co
   return r >= 0 ? bl.length() : r;
 }
 
-int ExtentManager::zero(uint64_t offset, uin64_t len, void* opaque)
+int ExtentManager::zero(uint64_t offset, uint64_t len, void* opaque)
 {
-  int r;
   auto lext_begin = m_lextents.begin();
   auto lext_end = m_lextents.end();
 
@@ -464,7 +463,7 @@ int ExtentManager::zero(uint64_t offset, uin64_t len, void* opaque)
   live_lextent_map_t  removed_lextents;
   list<BlobRef> m_blobs2ref;
   if (!append) {
-    uint64_t write_end_offset = offset + bl.length();
+    uint64_t write_end_offset = offset + len;
     while (lext_it != lext_end && lext_it->first < write_end_offset) {
 
       uint64_t lext_end_offset = lext_it->first + lext_it->second.length;

@@ -74,7 +74,7 @@ public:
   }
 
   int write(uint64_t offset, const bufferlist& bl, void* opaque, const CheckSumInfo& check_info, const CompressInfo* compress_info);
-  int zero(uint64_t offset, uint32_t length, void* opaque);
+  int zero(uint64_t offset, uint64_t length, void* opaque);
   int truncate(uint64_t offset, void* opaque);
   int read(uint64_t offset, uint32_t length, void* opaque, bufferlist* result);
 
