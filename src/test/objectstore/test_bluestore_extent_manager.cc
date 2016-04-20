@@ -112,11 +112,11 @@ public:
     return std::find(m_writes.begin(), m_writes.end(), w) != m_writes.end();
   }
 
-  void _calc_crc32(uint32_t csum_block_size, uint32_t source_offs, uint32_t source_len, const bufferlist& source, vector<char>* csum_data) {
+  void _calc_crc32(uint32_t csum_value_size, uint32_t csum_block_size, uint32_t source_offs, uint32_t source_len, const bufferlist& source, vector<char>* csum_data) {
     while (source_len > 0) {
       bufferlist bl;
       uint32_t l = MIN(source_len, csum_block_size);
-      bl.substr_of(bl0, pos, l);
+      bl.substr_of(source, source_offs, l);
 
       source_offs += l;
       source_len -= l;
@@ -130,7 +130,7 @@ public:
     vector<char> my_csum_data;
     auto source_len = bl0.length();
     uint32_t source_offs = 0;
-    _calc_crc32(csum_block_size, source_offs, source_len, bl0, &my_csum_data);
+    _calc_crc32(csum_val_size, csum_block_size, source_offs, source_len, bl0, &my_csum_data);
     return my_csum_data == csum_data;
   }
 
@@ -368,7 +368,7 @@ protected:
   ////////////////CheckSumVerifyInterface implementation////////
   virtual int calculate(bluestore_blob_t::CSumType type, uint32_t csum_value_size, uint32_t csum_block_size, uint32_t source_offs, uint32_t source_len, const bufferlist& source, void* opaque, vector<char>* csum_data)
   {
-    _calc_crc32(csum_block_size, source_offs, source_len, source, csum_data);
+    _calc_crc32(csum_value_size, csum_block_size, source_offs, source_len, source, csum_data);
     return 0;
   }
   virtual int verify(bluestore_blob_t::CSumType type, uint32_t csum_value_size, uint32_t csum_block_size, const bufferlist& source, void* opaque, const vector<char>& csum_data)
@@ -2364,7 +2364,6 @@ TEST(bluestore_extent_manager, zero_truncate)
   ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF, 0u, bl.length(), 0) == mgr.lextents().at(0));
 
   offset += bl.length();
-  prev_alloc_offset = mgr.m_allocNextOffset;
   mgr.reset(false);
 
   //Make a backup
@@ -2485,7 +2484,6 @@ TEST(bluestore_extent_manager, write_csum_compressed)
   ASSERT_EQ(0u, mgr.m_zeros.size());
   ASSERT_EQ(0u, mgr.m_releases.size());
   ASSERT_EQ(0u, mgr.m_compresses.size());
-  ASSERT_EQ(4u, mgr.m_checks.size());
   ASSERT_TRUE(mgr.checkWrite(0u, ROUND_UP_TO(bl.length(), mgr.get_block_size()), bl));
   ASSERT_EQ(ROUND_UP_TO(bl.length(), mgr.get_min_alloc_size()), mgr.m_allocNextOffset);
 
@@ -2511,7 +2509,8 @@ TEST(bluestore_extent_manager, write_csum_compressed)
   prev_alloc_offset = mgr.m_allocNextOffset;
   mgr.reset(false);
 
-/*  //Append 64K+8K data
+  //Append 64K+8K data at 0x1000
+  offset = mgr.get_block_size();
   mgr.prepareWriteData(offset, mgr.get_min_alloc_size() + mgr.get_block_size() * 2, &bl);
   r = mgr.write(offset, bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
@@ -2525,340 +2524,134 @@ TEST(bluestore_extent_manager, write_csum_compressed)
 
   ASSERT_EQ(2u, mgr.lextents().size());
   ASSERT_EQ(2u, mgr.blobs().size());
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF, 0u, mgr.get_block_size() - 6, 0) == mgr.lextents().at(6u));
+  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF, 0u, mgr.get_block_size() - 10, 0) == mgr.lextents().at(6u));
   ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 1, 0u, bl.length(), 0) == mgr.lextents().at(0x1000));
   {
     const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 1);
     ASSERT_EQ(bl.length() / mgr.m_cratio, blob.length);
     ASSERT_EQ(bluestore_blob_t::BLOB_COMPRESSED, blob.flags);
-    ASSERT_EQ(bluestore_blob_t::CSUM_NONE, blob.csum_type);
+    ASSERT_EQ(check_info.csum_type, blob.csum_type);
     ASSERT_EQ(1u, blob.num_refs);
     ASSERT_EQ(1u, blob.extents.size());
-    ASSERT_TRUE(bluestore_extent_t(mgr.get_min_alloc_size() + PEXTENT_BASE, mgr.get_min_alloc_size()) == blob.extents.at(0));
+    ASSERT_EQ(check_info.csum_block_order, blob.csum_block_order);
+    tmpbl.substr_of(bl, 0, blob.length);
+    auto bs = blob.get_csum_block_size();
+    ASSERT_EQ(
+      ROUND_UP_TO(tmpbl.length(), bs) / bs * blob.get_csum_value_size(),
+      blob.csum_data.size());
+    ASSERT_TRUE(mgr.checkCSum(
+      blob.get_csum_value_size(),
+      blob.get_csum_block_size(),
+      blob.csum_data,
+      tmpbl));
   }
+
   offset += bl.length();
   prev_alloc_offset = mgr.m_allocNextOffset;
   mgr.reset(false);
 
-  //Append 1 byte
-  mgr.prepareWriteData(offset, 1, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
-  ASSERT_EQ((int)bl.length(), r);
-  ASSERT_EQ(1u, mgr.m_writes.size());
-  ASSERT_EQ(0u, mgr.m_zeros.size());
-  ASSERT_EQ(0u, mgr.m_releases.size());
-  ASSERT_EQ(0u, mgr.m_compresses.size());
-  ASSERT_TRUE(mgr.checkWrite(2 * mgr.get_min_alloc_size(), ROUND_UP_TO(bl.length(), mgr.get_block_size()), bl));
-  ASSERT_EQ(ROUND_UP_TO(bl.length(), mgr.get_min_alloc_size()), mgr.m_allocNextOffset - prev_alloc_offset);
-
-  ASSERT_EQ(3u, mgr.lextents().size());
-  ASSERT_EQ(3u, mgr.blobs().size());
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF, 0u, mgr.get_block_size() - 6, 0) == mgr.lextents().at(6));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 1, 0u, mgr.get_min_alloc_size() + mgr.get_block_size() * 2, 0) == mgr.lextents().at(0x1000));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 2, 0u, bl.length(), 0) == mgr.lextents().at(0x1000 + 0x12000));
-  offset += bl.length();
-  prev_alloc_offset = mgr.m_allocNextOffset;
-  mgr.reset(false);
-
-  //Append 128K + 2 bytes
-  mgr.prepareWriteData(offset, mgr.get_min_alloc_size() * 2 + 2, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
-  ASSERT_EQ((int)bl.length(), r);
-  ASSERT_EQ(1u, mgr.m_writes.size());
-  ASSERT_EQ(0u, mgr.m_zeros.size());
-  ASSERT_EQ(0u, mgr.m_releases.size());
-  ASSERT_EQ(1u, mgr.m_compresses.size());
-  tmpbl.substr_of(bl, 0, bl.length() / mgr.m_cratio);
-  tmpbl.append_zero(ROUND_UP_TO(bl.length() / mgr.m_cratio, mgr.get_block_size()) - bl.length() / mgr.m_cratio);
-  ASSERT_TRUE(mgr.checkWrite(3 * mgr.get_min_alloc_size(), tmpbl.length(), tmpbl));
-  ASSERT_TRUE(mgr.checkCompress(OffsLenTuple(0u, bl.length())));
-  ASSERT_EQ(ROUND_UP_TO(bl.length() / mgr.m_cratio, mgr.get_min_alloc_size()), mgr.m_allocNextOffset - prev_alloc_offset);
-
-  ASSERT_EQ(4u, mgr.lextents().size());
-  ASSERT_EQ(4u, mgr.blobs().size());
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF, 0u, mgr.get_block_size() - 6, 0) == mgr.lextents().at(6));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 1, 0u, mgr.get_min_alloc_size() + mgr.get_block_size() * 2, 0) == mgr.lextents().at(0x1000));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 2, 0u, 1, 0) == mgr.lextents().at(0x1000 + 0x12000));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 3, 0u, bl.length(), 0) == mgr.lextents().at(0x1000 + 0x12000 + 1));
-  {
-    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 3);
-    ASSERT_EQ(bl.length() / mgr.m_cratio, blob.length);
-    ASSERT_EQ(bluestore_blob_t::BLOB_COMPRESSED, blob.flags);
-    ASSERT_EQ(bluestore_blob_t::CSUM_NONE, blob.csum_type);
-    ASSERT_EQ(1u, blob.num_refs);
-    ASSERT_EQ(1u, blob.extents.size());
-    ASSERT_TRUE(bluestore_extent_t(3 * mgr.get_min_alloc_size() + PEXTENT_BASE, 2 * mgr.get_min_alloc_size()) == blob.extents.at(0));
-  }
-  offset += bl.length();
-  prev_alloc_offset = mgr.m_allocNextOffset;
-  mgr.reset(false);
-
-  //Overwrite 1 block(4K) data at offset 0
-  offset = 0u;
-  mgr.prepareWriteData(offset, mgr.get_block_size(), &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
-  ASSERT_EQ((int)bl.length(), r);
-  ASSERT_EQ(1u, mgr.m_writes.size());
-  ASSERT_EQ(1u, mgr.m_zeros.size());
-  ASSERT_EQ(1u, mgr.m_releases.size());
-  ASSERT_EQ(0u, mgr.m_compresses.size());
-  ASSERT_TRUE(mgr.checkWrite(prev_alloc_offset, bl.length(), bl));
-  ASSERT_EQ(ROUND_UP_TO(bl.length(), mgr.get_min_alloc_size()), mgr.m_allocNextOffset - prev_alloc_offset);
-  ASSERT_TRUE(mgr.checkZero(OffsLenTuple(0u, mgr.get_block_size())));
-  ASSERT_TRUE(mgr.checkReleases(OffsLenTuple(0u, mgr.get_min_alloc_size())));
-
-  ASSERT_EQ(4u, mgr.lextents().size());
-  ASSERT_EQ(4u, mgr.blobs().size());
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 4, 0u, mgr.get_block_size(), 0) == mgr.lextents().at(0));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 1, 0u, mgr.get_min_alloc_size() + mgr.get_block_size() * 2, 0) == mgr.lextents().at(0x1000));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 2, 0u, 1, 0) == mgr.lextents().at(0x1000 + 0x12000));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 3, 0u, 2 * mgr.get_min_alloc_size() + 2, 0) == mgr.lextents().at(0x1000 + 0x12000 + 1));
-  {
-    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 4);
-    ASSERT_EQ(bl.length(), blob.length);
-    ASSERT_EQ(0u, blob.flags);
-    ASSERT_EQ(bluestore_blob_t::CSUM_NONE, blob.csum_type);
-    ASSERT_EQ(1u, blob.num_refs);
-    ASSERT_EQ(1u, blob.extents.size());
-    ASSERT_TRUE(bluestore_extent_t(prev_alloc_offset + PEXTENT_BASE, mgr.get_min_alloc_size()) == blob.extents.at(0));
-  }
-  offset += bl.length();
-  prev_alloc_offset = mgr.m_allocNextOffset;
-  mgr.reset(false);
-
-  //Totally overwrite second extent ( 64K + 8K)with a different cratio.
-  offset = mgr.get_block_size();
-  mgr.m_cratio = 3;
+  //Overwrite + append 512K+100 data at 0x1000 - 1
   some_alloc_offset = mgr.blobs().at(FIRST_BLOB_REF + 1).extents.at(0).offset - PEXTENT_BASE;
-  some_len = mgr.blobs().at(FIRST_BLOB_REF + 1).length;
-  mgr.prepareWriteData(offset, mgr.get_min_alloc_size() + mgr.get_block_size() * 2, &bl);
+  some_len = mgr.blobs().at(FIRST_BLOB_REF + 1).length
+;
+  offset = mgr.get_block_size() - 1;
+  mgr.prepareWriteData(offset, 0x80000 + 100, &bl);
   r = mgr.write(offset, bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
-  ASSERT_EQ(1u, mgr.m_writes.size());
-
+  ASSERT_EQ(3u, mgr.m_writes.size());
   ASSERT_EQ(1u, mgr.m_zeros.size());
   ASSERT_EQ(1u, mgr.m_releases.size());
-  tmpbl.substr_of(bl, 0, bl.length() / mgr.m_cratio);
-  tmpbl.append_zero(ROUND_UP_TO(bl.length() / mgr.m_cratio, mgr.get_block_size()) - bl.length() / mgr.m_cratio);
-  ASSERT_TRUE(mgr.checkWrite(prev_alloc_offset, tmpbl.length(), tmpbl));
-  ASSERT_EQ(ROUND_UP_TO(bl.length() / mgr.m_cratio, mgr.get_min_alloc_size()), mgr.m_allocNextOffset - prev_alloc_offset);
-  ASSERT_TRUE(mgr.checkZero(OffsLenTuple(some_alloc_offset, ROUND_UP_TO(some_len, mgr.get_block_size()))));
-  ASSERT_TRUE(mgr.checkReleases(OffsLenTuple(some_alloc_offset, mgr.get_min_alloc_size())));
-
-  ASSERT_EQ(4u, mgr.lextents().size());
-  ASSERT_EQ(4u, mgr.blobs().size());
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 4, 0u, mgr.get_block_size(), 0) == mgr.lextents().at(0));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 5, 0u, bl.length(), 0) == mgr.lextents().at(0x1000));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 2, 0u, 1, 0) == mgr.lextents().at(0x1000 + 0x12000));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 3, 0u, 2 * mgr.get_min_alloc_size() + 2, 0) == mgr.lextents().at(0x1000 + 0x12000 + 1));
-  {
-    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 5);
-    ASSERT_EQ(bl.length() / mgr.m_cratio, blob.length);
-    ASSERT_EQ(bluestore_blob_t::BLOB_COMPRESSED, blob.flags);
-    ASSERT_EQ(bluestore_blob_t::CSUM_NONE, blob.csum_type);
-    ASSERT_EQ(1u, blob.num_refs);
-    ASSERT_EQ(1u, blob.extents.size());
-    ASSERT_TRUE(bluestore_extent_t(prev_alloc_offset + PEXTENT_BASE, mgr.get_min_alloc_size()) == blob.extents.at(0));
-  }
-
-  offset += bl.length();
-  prev_alloc_offset = mgr.m_allocNextOffset;
-  mgr.reset(false);
-
-  //Totally overwrite the forth extent ( 128K + 1 ) with a different cratio.
-
-  offset = 0x1000 + 0x12000 + 1;
-  mgr.m_cratio = 3;
-  some_alloc_offset = mgr.blobs().at(FIRST_BLOB_REF + 3).extents.at(0).offset - PEXTENT_BASE;
-  some_len = mgr.blobs().at(FIRST_BLOB_REF + 3).length;
-  mgr.prepareWriteData(offset, mgr.get_min_alloc_size() * 2 + 2, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
-  ASSERT_EQ((int)bl.length(), r);
-  ASSERT_EQ(1u, mgr.m_writes.size());
-
-  ASSERT_EQ(1u, mgr.m_zeros.size());
-  ASSERT_EQ(1u, mgr.m_releases.size());
-  tmpbl.substr_of(bl, 0, bl.length() / mgr.m_cratio);
-  tmpbl.append_zero(ROUND_UP_TO(bl.length() / mgr.m_cratio, mgr.get_block_size()) - bl.length() / mgr.m_cratio);
-  ASSERT_TRUE(mgr.checkWrite(prev_alloc_offset, tmpbl.length(), tmpbl));
-  ASSERT_EQ(ROUND_UP_TO(bl.length() / mgr.m_cratio, mgr.get_min_alloc_size()), mgr.m_allocNextOffset - prev_alloc_offset);
-  ASSERT_TRUE(mgr.checkZero(OffsLenTuple(some_alloc_offset, ROUND_UP_TO(some_len, mgr.get_block_size()))));
-  ASSERT_TRUE(mgr.checkReleases(OffsLenTuple(some_alloc_offset, 2 * mgr.get_min_alloc_size())));
-
-  ASSERT_EQ(4u, mgr.lextents().size());
-  ASSERT_EQ(4u, mgr.blobs().size());
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 4, 0u, 0x1000, 0) == mgr.lextents().at(0));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 5, 0u, 0x12000, 0) == mgr.lextents().at(0x1000));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 2, 0u, 1, 0) == mgr.lextents().at(0x1000 + 0x12000));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 6, 0u, bl.length(), 0) == mgr.lextents().at(0x1000 + 0x12000 + 1));
-  {
-    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 6);
-    ASSERT_EQ(bl.length() / mgr.m_cratio, blob.length);
-    ASSERT_EQ(bluestore_blob_t::BLOB_COMPRESSED, blob.flags);
-    ASSERT_EQ(bluestore_blob_t::CSUM_NONE, blob.csum_type);
-    ASSERT_EQ(1u, blob.num_refs);
-    ASSERT_EQ(1u, blob.extents.size());
-    ASSERT_TRUE(bluestore_extent_t(prev_alloc_offset + PEXTENT_BASE, mgr.get_min_alloc_size()) == blob.extents.at(0));
-  }
-
-  offset += bl.length();
-  prev_alloc_offset = mgr.m_allocNextOffset;
-  mgr.reset(false);
-
-  //Overwrite the content totally + append some data (0x80000 - 100 bytes total) - thus releasing all lextents/blobs
-  offset = 0;
-  mgr.m_cratio = 2;
-  mgr.prepareWriteData(offset, 0x80000 - 100, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
-  ASSERT_EQ((int)bl.length(), r);
-  ASSERT_EQ(2u, mgr.m_writes.size()); //two lextents has been created due to max_blob_size limit
-
-  ASSERT_EQ(4u, mgr.m_zeros.size());
-  ASSERT_EQ(4u, mgr.m_releases.size());
   ASSERT_EQ(2u, mgr.m_compresses.size());
-  tmpbl.substr_of(bl, 0, mgr.get_max_blob_size() / mgr.m_cratio);
-  ASSERT_TRUE(mgr.checkWrite(prev_alloc_offset, tmpbl.length(), tmpbl));
-  tmpbl.substr_of(bl, mgr.get_max_blob_size(), (bl.length() - mgr.get_max_blob_size()) / 2);
-  tmpbl.append_zero(ROUND_UP_TO(tmpbl.length(), mgr.get_block_size()) - tmpbl.length());
+
+  ASSERT_TRUE(mgr.checkWrite(prev_alloc_offset, mgr.get_max_blob_size() / mgr.m_cratio, bl, 0, mgr.get_max_blob_size() / mgr.m_cratio));
   ASSERT_TRUE(mgr.checkWrite(
-    prev_alloc_offset + mgr.get_max_blob_size() / mgr.m_cratio,
-    tmpbl.length(),
+    prev_alloc_offset + mgr.get_max_blob_size() / mgr.m_cratio, 
+    mgr.get_max_blob_size() / mgr.m_cratio,
+    bl,
+    mgr.get_max_blob_size() / mgr.m_cratio,
+    mgr.get_max_blob_size() / mgr.m_cratio));
+  tmpbl.substr_of(bl, mgr.get_max_blob_size() * 2, 100);
+  tmpbl.append_zero(mgr.get_block_size() - tmpbl.length());
+  ASSERT_TRUE(mgr.checkWrite(
+    prev_alloc_offset + 2 * mgr.get_max_blob_size() / mgr.m_cratio, 
+    ROUND_UP_TO(100, mgr.get_block_size()),
     tmpbl));
 
-  ASSERT_EQ(2u, mgr.lextents().size());
-  ASSERT_EQ(2u, mgr.blobs().size());
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 7, 0u, mgr.get_max_blob_size(), 0) == mgr.lextents().at(0));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 8, 0u, bl.length() - mgr.get_max_blob_size(), 0) == mgr.lextents().at(mgr.get_max_blob_size()));
+  ASSERT_TRUE(mgr.checkZero(OffsLenTuple(some_alloc_offset, ROUND_UP_TO(some_len, mgr.get_block_size()))));
+  ASSERT_TRUE(mgr.checkReleases(OffsLenTuple(some_alloc_offset, ROUND_UP_TO(some_len, mgr.get_min_alloc_size()))));
 
-  {
-    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 7);
-    ASSERT_EQ(mgr.get_max_blob_size() / mgr.m_cratio, blob.length);
-    ASSERT_EQ(bluestore_blob_t::BLOB_COMPRESSED, blob.flags);
-    ASSERT_EQ(bluestore_blob_t::CSUM_NONE, blob.csum_type);
-    ASSERT_EQ(1u, blob.num_refs);
-    ASSERT_EQ(1u, blob.extents.size());
-  }
-  {
-    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 8);
-    ASSERT_EQ((bl.length() - mgr.get_max_blob_size()) / mgr.m_cratio, blob.length);
-    ASSERT_EQ(bluestore_blob_t::BLOB_COMPRESSED, blob.flags);
-    ASSERT_EQ(bluestore_blob_t::CSUM_NONE, blob.csum_type);
-    ASSERT_EQ(1u, blob.num_refs);
-    ASSERT_EQ(1u, blob.extents.size());
-  }
+  ASSERT_TRUE(mgr.checkCompress(OffsLenTuple(0u, mgr.get_max_blob_size())));
+  ASSERT_TRUE(mgr.checkCompress(OffsLenTuple(mgr.get_max_blob_size(), mgr.get_max_blob_size())));
 
-  offset += bl.length();
-  prev_alloc_offset = mgr.m_allocNextOffset;
-  mgr.reset(false);
-
-  //Append some data after the end pos
-  offset = 0x80100;
-  mgr.prepareWriteData(offset, 0x12345, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
-  ASSERT_EQ((int)bl.length(), r);
-  ASSERT_EQ(1u, mgr.m_writes.size());
-  ASSERT_EQ(0u, mgr.m_zeros.size());
-  ASSERT_EQ(0u, mgr.m_releases.size());
-  ASSERT_EQ(1u, mgr.m_compresses.size());
-  tmpbl.substr_of(bl, 0, bl.length() / mgr.m_cratio);;
-  tmpbl.append_zero(ROUND_UP_TO(tmpbl.length(), mgr.get_block_size()) - tmpbl.length());
-  ASSERT_TRUE(mgr.checkWrite(prev_alloc_offset, tmpbl.length(), tmpbl));
   ASSERT_EQ(ROUND_UP_TO(bl.length() / mgr.m_cratio, mgr.get_min_alloc_size()), mgr.m_allocNextOffset - prev_alloc_offset);
-
-  ASSERT_EQ(3u, mgr.lextents().size());
-  ASSERT_EQ(3u, mgr.blobs().size());
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 7, 0u, mgr.get_max_blob_size(), 0) == mgr.lextents().at(0));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 8, 0u, 0x80000 - 100 - mgr.get_max_blob_size(), 0) == mgr.lextents().at(mgr.get_max_blob_size()));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 9, 0u, bl.length(), 0) == mgr.lextents().at(0x80100));
-  {
-    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 9);
-    ASSERT_EQ(bl.length() / mgr.m_cratio, blob.length);
-    ASSERT_EQ(bluestore_blob_t::BLOB_COMPRESSED, blob.flags);
-    ASSERT_EQ(bluestore_blob_t::CSUM_NONE, blob.csum_type);
-    ASSERT_EQ(1u, blob.num_refs);
-    ASSERT_EQ(1u, blob.extents.size());
-  }
-
-  offset += bl.length();
-  prev_alloc_offset = mgr.m_allocNextOffset;
-  mgr.reset(false);
-
-  //Partially overwrite ( with 0x10001 bytes of data, uncompressed ) last two extents
-  offset = 0x7A000;
-  mgr.m_fail_compress = true;
-  mgr.prepareWriteData(offset, 0x10001, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
-  ASSERT_EQ((int)bl.length(), r);
-  ASSERT_EQ(1u, mgr.m_writes.size());
-  ASSERT_EQ(0u, mgr.m_zeros.size());
-  ASSERT_EQ(0u, mgr.m_releases.size());
-  ASSERT_EQ(1u, mgr.m_compresses.size());
-  tmpbl = bl;
-  tmpbl.append_zero(ROUND_UP_TO(tmpbl.length(), mgr.get_block_size()) - tmpbl.length());
-  ASSERT_TRUE(mgr.checkWrite(prev_alloc_offset, tmpbl.length(), tmpbl));
-  ASSERT_EQ(ROUND_UP_TO(tmpbl.length(), mgr.get_min_alloc_size()), mgr.m_allocNextOffset - prev_alloc_offset);
 
   ASSERT_EQ(4u, mgr.lextents().size());
   ASSERT_EQ(4u, mgr.blobs().size());
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 7, 0u, mgr.get_max_blob_size(), 0) == mgr.lextents().at(0));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 8, 0u, 0x3a000, 0) == mgr.lextents().at(mgr.get_max_blob_size()));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 10, 0u, bl.length(), 0) == mgr.lextents().at(0x7A000));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 9, 0x9f01, 0x12345 - 0x9f01, 0) == mgr.lextents().at(0x8a001));
+  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF, 0u, mgr.get_block_size() - 10, 0) == mgr.lextents().at(6u));
+  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 2, 0u, mgr.get_max_blob_size(), 0) == mgr.lextents().at(0x1000 - 1));
+  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 3, 0u, mgr.get_max_blob_size(), 0) == mgr.lextents().at(mgr.get_max_blob_size() + 0x1000 - 1));
+  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 4, 0u, 100, 0) == mgr.lextents().at(mgr.get_max_blob_size() * 2 + 0x1000 - 1));
   {
-    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 10);
-    ASSERT_EQ(bl.length(), blob.length);
-    ASSERT_EQ(0u, blob.flags);
-    ASSERT_EQ(bluestore_blob_t::CSUM_NONE, blob.csum_type);
-    ASSERT_EQ(1u, blob.num_refs);
-    ASSERT_EQ(1u, blob.extents.size());
-  }
-
-  mgr.m_fail_compress = false;
-  offset += bl.length();
-  prev_alloc_offset = mgr.m_allocNextOffset;
-  mgr.reset(false);
-
-  //Overwrite with append ( with 0x30001 bytes of data). Last two extents to be removed, the preceeding one to be altered
-  offset = 0x79fff;
-  some_alloc_offset = mgr.blobs().at(FIRST_BLOB_REF + 10).extents.at(0).offset - PEXTENT_BASE;
-  some_alloc_offset2 = mgr.blobs().at(FIRST_BLOB_REF + 9).extents.at(0).offset - PEXTENT_BASE;
-  some_len = mgr.blobs().at(FIRST_BLOB_REF + 10).length;
-  some_len2 = mgr.blobs().at(FIRST_BLOB_REF + 9).length;
-
-  mgr.prepareWriteData(offset, 0x30001, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
-  ASSERT_EQ((int)bl.length(), r);
-  ASSERT_EQ(1u, mgr.m_writes.size());
-  ASSERT_EQ(2u, mgr.m_zeros.size());
-  ASSERT_EQ(2u, mgr.m_releases.size());
-  ASSERT_EQ(1u, mgr.m_compresses.size());
-  tmpbl.substr_of(bl, 0, bl.length() / mgr.m_cratio);
-  tmpbl.append_zero(ROUND_UP_TO(tmpbl.length(), mgr.get_block_size()) - tmpbl.length());
-  ASSERT_TRUE(mgr.checkWrite(prev_alloc_offset, tmpbl.length(), tmpbl));
-  ASSERT_EQ(ROUND_UP_TO(tmpbl.length(), mgr.get_min_alloc_size()), mgr.m_allocNextOffset - prev_alloc_offset);
-  ASSERT_TRUE(mgr.checkZero(OffsLenTuple(some_alloc_offset, ROUND_UP_TO(some_len, mgr.get_block_size()))));
-  ASSERT_TRUE(mgr.checkReleases(OffsLenTuple(some_alloc_offset, ROUND_UP_TO(some_len, mgr.get_min_alloc_size()))));
-  ASSERT_TRUE(mgr.checkZero(OffsLenTuple(some_alloc_offset2, ROUND_UP_TO(some_len2, mgr.get_block_size()))));
-  ASSERT_TRUE(mgr.checkReleases(OffsLenTuple(some_alloc_offset2, ROUND_UP_TO(some_len2, mgr.get_min_alloc_size()))));
-
-  ASSERT_EQ(3u, mgr.lextents().size());
-  ASSERT_EQ(3u, mgr.blobs().size());
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 7, 0u, mgr.get_max_blob_size(), 0) == mgr.lextents().at(0));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 8, 0u, 0x39fff, 0) == mgr.lextents().at(mgr.get_max_blob_size()));
-  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF + 11, 0u, bl.length(), 0) == mgr.lextents().at(0x79fff));
-  {
-    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 11);
-    ASSERT_EQ(bl.length() / mgr.m_cratio, blob.length);
+    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 2);
+    ASSERT_EQ(mgr.get_max_blob_size() / mgr.m_cratio, blob.length);
     ASSERT_EQ(bluestore_blob_t::BLOB_COMPRESSED, blob.flags);
-    ASSERT_EQ(bluestore_blob_t::CSUM_NONE, blob.csum_type);
+    ASSERT_EQ(check_info.csum_type, blob.csum_type);
     ASSERT_EQ(1u, blob.num_refs);
     ASSERT_EQ(1u, blob.extents.size());
+    ASSERT_EQ(check_info.csum_block_order, blob.csum_block_order);
+    tmpbl.substr_of(bl, 0, blob.length);
+    auto bs = blob.get_csum_block_size();
+    ASSERT_EQ(
+      ROUND_UP_TO(tmpbl.length(), bs) / bs * blob.get_csum_value_size(),
+      blob.csum_data.size());
+    ASSERT_TRUE(mgr.checkCSum(
+      blob.get_csum_value_size(),
+      blob.get_csum_block_size(),
+      blob.csum_data,
+      tmpbl));
+  }
+  {
+    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 3);
+    ASSERT_EQ(mgr.get_max_blob_size() / mgr.m_cratio, blob.length);
+    ASSERT_EQ(bluestore_blob_t::BLOB_COMPRESSED, blob.flags);
+    ASSERT_EQ(check_info.csum_type, blob.csum_type);
+    ASSERT_EQ(1u, blob.num_refs);
+    ASSERT_EQ(1u, blob.extents.size());
+    ASSERT_EQ(check_info.csum_block_order, blob.csum_block_order);
+    tmpbl.substr_of(bl, mgr.get_max_blob_size(), blob.length);
+    auto bs = blob.get_csum_block_size();
+    ASSERT_EQ(
+      ROUND_UP_TO(tmpbl.length(), bs) / bs * blob.get_csum_value_size(),
+      blob.csum_data.size());
+    ASSERT_TRUE(mgr.checkCSum(
+      blob.get_csum_value_size(),
+      blob.get_csum_block_size(),
+      blob.csum_data,
+      tmpbl));
+  }
+  {
+    const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 4);
+    ASSERT_EQ(100, blob.length);
+    ASSERT_EQ(0u, blob.flags);
+    ASSERT_EQ(check_info.csum_type, blob.csum_type);
+    ASSERT_EQ(1u, blob.num_refs);
+    ASSERT_EQ(1u, blob.extents.size());
+    ASSERT_EQ(check_info.csum_block_order, blob.csum_block_order);
+    tmpbl.substr_of(bl, mgr.get_max_blob_size() * 2, blob.length);
+    auto bs = blob.get_csum_block_size();
+    ASSERT_EQ(
+      ROUND_UP_TO(tmpbl.length(), bs) / bs * blob.get_csum_value_size(),
+      blob.csum_data.size());
+    ASSERT_TRUE(mgr.checkCSum(
+      blob.get_csum_value_size(),
+      blob.get_csum_block_size(),
+      blob.csum_data,
+      tmpbl));
   }
 
   offset += bl.length();
   prev_alloc_offset = mgr.m_allocNextOffset;
   mgr.reset(false);
-  */
 }
 
 int main(int argc, char **argv) {
