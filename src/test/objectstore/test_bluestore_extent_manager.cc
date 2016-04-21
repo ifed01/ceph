@@ -2472,8 +2472,8 @@ TEST(bluestore_extent_manager, write_csum_compressed)
   int r;
   uint64_t offset = 0u;
   uint64_t prev_alloc_offset = 0;
-  uint64_t some_alloc_offset = 0, some_alloc_offset2 = 0;
-  uint64_t some_len = 0, some_len2 = 0;;
+  uint64_t some_alloc_offset = 0;
+  uint64_t some_len = 0;
 
   //Append get_block_size()-10 bytes  at offset 6
   offset = 6u;
@@ -2631,7 +2631,7 @@ TEST(bluestore_extent_manager, write_csum_compressed)
   }
   {
     const bluestore_blob_t& blob = mgr.blobs().at(FIRST_BLOB_REF + 4);
-    ASSERT_EQ(100, blob.length);
+    ASSERT_EQ(100u, blob.length);
     ASSERT_EQ(0u, blob.flags);
     ASSERT_EQ(check_info.csum_type, blob.csum_type);
     ASSERT_EQ(1u, blob.num_refs);

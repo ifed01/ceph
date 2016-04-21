@@ -363,7 +363,7 @@ int ExtentManager::verify_csum(const bluestore_blob_t* blob, uint64_t blob_xoffs
   return r;
 }
 
-void ExtentManager::preprocess_changes(uint64_t offset, uint64_t length, bluestore_lextent_map_t* updated_lextents, ExtentManager::live_lextent_map_t* removed_lextents, list<BlobRef>* blob2ref)
+void ExtentManager::preprocess_changes(uint64_t offset, uint64_t length, bluestore_lextent_map_t* updated_lextents, ExtentManager::live_lextent_map_t* removed_lextents, list<BlobRef>* blobs2ref)
 {
   auto lext_begin = m_lextents.begin();
   auto lext_end = m_lextents.end();
@@ -451,7 +451,6 @@ int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, co
 
 int ExtentManager::zero(uint64_t offset, uint64_t len, void* opaque)
 {
-  int r;
   bluestore_lextent_map_t updated_lextents;
   live_lextent_map_t  new_lextents, removed_lextents;
   list<BlobRef> blobs2ref;
