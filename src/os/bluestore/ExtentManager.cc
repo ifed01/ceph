@@ -363,84 +363,7 @@ int ExtentManager::verify_csum(const bluestore_blob_t* blob, uint64_t blob_xoffs
   return r;
 }
 
-int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, const ExtentManager::CompressInfo* compress_info)
-{
-  int r;
-  auto lext_begin = m_lextents.begin();
-  auto lext_end = m_lextents.end();
-  
-  //Check for append and position the iterator to the lextent prior to the specified offset
-  bool append = false;
-  auto lext_it = m_lextents.upper_bound(offset);
-  if (lext_it == lext_end) {
-    if (lext_it != lext_begin ) {
-      --lext_it;
-      append = lext_it->first + lext_it->second.length <= offset;
-    }
-    else
-      append = true;
-  } else if (lext_it != lext_begin)
-    --lext_it;
-
-
-  bluestore_lextent_map_t updated_lextents;
-  live_lextent_map_t  new_lextents, removed_lextents;
-  list<BlobRef> m_blobs2ref;
-  if (!append) {
-    uint64_t write_end_offset = offset + bl.length();
-    while (lext_it != lext_end && lext_it->first < write_end_offset) {
-
-      uint64_t lext_end_offset = lext_it->first + lext_it->second.length;
-      if (lext_it->first >= offset &&  lext_end_offset <= write_end_offset) { //totally overlapped lextent
-	bluestore_lextent_t& lext = lext_it->second;
-	auto blob_it = get_blob_iterator(lext.blob);
-	removed_lextents.emplace(lext_it->first, live_lextent_t(blob_it, lext.blob, lext.x_offset, lext.length, lext.flags));
-	ref_blob(blob_it);
-      } else if (lext_it->first < offset
-         && lext_end_offset > offset
-         && lext_end_offset <= write_end_offset) { //partially overlapped at the end
-	bluestore_lextent_t& upd_lext = updated_lextents[lext_it->first];
-	upd_lext = lext_it->second;
-	upd_lext.length = offset - lext_it->first;
-      } else if (lext_it->first >= offset && lext_end_offset > write_end_offset) { //partially overlapped at the start
-	bluestore_lextent_t& upd_lext = updated_lextents[write_end_offset];
-	upd_lext = lext_it->second;
-	upd_lext.x_offset += write_end_offset - lext_it->first;
-	upd_lext.length = lext_end_offset - write_end_offset;
-	removed_lextents.emplace(lext_it->first, live_lextent_t(m_blobs.end())); //the content of the live lextent has to be empty - we need to remove entry from the lextent map only, blob map to be unaffected
-      } else if (lext_it->first < offset && lext_end_offset > write_end_offset) { //overlapped at the center
-	bluestore_lextent_t& upd_lext1 = updated_lextents[lext_it->first];
-	upd_lext1 = lext_it->second;
-	upd_lext1.length = offset - lext_it->first;
-	bluestore_lextent_t& upd_lext2 = updated_lextents[write_end_offset];
-	upd_lext2 = lext_it->second;
-	upd_lext2.x_offset += write_end_offset - lext_it->first;
-	upd_lext2.length = lext_end_offset - write_end_offset;
-
-	m_blobs2ref.push_back(lext_it->second.blob);
-      }
-      ++lext_it;
-    }
-  }
-
-  r = compress_info && bl.length() > get_min_alloc_size() ?
-    write_compressed(offset, bl, opaque, check_info, *compress_info, &new_lextents) :
-    write_uncompressed(offset, bl, opaque, check_info, &new_lextents);
-
-  if (r > 0) {
-    update_lextents(updated_lextents.begin(), updated_lextents.end());
-    auto it = m_blobs2ref.begin();
-    while (it != m_blobs2ref.end()) {
-      ref_blob(*it);
-      ++it;
-    }
-    release_lextents(removed_lextents.begin(), removed_lextents.end(), true, true, opaque);
-    add_lextents(new_lextents.begin(), new_lextents.end());
-  }
-  return r >= 0 ? bl.length() : r;
-}
-
-int ExtentManager::zero(uint64_t offset, uint64_t len, void* opaque)
+void ExtentManager::preprocess_changes(uint64_t offset, uint64_t length, bluestore_lextent_map_t* updated_lextents, ExtentManager::live_lextent_map_t* removed_lextents, list<BlobRef>* blob2ref)
 {
   auto lext_begin = m_lextents.begin();
   auto lext_end = m_lextents.end();
@@ -459,49 +382,85 @@ int ExtentManager::zero(uint64_t offset, uint64_t len, void* opaque)
   else if (lext_it != lext_begin)
     --lext_it;
 
-
-  bluestore_lextent_map_t updated_lextents;
-  live_lextent_map_t  removed_lextents;
-  list<BlobRef> m_blobs2ref;
   if (!append) {
-    uint64_t write_end_offset = offset + len;
+    uint64_t write_end_offset = offset + length;
     while (lext_it != lext_end && lext_it->first < write_end_offset) {
+
       uint64_t lext_end_offset = lext_it->first + lext_it->second.length;
-      if (lext_it->first >= offset && lext_end_offset <= write_end_offset) { //totally overlapped lextent
+      if (lext_it->first >= offset &&  lext_end_offset <= write_end_offset) { //totally overlapped lextent
 	bluestore_lextent_t& lext = lext_it->second;
 	auto blob_it = get_blob_iterator(lext.blob);
-	removed_lextents.emplace(lext_it->first, live_lextent_t(blob_it, lext.blob, lext.x_offset, lext.length, lext.flags));
+	removed_lextents->emplace(lext_it->first, live_lextent_t(blob_it, lext.blob, lext.x_offset, lext.length, lext.flags));
 	ref_blob(blob_it);
-      } else if (lext_it->first < offset
-         && lext_end_offset > offset
-         && lext_end_offset <= write_end_offset) { //partially overlapped at the end
-	bluestore_lextent_t& upd_lext = updated_lextents[lext_it->first];
+      }
+      else if (lext_it->first < offset
+	&& lext_end_offset > offset
+	&& lext_end_offset <= write_end_offset) { //partially overlapped at the end
+	bluestore_lextent_t& upd_lext = (*updated_lextents)[lext_it->first];
 	upd_lext = lext_it->second;
 	upd_lext.length = offset - lext_it->first;
-      } else if (lext_it->first >= offset && lext_end_offset > write_end_offset) { //partially overlapped at the start
-	bluestore_lextent_t& upd_lext = updated_lextents[write_end_offset];
+      }
+      else if (lext_it->first >= offset && lext_end_offset > write_end_offset) { //partially overlapped at the start
+	bluestore_lextent_t& upd_lext = (*updated_lextents)[write_end_offset];
 	upd_lext = lext_it->second;
 	upd_lext.x_offset += write_end_offset - lext_it->first;
 	upd_lext.length = lext_end_offset - write_end_offset;
-	removed_lextents.emplace(lext_it->first, live_lextent_t(m_blobs.end())); //the content of the live lextent has to be empty - we need to remove entry from the lextent map only, blob map to be unaffected
-      } else if (lext_it->first < offset && lext_end_offset > write_end_offset) { //overlapped at the center
-	bluestore_lextent_t& upd_lext1 = updated_lextents[lext_it->first];
+	removed_lextents->emplace(lext_it->first, live_lextent_t(m_blobs.end())); //the content of the live lextent has to be empty - we need to remove entry from the lextent map only, blob map to be unaffected
+      }
+      else if (lext_it->first < offset && lext_end_offset > write_end_offset) { //overlapped at the center
+	bluestore_lextent_t& upd_lext1 = (*updated_lextents)[lext_it->first];
 	upd_lext1 = lext_it->second;
 	upd_lext1.length = offset - lext_it->first;
-	bluestore_lextent_t& upd_lext2 = updated_lextents[write_end_offset];
+	bluestore_lextent_t& upd_lext2 = (*updated_lextents)[write_end_offset];
 	upd_lext2 = lext_it->second;
 	upd_lext2.x_offset += write_end_offset - lext_it->first;
 	upd_lext2.length = lext_end_offset - write_end_offset;
 
-	m_blobs2ref.push_back(lext_it->second.blob);
+	blobs2ref->push_back(lext_it->second.blob);
       }
       ++lext_it;
     }
   }
+}
+
+int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, const ExtentManager::CompressInfo* compress_info)
+{
+  int r;
+  bluestore_lextent_map_t updated_lextents;
+  live_lextent_map_t  new_lextents, removed_lextents;
+  list<BlobRef> blobs2ref;
+  
+  preprocess_changes(offset, bl.length(), &updated_lextents, &removed_lextents, &blobs2ref);
+
+  r = compress_info && bl.length() > get_min_alloc_size() ?
+    write_compressed(offset, bl, opaque, check_info, *compress_info, &new_lextents) :
+    write_uncompressed(offset, bl, opaque, check_info, &new_lextents);
+
+  if (r > 0) {
+    update_lextents(updated_lextents.begin(), updated_lextents.end());
+    auto it = blobs2ref.begin();
+    while (it != blobs2ref.end()) {
+      ref_blob(*it);
+      ++it;
+    }
+    release_lextents(removed_lextents.begin(), removed_lextents.end(), true, true, opaque);
+    add_lextents(new_lextents.begin(), new_lextents.end());
+  }
+  return r >= 0 ? bl.length() : r;
+}
+
+int ExtentManager::zero(uint64_t offset, uint64_t len, void* opaque)
+{
+  int r;
+  bluestore_lextent_map_t updated_lextents;
+  live_lextent_map_t  new_lextents, removed_lextents;
+  list<BlobRef> blobs2ref;
+
+  preprocess_changes(offset, len, &updated_lextents, &removed_lextents, &blobs2ref);
 
   update_lextents(updated_lextents.begin(), updated_lextents.end());
-  auto it = m_blobs2ref.begin();
-  while (it != m_blobs2ref.end()) {
+  auto it = blobs2ref.begin();
+  while (it != blobs2ref.end()) {
     ref_blob(*it);
     ++it;
   }

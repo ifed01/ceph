@@ -108,8 +108,6 @@ protected:
   typedef map<const bluestore_extent_t*, regions2read_t> extents2read_t;
   typedef map<uint64_t, bufferlist> ready_regions_t;
 
-
-
   //Temporary struct to represent lextent along with corresponding pointer to a blob.
   //Valid during single write request handling call.
   //Intended to reduce blobs lookup.
@@ -143,6 +141,8 @@ protected:
   void deref_blob(bluestore_blob_map_t::iterator blob_it, bool zero, void* opaque);
 
   uint64_t get_read_block_size(const bluestore_blob_t*) const;
+
+  void preprocess_changes(uint64_t offset, uint64_t length, bluestore_lextent_map_t* updated_lextents, live_lextent_map_t* removed_lextents, list<BlobRef>* blob2ref);
 
   int read_whole_blob(const bluestore_blob_t*, void* opaque, bufferlist* result);
   int read_extent_sparse(const bluestore_blob_t*, const bluestore_extent_t* extent, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, void* opaque, ready_regions_t* result);
