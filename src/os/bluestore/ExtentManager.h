@@ -115,9 +115,6 @@ protected:
   {
     bluestore_blob_map_t::iterator blob_iterator;
 
-/*    live_lextent_t()
-      : bluestore_lextent_t()
-    {}*/
     live_lextent_t(const live_lextent_t& from)
       : bluestore_lextent_t(from),
       blob_iterator(from.blob_iterator)

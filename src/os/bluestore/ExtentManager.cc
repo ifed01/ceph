@@ -105,7 +105,7 @@ int ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferli
   bluestore_lextent_map_t::iterator lext = m_lextents.upper_bound(offset);
   uint32_t l = length;
   uint64_t o = offset;
-  if (lext == m_lextents.begin() && offset+ length <= lext->first){
+  if (lext == m_lextents.begin() && offset + length <= lext->first){
     result->append_zero(length);
     return 0;
   } else if(lext == m_lextents.begin()) {
