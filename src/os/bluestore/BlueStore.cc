@@ -2638,6 +2638,17 @@ int BlueStore::_do_read(
 
   o->flush();
 
+  ExtentManager em(*this,
+    *this,
+    *this,
+    o->onode.lextents,
+    o->onode.blobs,
+    g_conf->bluestore_min_alloc_size *4, //replace with max_blob_size
+    g_conf->bluestore_min_alloc_size);
+
+  BluestoreReadContext ctx(buffered);
+  r = em.read(offset, length, &ctx, &bl);
+  /*
   // loop over overlays and data fragments.  overlays take precedence.
   bend = o->onode.block_map.end();
   bp = o->onode.block_map.lower_bound(offset);
@@ -2741,7 +2752,7 @@ int BlueStore::_do_read(
     offset += x_len;
     length -= x_len;
   }
-  r = bl.length();
+  r = bl.length();*/
 
  out:
   return r;
@@ -5828,6 +5839,7 @@ int BlueStore::_do_zero(TransContext *txc,
   int r = 0;
   o->exists = true;
 
+  //FIXME: shouldn't it be offset + length > o->onode.size?
   if (offset > o->onode.size) {
     // we are past eof; just truncate up.
     return _do_truncate(txc, c, o, offset + length);
@@ -5836,6 +5848,19 @@ int BlueStore::_do_zero(TransContext *txc,
   _dump_onode(o);
   _assign_nid(txc, o);
 
+
+  ExtentManager em(*this,
+    *this,
+    *this,
+    o->onode.lextents,
+    o->onode.blobs,
+    g_conf->bluestore_min_alloc_size * 4, //replace with max_blob_size
+    g_conf->bluestore_min_alloc_size);
+
+  BluestoreWriteContext ctx(&txc->ioc, false);
+  r = em.zero(offset, length, &ctx);
+
+  /*
   // overlay
   _do_overlay_trim(txc, o, offset, length);
 
@@ -5896,7 +5921,7 @@ int BlueStore::_do_zero(TransContext *txc,
 	       << " " << op->extent << dendl;
     }
     ++bp;
-  }
+  }*/
 
   if (offset + length > o->onode.size) {
     o->onode.size = offset + length;
@@ -5914,14 +5939,26 @@ int BlueStore::_do_zero(TransContext *txc,
 int BlueStore::_do_truncate(
   TransContext *txc, CollectionRef& c, OnodeRef o, uint64_t offset)
 {
-  uint64_t block_size = bdev->get_block_size();
+  /*uint64_t block_size = bdev->get_block_size();
   uint64_t min_alloc_size = g_conf->bluestore_min_alloc_size;
-  uint64_t alloc_end = ROUND_UP_TO(offset, min_alloc_size);
+  uint64_t alloc_end = ROUND_UP_TO(offset, min_alloc_size);*/
 
   // ensure any wal IO has completed before we truncate off any extents
   // they may touch.
   o->flush();
 
+  ExtentManager em(*this,
+    *this,
+    *this,
+    o->onode.lextents,
+    o->onode.blobs,
+    g_conf->bluestore_min_alloc_size * 4, //replace with max_blob_size
+    g_conf->bluestore_min_alloc_size);
+
+  BluestoreWriteContext ctx(&txc->ioc, false);
+  r = em.truncate(offset, &ctx);
+
+  /*
   // trim down cached tail
   if (o->tail_bl.length()) {
     // we could adjust this if we truncate down within the same
@@ -5967,11 +6004,12 @@ int BlueStore::_do_truncate(
       break;
     }
   }
-
+  
   // adjust size now, in case we need to call _do_write_zero below.
-  uint64_t old_size = o->onode.size;
+  uint64_t old_size = o->onode.size;*/
   o->onode.size = offset;
 
+  /*
   // zero extent if trimming up?
   if (offset > old_size) {
     map<uint64_t,bluestore_extent_t>::iterator bp = o->onode.block_map.end();
@@ -5998,10 +6036,10 @@ int BlueStore::_do_truncate(
 		 << " " << op->extent << dendl;
       }
     }
-  }
+  }*/
 
   // trim down overlays
-  map<uint64_t,bluestore_overlay_t>::iterator op = o->onode.overlay_map.end();
+ /* map<uint64_t,bluestore_overlay_t>::iterator op = o->onode.overlay_map.end();
   if (op != o->onode.overlay_map.begin())
     --op;
   while (op != o->onode.overlay_map.end()) {
@@ -6036,7 +6074,7 @@ int BlueStore::_do_truncate(
       ov.length = newlen;
       break;
     }
-  }
+  }*/
 
   txc->write_onode(o);
   return 0;
@@ -6614,6 +6652,64 @@ int BlueStore::_split_collection(TransContext *txc,
   dout(10) << __func__ << " " << c->cid << " to " << d->cid << " "
 	   << " bits " << bits << " = " << r << dendl;
   return r;
+}
+
+////////////////BlockOpInterface implementation////////////
+uint64_t BlueStore::get_block_size()
+{
+  return bdev->get_block_size();
+}
+
+int BlueStore::read_block(uint64_t offset, uint32_t length, void* opaque, bufferlist* result)
+{
+  BluestoreReadContext* ctx = (BluestoreReadContext*)opaque;
+  int r = bdev->read(offset, length, result, &(ctx->ioc), ctx->buffered);
+  return r;
+}
+
+int BlueStore::write_block(uint64_t offset, const bufferlist& data, void* opaque)
+{
+  BluestoreWriteContext* ctx = (BluestoreWriteContext*)opaque;
+  int r = bdev->aio_write(offset, data, &(ctx->ioc), ctx->buffered);
+  return r;
+}
+
+int BlueStore::zero_block(uint64_t offset, uint64_t length, void* opaque)
+{
+  return bdev->aio_zero(offset, length, (IOContext *)opaque);
+}
+
+//
+//Method to allocate pextents
+//Returns single or multiple pextents depending on the store state, i.e. if there is contiguous extent available or not
+//
+int BlueStore::allocate_blocks(uint32_t length, void* opaque, bluestore_extent_vector_t* result)
+{
+  return 0;
+}
+
+int BlueStore::release_block(uint64_t offset, uint32_t length, void* opaque)
+{
+  return 0;
+}
+
+////////////////CompressorInterface implementation////////
+int compress(const ExtentManager::CompressInfo& cinfo, uint32_t source_offs, uint32_t length, const bufferlist& source, void* opaque, bufferlist* result)
+{
+  return -1;
+}
+
+int decompress(const bufferlist& source, void* opaque, bufferlist* result) {
+  return -1;
+}
+////////////////CheckSumVerifyInterface implementation////////
+int calculate(bluestore_blob_t::CSumType type, uint32_t csum_value_size, uint32_t csum_block_size, uint32_t source_offs, uint32_t source_len, const bufferlist& source, void* opaque, vector<char>* csum_data)
+{
+  return 0;
+}
+int verify(bluestore_blob_t::CSumType type, uint32_t csum_value_size, uint32_t csum_block_size, const bufferlist& source, void* opaque, const vector<char>& csum_data)
+{
+  return 0;
 }
 
 // ===========================================

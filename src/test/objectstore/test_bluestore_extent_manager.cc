@@ -23,7 +23,7 @@
 #include "global/global_context.h"
 #include "os/bluestore/ExtentManager.h"
 
-typedef pair<uint64_t, uint32_t> OffsLenTuple;
+typedef pair<uint64_t, uint64_t> OffsLenTuple;
 typedef vector<OffsLenTuple> OffsLenList;
 
 struct WriteTuple
@@ -67,12 +67,15 @@ class TestExtentManager
       public ExtentManager::CheckSumVerifyInterface,
       public ExtentManager {
 
+  bluestore_lextent_map_t m_lextents;
+  bluestore_blob_map_t m_blobs;
+
 public:
   TestExtentManager() 
     : ExtentManager::BlockOpInterface(),
       ExtentManager::CompressorInterface(),
       ExtentManager::CheckSumVerifyInterface(),
-      ExtentManager(*this, *this, *this),
+      ExtentManager(*this, *this, *this, m_lextents, m_blobs, 4 * 0x10000, 0x10000),
       m_allocNextOffset(0),
       m_fail_compress(false),
       m_cratio(2) {
@@ -86,8 +89,8 @@ public:
 
   //Intended to create EM backup thus performs incomplete copy that covers EM state only. Op history and test wrapper state aren't copied.
   void operator= (const TestExtentManager& from) {
-    ExtentManager::m_lextents = from.m_lextents;
-    ExtentManager::m_blobs = from.m_blobs;
+    m_lextents = from.m_lextents;
+    m_blobs = from.m_blobs;
   }
   const bluestore_lextent_map_t& lextents() const { return m_lextents; }
   const bluestore_blob_map_t& blobs() const { return m_blobs; }
@@ -322,7 +325,7 @@ protected:
     m_writes.push_back(WriteList::value_type(offset - PEXTENT_BASE, data.length(), data.crc32c(0)));
     return data.length();
   }
-  virtual int zero_block(uint64_t offset, uint32_t length, void* opaque)
+  virtual int zero_block(uint64_t offset, uint64_t length, void* opaque)
   {
     assert(0u == (length % get_block_size()));
     m_zeros.push_back(OffsLenList::value_type(offset - PEXTENT_BASE, length));

@@ -45,7 +45,7 @@ public:
 
     virtual int read_block(uint64_t offset, uint32_t length, void* opaque, bufferlist* result) = 0;
     virtual int write_block(uint64_t offset, const bufferlist& data, void* opaque) = 0;
-    virtual int zero_block(uint64_t offset, uint32_t length, void* opaque) = 0;
+    virtual int zero_block(uint64_t offset, uint64_t length, void* opaque) = 0;
 
     //method to allocate pextents, depending on the store state can return single or multiple pextents if there is no contiguous extent available
     virtual int allocate_blocks(uint32_t length, void* opaque, bluestore_extent_vector_t* result) = 0;
@@ -69,8 +69,21 @@ public:
   };
 
 
-  ExtentManager(BlockOpInterface& blockop_inf, CompressorInterface& compressor, CheckSumVerifyInterface& csum_verifier)
-    : m_blockop_inf(blockop_inf), m_compressor(compressor), m_csum_verifier(csum_verifier) {
+  ExtentManager(
+    BlockOpInterface& blockop_inf,
+    CompressorInterface& compressor,
+    CheckSumVerifyInterface& csum_verifier,
+    bluestore_lextent_map_t& lextents,
+    bluestore_blob_map_t& blobs,
+    uint64_t max_blob_size,
+    uint64_t min_alloc_size)
+    : m_blockop_inf(blockop_inf),
+      m_compressor(compressor),
+      m_csum_verifier(csum_verifier),
+      m_lextents(lextents),
+      m_blobs(blobs),
+      m_max_blob_size(max_blob_size),
+      m_min_alloc_size(min_alloc_size) {
   }
 
   int write(uint64_t offset, const bufferlist& bl, void* opaque, const CheckSumInfo& check_info, const CompressInfo* compress_info);
@@ -83,11 +96,14 @@ public:
 
 protected:
 
-  bluestore_blob_map_t m_blobs;
-  bluestore_lextent_map_t m_lextents;
   BlockOpInterface& m_blockop_inf;
   CompressorInterface& m_compressor;
   CheckSumVerifyInterface& m_csum_verifier;
+  bluestore_lextent_map_t& m_lextents;
+  bluestore_blob_map_t& m_blobs;
+  uint64_t m_max_blob_size;
+  uint64_t m_min_alloc_size;
+
 
   //intermediate data structures used while reading
   struct region_t {

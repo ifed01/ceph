@@ -67,7 +67,7 @@ void ExtentManager::deref_blob(bluestore_blob_map_t::iterator blob_it, bool zero
       uint64_t x_offs = 0;
       while (ext != end_ext) {
         if (zero && x_offs < l) {
-          uint32_t x_len = ROUND_UP_TO(MIN(ext->length, l - x_offs), m_blockop_inf.get_block_size());
+          uint64_t x_len = ROUND_UP_TO(MIN(ext->length, l - x_offs), m_blockop_inf.get_block_size());
           m_blockop_inf.zero_block(ext->offset, x_len, opaque);
         }
         m_blockop_inf.release_block(ext->offset, ext->length, opaque);
@@ -81,13 +81,11 @@ void ExtentManager::deref_blob(bluestore_blob_map_t::iterator blob_it, bool zero
 
 uint64_t ExtentManager::get_max_blob_size() const
 {
-  //FIXME: temporary implementation
-  return 4 * get_min_alloc_size();
+  return m_max_blob_size;
 }
 uint64_t ExtentManager::get_min_alloc_size() const
 {
-  //FIXME: temporary implementation
-  return 0x10000;
+  return m_min_alloc_size;
 }
 
 uint64_t ExtentManager::get_read_block_size(const bluestore_blob_t* blob) const

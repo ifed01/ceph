@@ -605,7 +605,25 @@ void bluestore_blob_t::dump(Formatter *f) const
 {
   f->dump_unsigned("length", length);
   f->dump_unsigned("flags", flags);
-  //FIXME: more fields to dump
+  f->dump_unsigned("csum_type", csum_type);
+  f->dump_unsigned("csum_block_order", csum_block_order);
+  f->dump_unsigned("num_refs", num_refs);
+  f->dump_unsigned("flags", flags);
+  f->open_array_section("extents");
+  for (bluestore_lextent_map_t::const_iterator i = extents.begin();
+    i != extents.end();
+    ++i) {
+    f->open_object_section("extent");
+    f->dump_unsigned("offset", i->first);
+    i->second.dump(f);
+    f->close_section();
+  }
+  f->close_section();
+  //FIXME: dump csum_data
+}
+
+void bluestore_lextent_t::generate_test_instances(list<bluestore_lextent_t*>& o)
+{
 }
 
 // bluestore_lextent_t

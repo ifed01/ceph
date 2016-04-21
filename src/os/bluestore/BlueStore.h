@@ -35,6 +35,7 @@
 
 #include "bluestore_types.h"
 #include "BlockDevice.h"
+#include "ExtentManager.h"
 class Allocator;
 class FreelistManager;
 class BlueFS;
@@ -57,7 +58,10 @@ enum {
   l_bluestore_last
 };
 
-class BlueStore : public ObjectStore {
+class BlueStore : public ObjectStore,
+		  public ExtentManager::BlockOpInterface,
+		  public ExtentManager::CompressorInterface,
+		  public ExtentManager::CheckSumVerifyInterface {
   // -----------------------------------------------------
   // types
 public:
@@ -644,6 +648,48 @@ private:
   // for fsck
   int _verify_enode_shared(EnodeRef enode, vector<bluestore_extent_t>& v,
 			   interval_set<uint64_t> &used_blocks);
+
+
+protected:
+  struct BluestoreReadContext {
+
+    IOContext ioc;
+    bool buffered;
+    BluestoreReadContext(bool _buffered) :
+      ioc(NULL), // FIXME?
+      buffered(_buffered) {
+    }
+  };
+
+  struct BluestoreWriteContext {
+
+    IOContext* ioc;
+    bool buffered;
+    BluestoreWriteContext(IOContext* _ioc, bool _buffered) :
+      ioc(_ioc),
+      buffered(_buffered) {
+    }
+  };
+
+  ////////////////BlockOpInterface implementation////////////
+  virtual uint64_t get_block_size();
+  virtual int read_block(uint64_t offset0, uint32_t length, void* opaque, bufferlist* result);
+  virtual int write_block(uint64_t offset, const bufferlist& data, void* opaque);
+  virtual int zero_block(uint64_t offset, uint32_t length, void* opaque);
+  
+  //
+  //Method to allocate pextents
+  //Returns single or multiple pextents depending on the store state, i.e. if there is contiguous extent available or not
+  //
+  virtual int allocate_blocks(uint32_t length, void* opaque, bluestore_extent_vector_t* result);
+  virtual int release_block(uint64_t offset, uint32_t length, void* opaque);
+
+  ////////////////CompressorInterface implementation////////
+  virtual int compress(const ExtentManager::CompressInfo& cinfo, uint32_t source_offs, uint32_t length, const bufferlist& source, void* opaque, bufferlist* result);
+  virtual int decompress(const bufferlist& source, void* opaque, bufferlist* result);
+  ////////////////CheckSumVerifyInterface implementation////////
+  virtual int calculate(bluestore_blob_t::CSumType type, uint32_t csum_value_size, uint32_t csum_block_size, uint32_t source_offs, uint32_t source_len, const bufferlist& source, void* opaque, vector<char>* csum_data);
+  virtual int verify(bluestore_blob_t::CSumType type, uint32_t csum_value_size, uint32_t csum_block_size, const bufferlist& source, void* opaque, const vector<char>& csum_data);
 
 public:
   BlueStore(CephContext *cct, const string& path);

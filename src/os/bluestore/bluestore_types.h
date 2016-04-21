@@ -196,6 +196,9 @@ struct bluestore_onode_t {
   uint32_t last_overlay_key;           ///< key for next overlay
   uint64_t omap_head;                  ///< id for omap root node
 
+  map<uint64_t, bluestore_lextent_t> lextents;   ///< logical extents
+  map<uint64_t, bluestore_blob_t> blobs; ///< blobs lextents refer to
+
   uint32_t expected_object_size;
   uint32_t expected_write_size;
 
@@ -382,9 +385,32 @@ struct bluestore_blob_t
       extents == from.extents &&
       csum_data == from.csum_data;
   }
-  /*void encode(bufferlist& bl) const;
-  void decode(bufferlist::iterator& p);*/
+  void encode(bufferlist& bl) const {
+    ENCODE_START(1, 1, bl);
+    ::encode(extents, bl);
+    ::encode(length, bl);
+    ::encode(flags, bl);
+    ::encode(csum_type, bl);
+    ::encode(csum_block_order, bl);
+    ::encode(num_refs, bl);
+    ::encode(csum_data, bl);
+    ENCODE_FINISH(bl);
+  }
+  void decode(bufferlist::iterator& p) {
+    DECODE_START(1, p);
+    ::decode(extents, bl);
+    ::decode(length, bl);
+    ::decode(flags, bl);
+    ::decode(csum_type, bl);
+    ::decode(csum_block_order, bl);
+    ::decode(csum_block_order, bl);
+    ::decode(num_refs, bl);
+    ::decode(csum_data, bl);
+    DECODE_FINISH(bl);
+  }
+
   void dump(Formatter *f) const;
+  static void generate_test_instances(list<bluestore_blob_t*>& o);
 
   bool has_flag(unsigned f) const {
     return flags & f;
@@ -420,7 +446,7 @@ struct bluestore_blob_t
   }
 
 };
-//WRITE_CLASS_ENCODER(bluestore_blob_t)
+WRITE_CLASS_ENCODER(bluestore_blob_t)
 
 typedef uint64_t BlobRef;
 enum {
@@ -428,7 +454,7 @@ enum {
   FIRST_BLOB_REF = 1,
 };
 
-/// lextent: logical data block back by the extent
+/// lextent: logical data block back by the blob
 struct bluestore_lextent_t {
   static string get_flags_string(unsigned flags);
 
@@ -465,16 +491,21 @@ struct bluestore_lextent_t {
   }
 
   void encode(bufferlist& bl) const {
+    ENCODE_START(1, 1, bl);
     ::encode(blob, bl);
     ::encode(x_offset, bl);
     ::encode(length, bl);
     ::encode(flags, bl);
+    ENCODE_FINISH(bl);
   }
   void decode(bufferlist::iterator& p) {
+    DECODE_START(1, p);
     ::decode(blob, p);
     ::decode(x_offset, p);
     ::decode(length, p);
     ::decode(flags, p);
+    DECODE_FINISH(bl);
+
   }
   void dump(Formatter *f) const;
   static void generate_test_instances(list<bluestore_lextent_t*>& o);
