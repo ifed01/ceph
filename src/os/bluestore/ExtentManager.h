@@ -86,7 +86,7 @@ public:
       m_min_alloc_size(min_alloc_size) {
   }
 
-  int write(uint64_t offset, const bufferlist& bl, void* opaque, const CheckSumInfo& check_info, const CompressInfo* compress_info);
+  int write(uint64_t offset, uint64_t length, const bufferlist& bl, void* opaque, const CheckSumInfo& check_info, const CompressInfo* compress_info);
   int zero(uint64_t offset, uint64_t length, void* opaque);
   int truncate(uint64_t offset, void* opaque);
   int read(uint64_t offset, uint32_t length, void* opaque, bufferlist* result);
@@ -165,7 +165,8 @@ protected:
 
   int allocate_raw_blob(uint32_t length, void* opaque, const CheckSumInfo& check_info, BlobRef* blob, bluestore_blob_map_t::iterator* res_blob_it);
   int compress_and_allocate_blob(
-    uint64_t input_offs,
+    uint64_t input_offset,
+    uint64_t input_length,
     const bufferlist& raw_buffer,
     void* opaque,
     const CheckSumInfo& check_info,
@@ -176,12 +177,14 @@ protected:
 
   int write_blob(bluestore_blob_t& blob, uint64_t input_offs, const bufferlist& bl, void* opaque);
 
-  int write_uncompressed(uint64_t offset,
+  int write_uncompressed(uint64_t input_offset,
+    uint64_t input_length,
     const bufferlist& bl,
     void* opaque,
     const CheckSumInfo& check_info,
     live_lextent_map_t* new_lextents);
-  int write_compressed(uint64_t offset,
+  int write_compressed(uint64_t input_offset,
+    uint64_t input_length,
     const bufferlist& bl,
     void* opaque,
     const CheckSumInfo& check_info,

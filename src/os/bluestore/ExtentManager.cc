@@ -421,18 +421,19 @@ void ExtentManager::preprocess_changes(uint64_t offset, uint64_t length, bluesto
   }
 }
 
-int ExtentManager::write(uint64_t offset, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, const ExtentManager::CompressInfo* compress_info)
+int ExtentManager::write(uint64_t offset, uint64_t input_length, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, const ExtentManager::CompressInfo* compress_info)
 {
   int r;
   bluestore_lextent_map_t updated_lextents;
   live_lextent_map_t  new_lextents, removed_lextents;
   list<BlobRef> blobs2ref;
 
-  preprocess_changes(offset, bl.length(), &updated_lextents, &removed_lextents, &blobs2ref);
+  input_length = MIN(input_length, bl.length());
+  preprocess_changes(offset, input_length, &updated_lextents, &removed_lextents, &blobs2ref);
 
-  r = compress_info && bl.length() > get_min_alloc_size() ?
-    write_compressed(offset, bl, opaque, check_info, *compress_info, &new_lextents) :
-    write_uncompressed(offset, bl, opaque, check_info, &new_lextents);
+  r = compress_info && input_length > get_min_alloc_size() ?
+    write_compressed(offset, input_length, bl, opaque, check_info, *compress_info, &new_lextents) :
+    write_uncompressed(offset, input_length, bl, opaque, check_info, &new_lextents);
 
   if (r > 0) {
     update_lextents(updated_lextents.begin(), updated_lextents.end());
@@ -480,11 +481,12 @@ int ExtentManager::truncate(uint64_t offset, void* opaque)
   return r;
 }
 
-int ExtentManager::write_uncompressed(uint64_t offset, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, live_lextent_map_t* res_lextents)
+int ExtentManager::write_uncompressed(uint64_t offset, uint64_t input_length, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, live_lextent_map_t* res_lextents)
 {
   int r = 0;
   uint64_t o = offset;
-  uint32_t l = bl.length();
+  uint64_t l = input_length;
+  assert(input_length <= bl.length());
   //create new lextents & blobs
   while (l > 0 && r >= 0) {
     BlobRef blob_ref = UNDEF_BLOB_REF;
@@ -509,13 +511,14 @@ int ExtentManager::write_uncompressed(uint64_t offset, const bufferlist& bl, voi
   return r;
 }
 
-int ExtentManager::write_compressed(uint64_t offset, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, const ExtentManager::CompressInfo& compress_info, live_lextent_map_t* res_lextents)
+int ExtentManager::write_compressed(uint64_t offset, uint64_t input_length, const bufferlist& bl, void* opaque, const ExtentManager::CheckSumInfo& check_info, const ExtentManager::CompressInfo& compress_info, live_lextent_map_t* res_lextents)
 {
   int r = 0;
   std::vector<bufferlist> compressed_buffers;
   uint64_t o = offset;
-  uint32_t l = bl.length();
-  uint64_t input_offs = 0;
+  uint64_t l = input_length;
+  uint64_t input_offset = 0;
+  assert(input_length <= bl.length());
   //create new lextents & blobs
   while (l > 0 && r >= 0) {
     BlobRef blob_ref;
@@ -523,7 +526,7 @@ int ExtentManager::write_compressed(uint64_t offset, const bufferlist& bl, void*
     size_t sz = compressed_buffers.size();
     compressed_buffers.resize(sz + 1);
     int processed = l > get_min_alloc_size() ?
-      compress_and_allocate_blob(input_offs, bl, opaque, check_info, compress_info, &blob_ref, &blob_it, &compressed_buffers[sz]) :
+      compress_and_allocate_blob(input_offset, l, bl, opaque, check_info, compress_info, &blob_ref, &blob_it, &compressed_buffers[sz]) :
       allocate_raw_blob(MIN(l, get_max_blob_size()), opaque, check_info, &blob_ref, &blob_it);
     if (processed < 0) {
       release_lextents(res_lextents->begin(), res_lextents->end(), false, false, opaque);
@@ -534,7 +537,7 @@ int ExtentManager::write_compressed(uint64_t offset, const bufferlist& bl, void*
     else {
       res_lextents->emplace(o, live_lextent_t(blob_it, blob_ref, 0, processed, 0));
       o += processed;
-      input_offs += processed;
+      input_offset += processed;
       l -= processed;
     }
   }
@@ -575,7 +578,8 @@ int ExtentManager::allocate_raw_blob(uint32_t length, void* opaque, const Extent
 }
 
 int ExtentManager::compress_and_allocate_blob(
-    uint64_t input_offs,
+    uint64_t inout_offset,
+    uint64_t input_length,
     const bufferlist& bl,
     void* opaque,
     const ExtentManager::CheckSumInfo& check_info,
@@ -585,16 +589,16 @@ int ExtentManager::compress_and_allocate_blob(
     bufferlist* compressed_buffer)
 {
   int r = 0;
-  assert(input_offs <= bl.length());
-  uint32_t len = bl.length() - input_offs;
-  len = MIN(len, get_max_blob_size());
+  assert(input_offset <= input_len);
+  assert(input_len <= bl.length());
+  input_len = MIN(input_len, get_max_blob_size());
 
   compressed_buffer->clear();
-  r = m_compressor.compress(compress_info, input_offs, len, bl, opaque, compressed_buffer);
+  r = m_compressor.compress(compress_info, input_offs, input_len, bl, opaque, compressed_buffer);
   bool bypass = false;
   if(r >= 0) {
-    uint32_t aligned_len1 = ROUND_UP_TO(len, get_min_alloc_size());
-    uint32_t aligned_len2 = ROUND_UP_TO(compressed_buffer->length(), get_min_alloc_size());
+    uint64_t aligned_len1 = ROUND_UP_TO(input_len, get_min_alloc_size());
+    uint64_t aligned_len2 = ROUND_UP_TO(compressed_buffer->length(), get_min_alloc_size());
     bypass = aligned_len2 > get_max_blob_size() || aligned_len2 >= aligned_len1; //no saving
   }
 
@@ -602,14 +606,14 @@ int ExtentManager::compress_and_allocate_blob(
     r = allocate_raw_blob(compressed_buffer->length(), opaque, check_info, blob_ref, res_blob_it);
     if (r >= 0) {
       (*res_blob_it)->second.set_flag(bluestore_blob_t::BLOB_COMPRESSED);
-      r = len;
+      r = input_len;
     }
   } else {
     dout(20) << __func__ << " compression bypassed, status:" << r << dendl;
     compressed_buffer->clear();
-    r = allocate_raw_blob(len, opaque, check_info, blob_ref, res_blob_it);
+    r = allocate_raw_blob(input_len, opaque, check_info, blob_ref, res_blob_it);
     if (r >= 0) {
-      r = len;
+      r = input_len;
     }
   }
   return r;

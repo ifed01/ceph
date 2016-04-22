@@ -1435,7 +1435,7 @@ TEST(bluestore_extent_manager, write)
   //Append get_block_size()-6 bytes  at offset 6
   offset = 6u;
   mgr.prepareWriteData(offset, mgr.get_block_size()-6, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, NULL);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, NULL);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -1461,7 +1461,7 @@ TEST(bluestore_extent_manager, write)
 
   //Append 64K+8K data
   mgr.prepareWriteData(offset, mgr.get_min_alloc_size() + mgr.get_block_size()*2, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, NULL);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, NULL);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -1488,7 +1488,7 @@ TEST(bluestore_extent_manager, write)
 
   //Append 1 byte
   mgr.prepareWriteData(offset, 1, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, NULL);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, NULL);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -1516,7 +1516,7 @@ TEST(bluestore_extent_manager, write)
 
   //Append 128K + 2 bytes
   mgr.prepareWriteData(offset, mgr.get_min_alloc_size()*2 + 2, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, NULL);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, NULL);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -1546,7 +1546,7 @@ TEST(bluestore_extent_manager, write)
   //Overwrite 1 block(4K) data at offset 0
   offset = 0u;
   mgr.prepareWriteData(offset, mgr.get_block_size(), &bl);
-  r = mgr.write(offset, bl, NULL, check_info, NULL);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, NULL);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(1u, mgr.m_zeros.size());
@@ -1579,7 +1579,7 @@ TEST(bluestore_extent_manager, write)
   offset = 0u;
   some_alloc_offset = mgr.blobs().at(FIRST_BLOB_REF + 4).extents.at(0).offset;
   mgr.prepareWriteData(offset, mgr.get_block_size() / 2, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, NULL);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, NULL);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -1623,7 +1623,7 @@ TEST(bluestore_extent_manager, write)
   some_alloc_offset2 = mgr.blobs().at(FIRST_BLOB_REF + 5).extents.at(0).offset - PEXTENT_BASE;
 
   mgr.prepareWriteData(offset, mgr.get_block_size(), &bl);
-  r = mgr.write(offset, bl, NULL, check_info, NULL);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, NULL);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(2u, mgr.m_zeros.size());
@@ -1659,7 +1659,7 @@ TEST(bluestore_extent_manager, write)
   some_alloc_offset = mgr.blobs().at(FIRST_BLOB_REF + 6).extents.at(0).offset - PEXTENT_BASE;
 
   mgr.prepareWriteData(offset, mgr.get_block_size() / 2, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, NULL);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, NULL);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -1703,7 +1703,7 @@ TEST(bluestore_extent_manager, write)
   some_alloc_offset = mgr.blobs().at(FIRST_BLOB_REF + 7).extents.at(0).offset - PEXTENT_BASE;
 
   mgr.prepareWriteData(offset, mgr.get_block_size() / 4, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, NULL);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, NULL);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -1754,7 +1754,7 @@ TEST(bluestore_extent_manager, write)
   some_alloc_offset2= mgr.blobs().at(FIRST_BLOB_REF + 8).extents.at(0).offset - PEXTENT_BASE;
 
   mgr.prepareWriteData(offset, mgr.get_block_size() - 1, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, NULL);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, NULL);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(2u, mgr.m_zeros.size());
@@ -1806,7 +1806,7 @@ TEST(bluestore_extent_manager, write)
   some_alloc_offset2= mgr.blobs().at(FIRST_BLOB_REF + 8).extents.at(0).offset - PEXTENT_BASE;
 
   mgr.prepareWriteData(offset, mgr.get_block_size() - 1, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, NULL);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, NULL);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(2u, mgr.m_zeros.size());
@@ -1855,7 +1855,7 @@ TEST(bluestore_extent_manager, write)
   offset = 0;
 
   mgr.prepareWriteData(offset, 0x80000 - 100, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, NULL);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, NULL);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(2u, mgr.m_writes.size()); //two lextents has been created due to max_blob_size limit
 
@@ -1882,7 +1882,7 @@ TEST(bluestore_extent_manager, write)
   //Append some data after the end pos
   offset = 0x80100;
   mgr.prepareWriteData(offset, 0x12345, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, NULL);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, NULL);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
 
@@ -1919,7 +1919,7 @@ TEST(bluestore_extent_manager, write_compressed)
   //Append get_block_size()-6 bytes  at offset 6
   offset = 6u;
   mgr.prepareWriteData(offset, mgr.get_block_size() - 6, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -1945,7 +1945,7 @@ TEST(bluestore_extent_manager, write_compressed)
 
   //Append 64K+8K data
   mgr.prepareWriteData(offset, mgr.get_min_alloc_size() + mgr.get_block_size() * 2, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -1974,7 +1974,7 @@ TEST(bluestore_extent_manager, write_compressed)
 
   //Append 1 byte
   mgr.prepareWriteData(offset, 1, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -1994,7 +1994,7 @@ TEST(bluestore_extent_manager, write_compressed)
 
   //Append 128K + 2 bytes
   mgr.prepareWriteData(offset, mgr.get_min_alloc_size() * 2 + 2, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -2028,7 +2028,7 @@ TEST(bluestore_extent_manager, write_compressed)
   //Overwrite 1 block(4K) data at offset 0
   offset = 0u;
   mgr.prepareWriteData(offset, mgr.get_block_size(), &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(1u, mgr.m_zeros.size());
@@ -2064,7 +2064,7 @@ TEST(bluestore_extent_manager, write_compressed)
   some_alloc_offset = mgr.blobs().at(FIRST_BLOB_REF + 1).extents.at(0).offset - PEXTENT_BASE;
   some_len = mgr.blobs().at(FIRST_BLOB_REF + 1).length;
   mgr.prepareWriteData(offset, mgr.get_min_alloc_size() + mgr.get_block_size() * 2, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
 
@@ -2104,7 +2104,7 @@ TEST(bluestore_extent_manager, write_compressed)
   some_alloc_offset = mgr.blobs().at(FIRST_BLOB_REF + 3).extents.at(0).offset - PEXTENT_BASE;
   some_len = mgr.blobs().at(FIRST_BLOB_REF + 3).length;
   mgr.prepareWriteData(offset, mgr.get_min_alloc_size() * 2 + 2, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
 
@@ -2141,7 +2141,7 @@ TEST(bluestore_extent_manager, write_compressed)
   offset = 0;
   mgr.m_cratio = 2;
   mgr.prepareWriteData(offset, 0x80000 - 100, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(2u, mgr.m_writes.size()); //two lextents has been created due to max_blob_size limit
 
@@ -2186,7 +2186,7 @@ TEST(bluestore_extent_manager, write_compressed)
   //Append some data after the end pos
   offset = 0x80100;
   mgr.prepareWriteData(offset, 0x12345, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -2219,7 +2219,7 @@ TEST(bluestore_extent_manager, write_compressed)
   offset = 0x7A000;
   mgr.m_fail_compress = true;
   mgr.prepareWriteData(offset, 0x10001, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -2258,7 +2258,7 @@ TEST(bluestore_extent_manager, write_compressed)
   some_len2 = mgr.blobs().at(FIRST_BLOB_REF + 9).length;
 
   mgr.prepareWriteData(offset, 0x30001, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(2u, mgr.m_zeros.size());
@@ -2353,7 +2353,7 @@ TEST(bluestore_extent_manager, zero_truncate)
   //Append get_block_size() * 2 bytes  at offset 0
   offset = 0u;
   mgr.prepareWriteData(offset, mgr.get_block_size() * 2, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -2481,7 +2481,7 @@ TEST(bluestore_extent_manager, write_csum_compressed)
   //Append get_block_size()-10 bytes  at offset 6
   offset = 6u;
   mgr.prepareWriteData(offset, mgr.get_block_size() - 10, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -2515,7 +2515,7 @@ TEST(bluestore_extent_manager, write_csum_compressed)
   //Append 64K+8K data at 0x1000
   offset = mgr.get_block_size();
   mgr.prepareWriteData(offset, mgr.get_min_alloc_size() + mgr.get_block_size() * 2, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(1u, mgr.m_writes.size());
   ASSERT_EQ(0u, mgr.m_zeros.size());
@@ -2559,7 +2559,7 @@ TEST(bluestore_extent_manager, write_csum_compressed)
 ;
   offset = mgr.get_block_size() - 1;
   mgr.prepareWriteData(offset, 0x80000 + 100, &bl);
-  r = mgr.write(offset, bl, NULL, check_info, &zip_info);
+  r = mgr.write(offset, bl.length(), bl, NULL, check_info, &zip_info);
   ASSERT_EQ((int)bl.length(), r);
   ASSERT_EQ(3u, mgr.m_writes.size());
   ASSERT_EQ(1u, mgr.m_zeros.size());
