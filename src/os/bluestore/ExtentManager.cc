@@ -578,7 +578,7 @@ int ExtentManager::allocate_raw_blob(uint32_t length, void* opaque, const Extent
 }
 
 int ExtentManager::compress_and_allocate_blob(
-    uint64_t inout_offset,
+    uint64_t input_offset,
     uint64_t input_length,
     const bufferlist& bl,
     void* opaque,
@@ -589,15 +589,14 @@ int ExtentManager::compress_and_allocate_blob(
     bufferlist* compressed_buffer)
 {
   int r = 0;
-  assert(input_offset <= input_len);
-  assert(input_len <= bl.length());
-  input_len = MIN(input_len, get_max_blob_size());
+  assert(input_offset + input_length <= bl.length());
+  input_length = MIN(input_length, get_max_blob_size());
 
   compressed_buffer->clear();
-  r = m_compressor.compress(compress_info, input_offs, input_len, bl, opaque, compressed_buffer);
+  r = m_compressor.compress(compress_info, input_offset, input_length, bl, opaque, compressed_buffer);
   bool bypass = false;
   if(r >= 0) {
-    uint64_t aligned_len1 = ROUND_UP_TO(input_len, get_min_alloc_size());
+    uint64_t aligned_len1 = ROUND_UP_TO(input_length, get_min_alloc_size());
     uint64_t aligned_len2 = ROUND_UP_TO(compressed_buffer->length(), get_min_alloc_size());
     bypass = aligned_len2 > get_max_blob_size() || aligned_len2 >= aligned_len1; //no saving
   }
@@ -606,14 +605,14 @@ int ExtentManager::compress_and_allocate_blob(
     r = allocate_raw_blob(compressed_buffer->length(), opaque, check_info, blob_ref, res_blob_it);
     if (r >= 0) {
       (*res_blob_it)->second.set_flag(bluestore_blob_t::BLOB_COMPRESSED);
-      r = input_len;
+      r = input_length;
     }
   } else {
     dout(20) << __func__ << " compression bypassed, status:" << r << dendl;
     compressed_buffer->clear();
-    r = allocate_raw_blob(input_len, opaque, check_info, blob_ref, res_blob_it);
+    r = allocate_raw_blob(input_length, opaque, check_info, blob_ref, res_blob_it);
     if (r >= 0) {
-      r = input_len;
+      r = input_length;
     }
   }
   return r;
