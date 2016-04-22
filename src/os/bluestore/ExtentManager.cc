@@ -66,6 +66,9 @@ void ExtentManager::deref_blob(bluestore_blob_map_t::iterator blob_it, bool zero
       auto l = blob->length;
       uint64_t x_offs = 0;
       while (ext != end_ext) {
+
+  dout(0)<<__func__<< *ext << dendl;
+
         if (zero && x_offs < l) {
           uint64_t x_len = ROUND_UP_TO(MIN(ext->length, l - x_offs), m_blockop_inf.get_block_size());
           m_blockop_inf.zero_block(ext->offset, x_len, opaque);
@@ -198,7 +201,7 @@ int ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferli
   }
   result->append_zero(offset + length - o);
 
-  return 0;
+  return result->length();
 }
 
 
@@ -506,7 +509,7 @@ int ExtentManager::write_uncompressed(uint64_t offset, uint64_t input_length, co
   }
 
   if (r >= 0) {
-    r = apply_lextents(*res_lextents, bl, NULL, opaque);
+    r = apply_lextents(*res_lextents, input_length, bl, NULL, opaque);
   }
   return r;
 }
@@ -543,7 +546,7 @@ int ExtentManager::write_compressed(uint64_t offset, uint64_t input_length, cons
   }
 
   if (r >= 0) {
-    r = apply_lextents(*res_lextents, bl, &compressed_buffers, opaque);
+    r = apply_lextents(*res_lextents, input_length, bl, &compressed_buffers, opaque);
   }
   return r;
 }
@@ -567,9 +570,16 @@ int ExtentManager::allocate_raw_blob(uint32_t length, void* opaque, const Extent
   uint32_t to_allocate = ROUND_UP_TO(length, get_min_alloc_size());
   int r = m_blockop_inf.allocate_blocks(to_allocate, opaque, &blob.extents);
   if (r >= 0) {
+//FIXME:
+auto i = blob.extents.begin();
+while(i != blob.extents.end()) {
+  dout(0)<<__func__<< ":" << *i << dendl;
+  ++i;
+}
     r = length;
     *res_blob_it = blob_it;
   } else {
+assert(0);
     m_blobs.erase(blob_it);
     *blob_ref = UNDEF_BLOB_REF;
     *res_blob_it = m_blobs.end();
@@ -618,14 +628,13 @@ int ExtentManager::compress_and_allocate_blob(
   return r;
 }
 
-int ExtentManager::write_blob(bluestore_blob_t& blob, uint64_t input_offs, const bufferlist& bl, void* opaque)
+int ExtentManager::write_blob(bluestore_blob_t& blob, uint64_t input_offs, uint64_t input_len, const bufferlist& bl, void* opaque)
 {
   int r = 0;
   uint64_t input_offs0 = input_offs;
   uint32_t ext_pos = 0;
-  assert(input_offs <= bl.length());
-  uint64_t len = MIN( blob.get_ondisk_length(), bl.length() - input_offs );
-//  assert(blob.get_ondisk_length() >= len);
+  assert(input_offs + input_len <= bl.length());
+  uint64_t len = MIN( blob.get_ondisk_length(), input_len );
 
   if (blob.csum_type != bluestore_blob_t::CSUM_NONE) {
     blob.csum_data.clear();
@@ -640,7 +649,7 @@ int ExtentManager::write_blob(bluestore_blob_t& blob, uint64_t input_offs, const
     uint64_t l = MIN(len, ext.length);
 
     uint64_t aligned_len = ROUND_UP_TO(l, m_blockop_inf.get_block_size());
-    if (input_offs == 0 && aligned_len == bl.length()) //fast track, no need for input data slicing
+    if (input_offs == 0 && aligned_len == input_len && input_len == bl.length()) //fast track, no need for input data slicing
       r = m_blockop_inf.write_block(ext.offset, bl, opaque);
     else {
       bufferlist tmp_bl;
@@ -657,6 +666,7 @@ int ExtentManager::write_blob(bluestore_blob_t& blob, uint64_t input_offs, const
 
 int ExtentManager::apply_lextents(
   live_lextent_map_t& new_lextents,
+  uint64_t input_length,
   const bufferlist& raw_buffer,
   std::vector<bufferlist>* compressed_buffers,
   void* opaque)
@@ -669,18 +679,19 @@ int ExtentManager::apply_lextents(
   while (newext_it != new_lextents.end() && r >= 0) {
     bluestore_blob_t& blob = newext_it->second.blob_iterator->second;
     if (compressed_buffers && compressed_buffers->at(lext_pos).length() > 0 && blob.has_flag(bluestore_blob_t::BLOB_COMPRESSED) ) {
-      r = write_blob(blob, 0, compressed_buffers->at(lext_pos), opaque);
+      r = write_blob(blob, 0, compressed_buffers->at(lext_pos).length(), compressed_buffers->at(lext_pos), opaque);
       assert( r < 0 || r == (int)compressed_buffers->at(lext_pos).length());
     }
     else {
-      r = write_blob(blob, x_offs, raw_buffer, opaque);
+      r = write_blob(blob, x_offs, input_length, raw_buffer, opaque);
       assert( r < 0 || r == (int)newext_it->second.length);
     }
     x_offs += newext_it->second.length;
+    input_length -= newext_it->second.length;
     ++lext_pos;
     ++newext_it;
   }
-  assert(x_offs == raw_buffer.length());
+  assert(x_offs >= input_length);
   if (r < 0) {
     release_lextents(new_lextents.begin(), new_lextents.end(), false, false, opaque); //FIXME: we may need to zero some of already written blobs, mark lextent somehow?
     new_lextents.clear();

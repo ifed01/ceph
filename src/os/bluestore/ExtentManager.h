@@ -175,7 +175,7 @@ protected:
     bluestore_blob_map_t::iterator* res_blob_it,
     bufferlist* compressed_buffer);
 
-  int write_blob(bluestore_blob_t& blob, uint64_t input_offs, const bufferlist& bl, void* opaque);
+  int write_blob(bluestore_blob_t& blob, uint64_t input_offs, uint64_t input_len, const bufferlist& bl, void* opaque);
 
   int write_uncompressed(uint64_t input_offset,
     uint64_t input_length,
@@ -192,6 +192,7 @@ protected:
     live_lextent_map_t* new_lextents);
   int apply_lextents(
     live_lextent_map_t& new_lextents,
+    uint64_t input_length,
     const bufferlist& raw_buffer,
     std::vector<bufferlist>* compressed_buffers,
     void* opaque);

@@ -1117,7 +1117,7 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent)
   //               -> 0x69b00~0x3000 -> 0x69000~0x4000
   //0x36b00~0x5600 (unalloc)
 
-  ASSERT_EQ(0, mgr.read(0x10000, 0x2c100, NULL, &res));
+  ASSERT_EQ(0x2c100, mgr.read(0x10000, 0x2c100, NULL, &res));
   ASSERT_EQ(0x2c100u, res.length());
   ASSERT_EQ(7u, mgr.m_reads.size());
   ASSERT_TRUE(mgr.checkRead(OffsLenTuple(0x30000, 0x8000)));
@@ -1248,7 +1248,7 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent_checksum)
   //               -> 0x69b00~0x3000 -> 0x68000~0x6000
   //0x36b00~0x5600 (unalloc)
 
-  ASSERT_EQ(0, mgr.read(0x10000, 0x2c100, NULL, &res));
+  ASSERT_EQ(0x2c100, mgr.read(0x10000, 0x2c100, NULL, &res));
   ASSERT_EQ(0x2c100u, res.length());
   ASSERT_EQ(7u, mgr.m_reads.size());
   ASSERT_TRUE(mgr.checkRead(OffsLenTuple(0x30000, 0x8000)));
@@ -1378,7 +1378,7 @@ TEST(bluestore_extent_manager, read_splitted_blob_multi_extent_compressed)
   //               -> 0x69b00~0x3000 -> 0x60000~0xd000 (duplicate)
   //0x36b00~0x5600 (unalloc)
 
-  ASSERT_EQ(0, mgr.read(0x10000, 0x2c100, NULL, &res));
+  ASSERT_EQ(0x2c100, mgr.read(0x10000, 0x2c100, NULL, &res));
   ASSERT_EQ(0x2c100u, res.length());
   ASSERT_EQ(4u, mgr.m_reads.size());
   ASSERT_TRUE(mgr.checkRead(OffsLenTuple(0x30000, 0x8000)));

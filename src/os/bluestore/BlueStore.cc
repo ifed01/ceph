@@ -2122,6 +2122,25 @@ int BlueStore::fsck()
 	    }
 	  }
 	}
+	// blobs
+	for (auto& b : o->onode.blobs) {
+	  for (auto& e : b.second.extents) {
+	    derr << "!!!!" << oid << " extent " << e
+		   << dendl;
+	    if (used_blocks.intersects(e.offset, e.length)) {
+	      derr << " " << oid << " extent " << e
+		   << " already allocated" << dendl;
+	      ++errors;
+	      continue;
+	    }
+	    used_blocks.insert(e.offset, e.length);
+	    if (e.end() > bdev->get_size()) {
+	      derr << " " << oid << " extent " << e
+		   << " past end of block device" << dendl;
+	      ++errors;
+	    }
+	  }
+	}
 	// overlays
 	set<string> overlay_keys;
 	map<uint64_t,int> refs;
@@ -5722,9 +5741,9 @@ int BlueStore::_do_write(
       _dump_onode(o, 0);
       assert(0 == "leaked cow extent");
     }
-  }*/
+  }
 
- out:
+ out:*/
   return r;
 }
 
@@ -6691,7 +6710,8 @@ int BlueStore::write_block(uint64_t offset, const bufferlist& data, void* opaque
 
 int BlueStore::zero_block(uint64_t offset, uint64_t length, void* opaque)
 {
-  return bdev->aio_zero(offset, length, (IOContext *)opaque);
+  BluestoreWriteContext* ctx = (BluestoreWriteContext*)opaque;
+  return bdev->aio_zero(offset, length, &ctx->txc->ioc);
 }
 
 //
@@ -6716,7 +6736,7 @@ int BlueStore::allocate_blocks(uint32_t length, void* opaque, bluestore_extent_v
     r = alloc->allocate(length, min_alloc_size, hint, &res_offset, &res_len);
     assert(r == 0);
     assert(res_len <= length);
-    bluestore_extent_t e(res_offset, length, 0);
+    bluestore_extent_t e(res_offset, res_len, 0);
     result->push_back(e);
 
     dout(10) << __func__ << "  alloc " << ": " << e << dendl;
@@ -6735,20 +6755,20 @@ int BlueStore::release_block(uint64_t offset, uint32_t length, void* opaque)
 }
 
 ////////////////CompressorInterface implementation////////
-int compress(const ExtentManager::CompressInfo& cinfo, uint32_t source_offs, uint32_t length, const bufferlist& source, void* opaque, bufferlist* result)
+int BlueStore::compress(const ExtentManager::CompressInfo& cinfo, uint32_t source_offs, uint32_t length, const bufferlist& source, void* opaque, bufferlist* result)
 {
   return -1;
 }
 
-int decompress(const bufferlist& source, void* opaque, bufferlist* result) {
+int BlueStore::decompress(const bufferlist& source, void* opaque, bufferlist* result) {
   return -1;
 }
 ////////////////CheckSumVerifyInterface implementation////////
-int calculate(bluestore_blob_t::CSumType type, uint32_t csum_value_size, uint32_t csum_block_size, uint32_t source_offs, uint32_t source_len, const bufferlist& source, void* opaque, vector<char>* csum_data)
+int BlueStore::calculate(bluestore_blob_t::CSumType type, uint32_t csum_value_size, uint32_t csum_block_size, uint32_t source_offs, uint32_t source_len, const bufferlist& source, void* opaque, vector<char>* csum_data)
 {
   return 0;
 }
-int verify(bluestore_blob_t::CSumType type, uint32_t csum_value_size, uint32_t csum_block_size, const bufferlist& source, void* opaque, const vector<char>& csum_data)
+int BlueStore::verify(bluestore_blob_t::CSumType type, uint32_t csum_value_size, uint32_t csum_block_size, const bufferlist& source, void* opaque, const vector<char>& csum_data)
 {
   return 0;
 }

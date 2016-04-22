@@ -252,29 +252,8 @@ struct bluestore_blob_t
       extents == from.extents &&
       csum_data == from.csum_data;
   }
-  void encode(bufferlist& bl) const {
-    ENCODE_START(1, 1, bl);
-    ::encode(extents, bl);
-    ::encode(length, bl);
-    ::encode(flags, bl);
-    ::encode(csum_type, bl);
-    ::encode(csum_block_order, bl);
-    ::encode(num_refs, bl);
-    ::encode(csum_data, bl);
-    ENCODE_FINISH(bl);
-  }
-  void decode(bufferlist::iterator& p) {
-    DECODE_START(1, p);
-    ::decode(extents, p);
-    ::decode(length, p);
-    ::decode(flags, p);
-    ::decode(csum_type, p);
-    ::decode(csum_block_order, p);
-    ::decode(csum_block_order, p);
-    ::decode(num_refs, p);
-    ::decode(csum_data, p);
-    DECODE_FINISH(p);
-  }
+  void encode(bufferlist& bl) const;
+  void decode(bufferlist::iterator& p);
 
   void dump(Formatter *f) const;
   static void generate_test_instances(list<bluestore_blob_t*>& o);
