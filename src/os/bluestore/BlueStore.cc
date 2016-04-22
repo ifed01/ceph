@@ -5434,6 +5434,20 @@ int BlueStore::_do_write(
     buffered = true;
   }
 
+  ExtentManager em(*this,
+    *this,
+    *this,
+    o->onode.lextents,
+    o->onode.blobs,
+    g_conf->bluestore_min_alloc_size * 4, //replace with max_blob_size
+    g_conf->bluestore_min_alloc_size);
+
+  BluestoreWriteContext ctx(txc, buffered);
+  ExtentManager::CheckSumInfo check_info;
+
+  r = em.write(orig_offset, orig_length, orig_bl, &ctx, check_info, NULL);
+
+  /*
   uint64_t block_size = bdev->get_block_size();
   const uint64_t block_mask = ~(block_size - 1);
   uint64_t min_alloc_size = g_conf->bluestore_min_alloc_size;
@@ -5683,7 +5697,7 @@ int BlueStore::_do_write(
     ++bp;
     continue;
   }
-  r = 0;
+  r = 0;*/
 
   if (orig_offset + orig_length > o->onode.size) {
     dout(20) << __func__ << " extending size to " << orig_offset + orig_length
@@ -5692,7 +5706,7 @@ int BlueStore::_do_write(
   }
 
   // make sure we didn't leave unwritten extents behind
-  for (map<uint64_t,bluestore_extent_t>::iterator p = o->onode.block_map.begin();
+/*  for (map<uint64_t,bluestore_extent_t>::iterator p = o->onode.block_map.begin();
        p != o->onode.block_map.end();
        ++p) {
     if (p->second.has_flag(bluestore_extent_t::FLAG_UNWRITTEN)) {
@@ -5708,7 +5722,7 @@ int BlueStore::_do_write(
       _dump_onode(o, 0);
       assert(0 == "leaked cow extent");
     }
-  }
+  }*/
 
  out:
   return r;
@@ -5858,7 +5872,7 @@ int BlueStore::_do_zero(TransContext *txc,
     g_conf->bluestore_min_alloc_size * 4, //replace with max_blob_size
     g_conf->bluestore_min_alloc_size);
 
-  BluestoreWriteContext ctx(&txc->ioc, false);
+  BluestoreWriteContext ctx(txc, false);
   r = em.zero(offset, length, &ctx);
 
   /*
@@ -5956,7 +5970,7 @@ int BlueStore::_do_truncate(
     g_conf->bluestore_min_alloc_size * 4, //replace with max_blob_size
     g_conf->bluestore_min_alloc_size);
 
-  BluestoreWriteContext ctx(&txc->ioc, false);
+  BluestoreWriteContext ctx(txc, false);
   int r = em.truncate(offset, &ctx);
 
   /*
@@ -6671,7 +6685,7 @@ int BlueStore::read_block(uint64_t offset, uint32_t length, void* opaque, buffer
 int BlueStore::write_block(uint64_t offset, const bufferlist& data, void* opaque)
 {
   BluestoreWriteContext* ctx = (BluestoreWriteContext*)opaque;
-  int r = bdev->aio_write(offset, const_cast<bufferlist&>(data), ctx->ioc, ctx->buffered);
+  int r = bdev->aio_write(offset, const_cast<bufferlist&>(data), &ctx->txc->ioc, ctx->buffered);
   return r;
 }
 
@@ -6686,11 +6700,37 @@ int BlueStore::zero_block(uint64_t offset, uint64_t length, void* opaque)
 //
 int BlueStore::allocate_blocks(uint32_t length, void* opaque, bluestore_extent_vector_t* result)
 {
+  uint64_t hint = 0;
+  uint64_t min_alloc_size = g_conf->bluestore_min_alloc_size;
+  BluestoreWriteContext* ctx = (BluestoreWriteContext*)opaque;
+
+  result->clear();
+  int r = alloc->reserve(length);
+  if (r < 0) {
+    derr << __func__ << " failed to reserve " << length << dendl;
+    return r;
+  }
+  while (length > 0) {
+    uint64_t res_offset = 0;
+    uint32_t res_len = 0;
+    r = alloc->allocate(length, min_alloc_size, hint, &res_offset, &res_len);
+    assert(r == 0);
+    assert(res_len <= length);
+    bluestore_extent_t e(res_offset, length, 0);
+    result->push_back(e);
+
+    dout(10) << __func__ << "  alloc " << ": " << e << dendl;
+    ctx->txc->allocated.insert(e.offset, e.length);
+    length -= res_len;
+    hint = e.end();
+  }
   return 0;
 }
 
 int BlueStore::release_block(uint64_t offset, uint32_t length, void* opaque)
 {
+  BluestoreWriteContext* ctx = (BluestoreWriteContext*)opaque;
+  ctx->txc->released.insert(offset, length);
   return 0;
 }
 

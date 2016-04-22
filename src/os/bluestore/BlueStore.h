@@ -652,7 +652,6 @@ private:
 
 protected:
   struct BluestoreReadContext {
-
     IOContext ioc;
     bool buffered;
     BluestoreReadContext(bool _buffered) :
@@ -662,11 +661,10 @@ protected:
   };
 
   struct BluestoreWriteContext {
-
-    IOContext* ioc;
+    TransContext* txc;
     bool buffered;
-    BluestoreWriteContext(IOContext* _ioc, bool _buffered) :
-      ioc(_ioc),
+    BluestoreWriteContext(TransContext* _txc, bool _buffered) :
+      txc(_txc),
       buffered(_buffered) {
     }
   };
