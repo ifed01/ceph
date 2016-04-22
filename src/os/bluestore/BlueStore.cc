@@ -2604,12 +2604,13 @@ int BlueStore::_do_read(
     bufferlist& bl,
     uint32_t op_flags)
 {
-  map<uint64_t,bluestore_extent_t>::iterator bp, bend;
+/*  map<uint64_t,bluestore_extent_t>::iterator bp, bend;
   map<uint64_t,bluestore_overlay_t>::iterator op, oend;
   uint64_t block_size = bdev->get_block_size();
   int r = 0;
   IOContext ioc(NULL);   // FIXME?
-
+*/
+  int r = 0;
   // generally, don't buffer anything, unless the client explicitly requests
   // it.
   bool buffered = false;
@@ -2622,6 +2623,14 @@ int BlueStore::_do_read(
     dout(20) << __func__ << " defaulting to buffered read" << dendl;
     buffered = true;
   }
+  BluestoreReadContext ctx(buffered);
+  ExtentManager em(*this,
+    *this,
+    *this,
+    o->onode.lextents,
+    o->onode.blobs,
+    g_conf->bluestore_min_alloc_size *4, //replace with max_blob_size
+    g_conf->bluestore_min_alloc_size);
 
   dout(20) << __func__ << " " << offset << "~" << length << " size "
 	   << o->onode.size << dendl;
@@ -2638,15 +2647,7 @@ int BlueStore::_do_read(
 
   o->flush();
 
-  ExtentManager em(*this,
-    *this,
-    *this,
-    o->onode.lextents,
-    o->onode.blobs,
-    g_conf->bluestore_min_alloc_size *4, //replace with max_blob_size
-    g_conf->bluestore_min_alloc_size);
 
-  BluestoreReadContext ctx(buffered);
   r = em.read(offset, length, &ctx, &bl);
   /*
   // loop over overlays and data fragments.  overlays take precedence.
@@ -5956,7 +5957,7 @@ int BlueStore::_do_truncate(
     g_conf->bluestore_min_alloc_size);
 
   BluestoreWriteContext ctx(&txc->ioc, false);
-  r = em.truncate(offset, &ctx);
+  int r = em.truncate(offset, &ctx);
 
   /*
   // trim down cached tail
@@ -6077,7 +6078,7 @@ int BlueStore::_do_truncate(
   }*/
 
   txc->write_onode(o);
-  return 0;
+  return r;
 }
 
 int BlueStore::_truncate(TransContext *txc,
@@ -6670,7 +6671,7 @@ int BlueStore::read_block(uint64_t offset, uint32_t length, void* opaque, buffer
 int BlueStore::write_block(uint64_t offset, const bufferlist& data, void* opaque)
 {
   BluestoreWriteContext* ctx = (BluestoreWriteContext*)opaque;
-  int r = bdev->aio_write(offset, data, &(ctx->ioc), ctx->buffered);
+  int r = bdev->aio_write(offset, const_cast<bufferlist&>(data), ctx->ioc, ctx->buffered);
   return r;
 }
 

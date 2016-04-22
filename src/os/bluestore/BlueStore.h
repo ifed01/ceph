@@ -675,7 +675,7 @@ protected:
   virtual uint64_t get_block_size();
   virtual int read_block(uint64_t offset0, uint32_t length, void* opaque, bufferlist* result);
   virtual int write_block(uint64_t offset, const bufferlist& data, void* opaque);
-  virtual int zero_block(uint64_t offset, uint32_t length, void* opaque);
+  virtual int zero_block(uint64_t offset, uint64_t length, void* opaque);
   
   //
   //Method to allocate pextents
