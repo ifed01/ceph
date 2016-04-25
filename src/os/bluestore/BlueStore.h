@@ -123,8 +123,35 @@ public:
     }
   };
 
+  /// an in-memory blob map
+  struct BNode {
+    std::atomic_int nref;  ///< reference count
+
+    uint32_t bnode_id; ///< bnode identifier, in fact that's object hash for bnode identification.it's OK to have multiple objects under the same bnode
+    string key;     ///< key under PREFIX_OBJ where we are stored
+    boost::intrusive::list_member_hook<> lru_item;
+
+    bluestore_blob_map_t blob;  ///< metadata stored as value in kv store
+
+    BNode(uint32_t id, const string& k)
+      : nref(0),
+      bnode_id(id),
+      key(k) {
+    }
+
+    void get() {
+      ++nref;
+    }
+    void put() {
+      if (--nref == 0)
+	delete this;
+    }
+
+  };
+  typedef boost::intrusive_ptr<BNode> BNodeRef;
+
   /// an in-memory object
-  struct Onode {
+  struct ONode {
     std::atomic_int nref;  ///< reference count
 
     ghobject_t oid;
@@ -132,6 +159,7 @@ public:
     boost::intrusive::list_member_hook<> lru_item;
 
     EnodeRef enode;  ///< ref to Enode [optional]
+    BnodeRef bnode;  ///< ref to Bnode
 
     bluestore_onode_t onode;  ///< metadata stored as value in kv store
     bool exists;
@@ -192,6 +220,30 @@ public:
     int _trim(int max);
   };
 
+  struct BnodeHashLRU {
+    typedef boost::intrusive::list<
+      BNode,
+      boost::intrusive::member_hook<
+        BNode,
+        boost::intrusive::list_member_hook<>,
+        &BNode::lru_item> > lru_list_t;
+
+    std::mutex lock;
+    ceph::unordered_map<uint32_t, BNodeRef> bnode_map;  ///< forward lookups 
+    lru_list_t lru;                                      ///< lru
+    size_t max_size;
+
+    BNodeHashLRU(size_t s) : max_size(s) {}
+
+    void add(uint32_t bnode_id, BNodeRef b;
+    void _touch(BNodeRef b;
+    BNodeRef lookup(uint32_t bnode_id);
+    void clear();
+    //bool get_next(uint32_t bnode_id, pair<uin32_t, BNodeRef> *next);
+    int trim(int max = -1);
+    int _trim(int max);
+  };
+
   struct Collection : public CollectionImpl {
     BlueStore *store;
     coll_t cid;
@@ -206,7 +258,12 @@ public:
     // contention.
     OnodeHashLRU onode_map;
 
+    // cache bnodes on a per-collection basis to avoid lock
+    // contention.
+    BnodeHashLRU bnode_map;
+
     OnodeRef get_onode(const ghobject_t& oid, bool create);
+    BnodeRef get_bnode(uint32_t bnode_it, bool create);
     EnodeRef get_enode(uint32_t hash);
 
     const coll_t &get_cid() override {

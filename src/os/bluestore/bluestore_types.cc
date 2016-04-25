@@ -411,7 +411,6 @@ void bluestore_onode_t::encode(bufferlist& bl) const
   ::encode(expected_write_size, bl);
   //FIXME: raise ver
   ::encode(lextents, bl);
-  ::encode(blobs, bl);
   ENCODE_FINISH(bl);
 }
 
@@ -430,7 +429,6 @@ void bluestore_onode_t::decode(bufferlist::iterator& p)
   ::decode(expected_write_size, p);
   //FIXME: raise ver
   ::decode(lextents, p);
-  ::decode(blobs, p);
   DECODE_FINISH(p);
 }
 

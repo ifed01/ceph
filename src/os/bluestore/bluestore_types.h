@@ -373,7 +373,6 @@ struct bluestore_onode_t {
   uint64_t omap_head;                  ///< id for omap root node
 
   map<uint64_t, bluestore_lextent_t> lextents;   ///< logical extents
-  map<uint64_t, bluestore_blob_t> blobs; ///< blobs lextents refer to
 
   uint32_t expected_object_size;
   uint32_t expected_write_size;
