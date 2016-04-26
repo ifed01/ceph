@@ -731,3 +731,45 @@ void ExtentManager::release_lextents(live_lextent_map_t::iterator cur, live_lext
     ++cur;
   }
 }
+
+int ExtentManager::fiemap(uint64_t offset, uint32_t len, interval_set<uint64_t>* m)
+{
+  m->clear();
+
+  bluestore_lextent_map_t::iterator ep = m_lextents.upper_bound(offset);
+  if (ep != o->onode.lextents.begin())
+  --ep;
+  uint64_t end_offset = offset + len;
+  auto endp = m_lextents.upper_bound(end_offset);
+
+  while (ep != endp && offset < end_offset && end_offset > ep->first) {
+    if (ep->first <= offset && ep->first + ep->second.length > offset) {
+      uint64_t x_len = MIN(ep->first + ep->second.length - offset, end_offset - offset);
+      m->insert(offset, x_len);
+      offset += x_len;
+    }
+    else if (ep->first >= offset &&
+      ep->first + ep->second.length <= end_offset) {
+      uint64_t x_len = MIN(ep->second.length, end_offset - offset);
+      m->insert(ep->first, x_len);
+      offset = ep->first + x_len;
+    }
+
+    ++ep;
+  }
+  return 0;
+}
+
+int ExtentManager::clone_to(bluestore_lextent_map_t* new_lextents)
+{
+  *new_lextents = m_lextents;
+
+  if (!m_blobs.empty()) {
+    for (auto& p : *new_lextents) {
+      auto b = m_blobs.find(p.second.blob);
+      assert(b != m_blobs.end());
+      b->second.num_refs++;
+    }
+  }
+  return 0;
+}

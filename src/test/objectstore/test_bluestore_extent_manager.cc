@@ -2459,6 +2459,20 @@ TEST(bluestore_extent_manager, zero_truncate)
   ASSERT_TRUE(mgr.checkZero(OffsLenTuple(some_alloc_offset, ROUND_UP_TO(some_len, mgr.get_block_size()))));
   ASSERT_TRUE(mgr.checkReleases(OffsLenTuple(some_alloc_offset, ROUND_UP_TO(some_len2, mgr.get_min_alloc_size()))));
 
+  //Restore from backup
+  mgr = backup_mgr;
+
+  //Zero after the end
+  some_len = mgr.lextents().at(0).length;
+  r = mgr.zero(0x10000, 0x1000, NULL);
+  ASSERT_EQ(0, r);
+  ASSERT_EQ(0u, mgr.m_writes.size());
+  ASSERT_EQ(0u, mgr.m_zeros.size());
+  ASSERT_EQ(0u, mgr.m_releases.size());
+  ASSERT_EQ(1u, mgr.lextents().size());
+  ASSERT_EQ(1u, mgr.blobs().size());
+  ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF, 0u, some_len, 0) == mgr.lextents().at(0));
+
 }
 
 TEST(bluestore_extent_manager, write_csum_compressed)

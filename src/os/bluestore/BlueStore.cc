@@ -2453,11 +2453,10 @@ int BlueStore::fsck()
   }
 
   dout(1) << __func__ << " checking for stray enodes and onodes" << dendl;
-  //FIXME: add 
   it = db->get_iterator(PREFIX_OBJ);
   if (it) {
     CollectionRef c;
-    bool expecting_objects = false; //FIXME: this is always FALSE thus checks below do not work.
+    bool expecting_objects = false;
     shard_id_t expecting_shard;
     int64_t expecting_pool;
     uint32_t expecting_hash;
@@ -2833,7 +2832,7 @@ int BlueStore::_do_read(
   map<uint64_t,bluestore_overlay_t>::iterator op, oend;
   uint64_t block_size = bdev->get_block_size();
   int r = 0;
-  IOContext ioc(NULL);   // FIXME?
+  IOContext ioc(NULL);
 */
   int r = 0;
   // generally, don't buffer anything, unless the client explicitly requests
@@ -3022,34 +3021,23 @@ int BlueStore::fiemap(
   /*map<uint64_t,bluestore_extent_t>::iterator bp, bend;
   map<uint64_t,bluestore_overlay_t>::iterator op, oend;
 */
-  bluestore_lextent_map_t::iterator ep = o->onode.lextents.upper_bound(offset);
-  if (ep != o->onode.lextents.begin())
-    --ep;
-  uint64_t end_offset = offset + len;
-  auto endp = o->onode.lextents.upper_bound(end_offset);
-
   if (offset > o->onode.size)
     goto out;
 
   if (offset + len > o->onode.size) {
     len = o->onode.size - offset;
   }
-  //FIXME: move to ExtentManager
-  while (ep != endp && offset < end_offset && end_offset > ep->first) {
-    //assert(ep->offset + ep->length > offset); 
-    if (ep->first <= offset && ep->first + ep->second.length > offset) {
-      uint64_t x_len = MIN(ep->first + ep->second.length - offset, end_offset - offset);
-      m.insert(offset, x_len);
-      offset += x_len;
-    } else if (ep->first >= offset &&
-               ep->first + ep->second.length <= end_offset) {
-      uint64_t x_len = MIN(ep->second.length, end_offset - offset);
-      m.insert(ep->first, x_len);
-      offset = ep->first + x_len;
-    }
 
-    ++ep;
-  }
+  ExtentManager em(*this,
+    *this,
+    *this,
+    o->onode.lextents,
+    o->bnode->blobs,
+    g_conf->bluestore_min_alloc_size * 4, //replace with max_blob_size
+    g_conf->bluestore_min_alloc_size);
+
+  int r = em.fiemap(offset, length, &m);
+
   /*
   // loop over overlays and data fragments.  overlays take precedence.
   bend = o->onode.block_map.end();
@@ -3116,7 +3104,7 @@ int BlueStore::fiemap(
   ::encode(m, bl);
   dout(20) << __func__ << " " << offset << "~" << len
 	   << " size = 0 (" << m << ")" << dendl;
-  return 0;
+  return r;
 }
 
 int BlueStore::getattr(
@@ -6112,11 +6100,10 @@ int BlueStore::_do_zero(TransContext *txc,
   int r = 0;
   o->exists = true;
 
-  //FIXME: shouldn't it be offset + length > o->onode.size?
-  if (offset > o->onode.size) {
+  /*if (offset > o->onode.size) {
     // we are past eof; just truncate up.
     return _do_truncate(txc, c, o, offset + length);
-  }
+  }*/
 
   _dump_onode(o);
   _assign_nid(txc, o);
@@ -6670,19 +6657,19 @@ int BlueStore::_clone(TransContext *txc,
     goto out;
 
   if (g_conf->bluestore_clone_cow) {
-    //FIXME: implement via ExtentManager call
-    newo->onode.lextents = oldo->onode.lextents;
-    newo->bnode->blobs = oldo->bnode->blobs;
 
-    if (!newo->bnode->blobs.empty()) {
-      for (auto& p : newo->onode.lextents) {
-        auto b = newo->bnode->blobs.find(p.second.blob);
-        assert(b != newo->bnode->blobs.end());
-        b->second.num_refs++;
-      }
-    }
-    //FIXME: legacy code below
-    if (!oldo->onode.block_map.empty()) {
+    assert(o->bnode == newo->bnode);
+    ExtentManager em(*this,
+      *this,
+      *this,
+      o->onode.lextents,
+      o->bnode->blobs,
+      g_conf->bluestore_min_alloc_size * 4, //replace with max_blob_size
+      g_conf->bluestore_min_alloc_size);
+
+    r = em.clone_to(newo->onode.lextents);
+
+    /*if (!oldo->onode.block_map.empty()) {
       EnodeRef e = c->get_enode(newo->oid.hobj.get_hash());
       bool marked = false;
       for (auto& p : oldo->onode.block_map) {
@@ -6721,7 +6708,7 @@ int BlueStore::_clone(TransContext *txc,
       key.clear();
       get_overlay_key(newo->onode.nid, newo->onode.last_overlay_key, &key);
       txc->t->set(PREFIX_OVERLAY, key, val);
-    }
+    }*/
 
     newo->onode.size = oldo->onode.size;
   } else {

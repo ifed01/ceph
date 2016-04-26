@@ -90,6 +90,9 @@ public:
   int zero(uint64_t offset, uint64_t length, void* opaque);
   int truncate(uint64_t offset, void* opaque);
   int read(uint64_t offset, uint32_t length, void* opaque, bufferlist* result);
+  int fiemap(uint64_t offset, uint32_t len, interval_set<uint64_t>* m);
+  int clone_to(bluestore_lextent_map_t* new_lextents);
+
 
   uint64_t get_max_blob_size() const;
   uint64_t get_min_alloc_size() const;
