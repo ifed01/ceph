@@ -124,16 +124,16 @@ public:
   };
 
   /// an in-memory blob map
-  struct BNode {
+  struct Bnode {
     std::atomic_int nref;  ///< reference count
 
     uint32_t bnode_id; ///< bnode identifier, in fact that's object hash for bnode identification.it's OK to have multiple objects under the same bnode
     string key;     ///< key under PREFIX_OBJ where we are stored
     boost::intrusive::list_member_hook<> lru_item;
 
-    bluestore_blob_map_t blob;  ///< metadata stored as value in kv store
+    bluestore_blob_map_t blobs;  ///< metadata stored as value in kv store
 
-    BNode(uint32_t id, const string& k)
+    Bnode(uint32_t id, const string& k)
       : nref(0),
       bnode_id(id),
       key(k) {
@@ -148,10 +148,10 @@ public:
     }
 
   };
-  typedef boost::intrusive_ptr<BNode> BNodeRef;
+  typedef boost::intrusive_ptr<Bnode> BnodeRef;
 
   /// an in-memory object
-  struct ONode {
+  struct Onode {
     std::atomic_int nref;  ///< reference count
 
     ghobject_t oid;
@@ -222,24 +222,24 @@ public:
 
   struct BnodeHashLRU {
     typedef boost::intrusive::list<
-      BNode,
+      Bnode,
       boost::intrusive::member_hook<
-        BNode,
+        Bnode,
         boost::intrusive::list_member_hook<>,
-        &BNode::lru_item> > lru_list_t;
+        &Bnode::lru_item> > lru_list_t;
 
     std::mutex lock;
-    ceph::unordered_map<uint32_t, BNodeRef> bnode_map;  ///< forward lookups 
+    ceph::unordered_map<uint32_t, BnodeRef> bnode_map;  ///< forward lookups 
     lru_list_t lru;                                      ///< lru
     size_t max_size;
 
-    BNodeHashLRU(size_t s) : max_size(s) {}
+    BnodeHashLRU(size_t s) : max_size(s) {}
 
-    void add(uint32_t bnode_id, BNodeRef b;
-    void _touch(BNodeRef b;
-    BNodeRef lookup(uint32_t bnode_id);
+    void add(uint32_t bnode_id, BnodeRef b);
+    void _touch(BnodeRef b);
+    BnodeRef lookup(uint32_t bnode_id);
     void clear();
-    //bool get_next(uint32_t bnode_id, pair<uin32_t, BNodeRef> *next);
+    //bool get_next(uint32_t bnode_id, pair<uin32_t, BnodeRef> *next);
     int trim(int max = -1);
     int _trim(int max);
   };
@@ -1100,6 +1100,13 @@ static inline void intrusive_ptr_add_ref(BlueStore::Onode *o) {
 }
 static inline void intrusive_ptr_release(BlueStore::Onode *o) {
   o->put();
+}
+
+static inline void intrusive_ptr_add_ref(BlueStore::Bnode *b) {
+  b->get();
+}
+static inline void intrusive_ptr_release(BlueStore::Bnode *b) {
+  b->put();
 }
 
 static inline void intrusive_ptr_add_ref(BlueStore::OpSequencer *o) {

@@ -402,7 +402,7 @@ static void get_bnode_key(shard_id_t shard, int64_t pool, uint32_t hash,
   string *key)
 {
   key->clear();
-  _key_encode_u32(0xB1OBB1OB, key); //FIXME: to remove after enode elimination, is_bnode_key to be adjusted too
+  _key_encode_u32(0xB10BB10B, key); //FIXME: to remove after enode elimination, is_bnode_key to be adjusted too
   _key_encode_shard(shard, key);
   _key_encode_u64(pool + 0x8000000000000000ull, key);
   _key_encode_u32(hobject_t::_reverse_bits(hash), key);
@@ -557,11 +557,15 @@ void BlueStore::OnodeHashLRU::rename(OnodeRef& oldo,
     onode_map.erase(pn);
   }
   OnodeRef o = po->second;
-
   // install a non-existent onode at old location
   oldo.reset(new Onode(old_oid, o->key));
+  //FIXME: this implementation wouldn't work properly if old hash != new hash
+  //since bnode reference is invalid after reading the onode from the KV
+  oldo->bnode = o->bnode;
+
   po->second = oldo;
   lru.push_back(*po->second);
+
 
   // add at new position and fix oid, key
   onode_map.insert(make_pair(new_oid, o));
@@ -656,22 +660,22 @@ void BlueStore::BnodeHashLRU::_touch(BnodeRef o)
   lru.push_front(*o);
 }
 
-void BlueStore::BnodeHashLRU::add(uin32_t bnode_id, BnodeRef b)
+void BlueStore::BnodeHashLRU::add(uint32_t bnode_id, BnodeRef b)
 {
   std::lock_guard<std::mutex> l(lock);
-  dout(30) << __func__ << " " << bnode_id << " " << o << dendl;
-  assert(Bnode_map.count(bnode_id) == 0);
-  Bnode_map[bnode_id] = b;
+  dout(30) << __func__ << " " << bnode_id << " " << b << dendl;
+  assert(bnode_map.count(bnode_id) == 0);
+  bnode_map[bnode_id] = b;
   lru.push_front(*b);
   _trim(max_size);
 }
 
-BlueStore::BnodeRef BlueStore::BnodeHashLRU::lookup(uin32_t bnode_id)
+BlueStore::BnodeRef BlueStore::BnodeHashLRU::lookup(uint32_t bnode_id)
 {
   std::lock_guard<std::mutex> l(lock);
   dout(30) << __func__ << dendl;
-  ceph::unordered_map<ghobject_t, BnodeRef>::iterator p = Bnode_map.find(bnode_id);
-  if (p == Bnode_map.end()) {
+  ceph::unordered_map<uint32_t, BnodeRef>::iterator p = bnode_map.find(bnode_id);
+  if (p == bnode_map.end()) {
     dout(30) << __func__ << " " << bnode_id << " miss" << dendl;
     return BnodeRef();
   }
@@ -685,7 +689,7 @@ void BlueStore::BnodeHashLRU::clear()
   std::lock_guard<std::mutex> l(lock);
   dout(10) << __func__ << dendl;
   lru.clear();
-  Bnode_map.clear();
+  bnode_map.clear();
 }
 
 /*bool BlueStore::BnodeHashLRU::get_next(
@@ -729,10 +733,10 @@ int BlueStore::BnodeHashLRU::trim(int max)
 
 int BlueStore::BnodeHashLRU::_trim(int max)
 {
-  dout(20) << __func__ << " max " << max << " size " << Bnode_map.size() << dendl;
+  dout(20) << __func__ << " max " << max << " size " << bnode_map.size() << dendl;
   int trimmed = 0;
-  int num = Bnode_map.size() - max;
-  if (Bnode_map.size() == 0 || num <= 0)
+  int num = bnode_map.size() - max;
+  if (bnode_map.size() == 0 || num <= 0)
     return 0; // don't even try
   
   lru_list_t::iterator p = lru.end();
@@ -742,7 +746,7 @@ int BlueStore::BnodeHashLRU::_trim(int max)
     Bnode *b = &*p;
     int refs = b->nref.load();
     if (refs > 1) {
-      dout(20) << __func__ << "  " << b->blob_id << " has " << refs
+      dout(20) << __func__ << "  " << b->bnode_id << " has " << refs
 	       << " refs; stopping with " << num << " left to trim" << dendl;
       break;
     }
@@ -754,7 +758,7 @@ int BlueStore::BnodeHashLRU::_trim(int max)
       assert(num == 1);
     }
     b->get();  // paranoia
-    Bnode_map.erase(b->bnode_id);
+    bnode_map.erase(b->bnode_id);
     b->put();
     --num;
     ++trimmed;
@@ -775,7 +779,7 @@ BlueStore::Collection::Collection(BlueStore *ns, coll_t c)
     lock("BlueStore::Collection::lock", true, false),
     exists(true),
     enode_set(g_conf->bluestore_onode_map_size),
-    onode_map(g_conf->bluestore_onode_map_size)
+    onode_map(g_conf->bluestore_onode_map_size),
     bnode_map(g_conf->bluestore_onode_map_size)
 {
 }
@@ -832,7 +836,7 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
     }
   }
 
-  OnodeRef o = Onode_map.lookup(oid);
+  OnodeRef o = onode_map.lookup(oid);
   if (o)
     return o;
 
@@ -844,25 +848,27 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
 
   bufferlist v;
   int r = store->db->get(PREFIX_OBJ, key, &v);
-  dout(20) << " r " << r << " v.len " << v.length() << dendl;
+  dout(0) << " r " << r << " v.len " << v.length() << dendl;
   Onode *on;
   if (v.length() == 0) {
     assert(r == -ENOENT);
     if (!g_conf->bluestore_debug_misc &&
-	!create)
-      return BnodeRef();
+	!create) {
+      dout(0) << " r " << r << " v.len " << v.length() << dendl;
+      return OnodeRef();
+    }
 
-    // new
+    // new	
     on = new Onode(oid, key);
   } else {
     // loaded
-    assert(r >=0);
+    assert(r >= 0);
     on = new Onode(oid, key);
     on->exists = true;
     bufferlist::iterator p = v.begin();
-    ::decode(on->Onode, p);
+    ::decode(on->onode, p);
   }
-  on->bnode = get_bnode(o->oid.hobj.get_hash(), create);
+  on->bnode = get_bnode(oid.hobj.get_hash(), create);
   o.reset(on);
   onode_map.add(oid, o);
   return o;
@@ -874,18 +880,15 @@ BlueStore::BnodeRef BlueStore::Collection::get_bnode(
 {
   assert(create ? lock.is_wlocked() : lock.is_locked());
 
-  BnodeRef b = Bnode_map.lookup(bnode_id);
+  BnodeRef b = bnode_map.lookup(bnode_id);
   if (b)
-    return ;
+    return b;
 
   spg_t pgid;
   if (!cid.is_pg(&pgid))
     pgid = spg_t();  // meta
   string key;
   get_bnode_key(pgid.shard, pgid.pool(), bnode_id, &key);
-
-  dout(20) << __func__ << " bnode_id " << bnode_id << " key "
-    << pretty_binary_string(key) << dendl;
 
   dout(10) << __func__ << " bnode_id " << std::hex << bnode_id << std::dec
     << " key " << pretty_binary_string(key) << " created " << dendl;
@@ -896,9 +899,6 @@ BlueStore::BnodeRef BlueStore::Collection::get_bnode(
   Bnode *bn;
   if (v.length() == 0) {
     assert(r == -ENOENT);
-    if (!g_conf->bluestore_debug_misc &&
-      !create)
-      return BnodeRef();
 
     // new
     bn = new Bnode(bnode_id, key);
@@ -912,7 +912,7 @@ BlueStore::BnodeRef BlueStore::Collection::get_bnode(
   }
   b.reset(bn);
   bnode_map.add(bnode_id, b);
-  return o;
+  return b;
 }
 
 
@@ -3022,34 +3022,31 @@ int BlueStore::fiemap(
   /*map<uint64_t,bluestore_extent_t>::iterator bp, bend;
   map<uint64_t,bluestore_overlay_t>::iterator op, oend;
 */
+  bluestore_lextent_map_t::iterator ep = o->onode.lextents.upper_bound(offset);
+  if (ep != o->onode.lextents.begin())
+    --ep;
+  uint64_t end_offset = offset + len;
+  auto endp = o->onode.lextents.upper_bound(end_offset);
+
   if (offset > o->onode.size)
     goto out;
 
   if (offset + len > o->onode.size) {
     len = o->onode.size - offset;
   }
-
   //FIXME: move to ExtentManager
-  bluestore_lextent_map_t::iterator ep = o->onode.m_lextents.upper_bound(offset);
-  if (ep != o->onode.m_lextents.begin())
-    --ep;
-  auto endp = o->onode.m_lextents.upper_bound(offset + len);
-  while (ep != endp && len > 0) {
-    
+  while (ep != endp && offset < end_offset && end_offset > ep->first) {
+    //assert(ep->offset + ep->length > offset); 
     if (ep->first <= offset && ep->first + ep->second.length > offset) {
-      uint64_t x_len = MIN(ep->first + ep->second.length - offset, len);
+      uint64_t x_len = MIN(ep->first + ep->second.length - offset, end_offset - offset);
       m.insert(offset, x_len);
       offset += x_len;
-      len -= x_len;
-    } /*FIXME: incomplete for now!!!
-      else if (	ep->first > offset &&
-	ep->first + ep->second.length > offset + len) {
-      x_len = ep->first - offset;
-      uint64_t x_len = MIN(ep->first + ep->second.length - offset, len);
+    } else if (ep->first >= offset &&
+               ep->first + ep->second.length <= end_offset) {
+      uint64_t x_len = MIN(ep->second.length, end_offset - offset);
       m.insert(ep->first, x_len);
       offset = ep->first + x_len;
-      len -= x_len;
-    }*/
+    }
 
     ++ep;
   }
@@ -4005,7 +4002,7 @@ int BlueStore::_txc_finalize(OpSequencer *osr, TransContext *txc)
     txc->t->set(PREFIX_OBJ, (*p)->key, bl);
 
     bl.clear();
-    ::encode((*p)->bnode, bl);
+    ::encode((*p)->bnode->blobs, bl);
     txc->t->set(PREFIX_OBJ, (*p)->bnode->key, bl);
 
     std::lock_guard<std::mutex> l((*p)->flush_lock);
@@ -6222,7 +6219,6 @@ int BlueStore::_do_truncate(
   // ensure any wal IO has completed before we truncate off any extents
   // they may touch.
   o->flush();
-
   ExtentManager em(*this,
     *this,
     *this,
@@ -6679,8 +6675,10 @@ int BlueStore::_clone(TransContext *txc,
     newo->bnode->blobs = oldo->bnode->blobs;
 
     if (!newo->bnode->blobs.empty()) {
-      for (auto& p : newo->bnode->blobs) {
-	++(p->num_refs);
+      for (auto& p : newo->onode.lextents) {
+        auto b = newo->bnode->blobs.find(p.second.blob);
+        assert(b != newo->bnode->blobs.end());
+        b->second.num_refs++;
       }
     }
     //FIXME: legacy code below

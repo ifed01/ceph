@@ -108,7 +108,7 @@ int ExtentManager::read(uint64_t offset, uint32_t length, void* opaque, bufferli
   uint64_t o = offset;
   if (lext == m_lextents.begin() && offset + length <= lext->first){
     result->append_zero(length);
-    return 0;
+    return length;
   } else if(lext == m_lextents.begin()) {
     o = lext->first;
     l -= lext->first - offset;
@@ -570,16 +570,9 @@ int ExtentManager::allocate_raw_blob(uint32_t length, void* opaque, const Extent
   uint32_t to_allocate = ROUND_UP_TO(length, get_min_alloc_size());
   int r = m_blockop_inf.allocate_blocks(to_allocate, opaque, &blob.extents);
   if (r >= 0) {
-//FIXME:
-auto i = blob.extents.begin();
-while(i != blob.extents.end()) {
-  dout(0)<<__func__<< ":" << *i << dendl;
-  ++i;
-}
     r = length;
     *res_blob_it = blob_it;
   } else {
-assert(0);
     m_blobs.erase(blob_it);
     *blob_ref = UNDEF_BLOB_REF;
     *res_blob_it = m_blobs.end();
