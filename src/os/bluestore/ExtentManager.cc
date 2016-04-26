@@ -66,9 +66,6 @@ void ExtentManager::deref_blob(bluestore_blob_map_t::iterator blob_it, bool zero
       auto l = blob->length;
       uint64_t x_offs = 0;
       while (ext != end_ext) {
-
-  dout(0)<<__func__<< *ext << dendl;
-
         if (zero && x_offs < l) {
           uint64_t x_len = ROUND_UP_TO(MIN(ext->length, l - x_offs), m_blockop_inf.get_block_size());
           m_blockop_inf.zero_block(ext->offset, x_len, opaque);
@@ -737,7 +734,7 @@ int ExtentManager::fiemap(uint64_t offset, uint32_t len, interval_set<uint64_t>*
   m->clear();
 
   bluestore_lextent_map_t::iterator ep = m_lextents.upper_bound(offset);
-  if (ep != o->onode.lextents.begin())
+  if (ep != m_lextents.begin())
   --ep;
   uint64_t end_offset = offset + len;
   auto endp = m_lextents.upper_bound(end_offset);

@@ -3021,13 +3021,7 @@ int BlueStore::fiemap(
   /*map<uint64_t,bluestore_extent_t>::iterator bp, bend;
   map<uint64_t,bluestore_overlay_t>::iterator op, oend;
 */
-  if (offset > o->onode.size)
-    goto out;
-
-  if (offset + len > o->onode.size) {
-    len = o->onode.size - offset;
-  }
-
+  int r = 0;
   ExtentManager em(*this,
     *this,
     *this,
@@ -3036,7 +3030,14 @@ int BlueStore::fiemap(
     g_conf->bluestore_min_alloc_size * 4, //replace with max_blob_size
     g_conf->bluestore_min_alloc_size);
 
-  int r = em.fiemap(offset, length, &m);
+  if (offset > o->onode.size)
+    goto out;
+
+  if (offset + len > o->onode.size) {
+    len = o->onode.size - offset;
+  }
+
+  r = em.fiemap(offset, len, &m);
 
   /*
   // loop over overlays and data fragments.  overlays take precedence.
@@ -6652,22 +6653,22 @@ int BlueStore::_clone(TransContext *txc,
   // data
   oldo->flush();
 
+  ExtentManager em(*this,
+    *this,
+    *this,
+    oldo->onode.lextents,
+    oldo->bnode->blobs,
+    g_conf->bluestore_min_alloc_size * 4, //replace with max_blob_size
+    g_conf->bluestore_min_alloc_size);
+
   r = _do_truncate(txc, c, newo, 0);
   if (r < 0)
     goto out;
 
   if (g_conf->bluestore_clone_cow) {
 
-    assert(o->bnode == newo->bnode);
-    ExtentManager em(*this,
-      *this,
-      *this,
-      o->onode.lextents,
-      o->bnode->blobs,
-      g_conf->bluestore_min_alloc_size * 4, //replace with max_blob_size
-      g_conf->bluestore_min_alloc_size);
-
-    r = em.clone_to(newo->onode.lextents);
+    assert(oldo->bnode == newo->bnode);
+    r = em.clone_to(&newo->onode.lextents);
 
     /*if (!oldo->onode.block_map.empty()) {
       EnodeRef e = c->get_enode(newo->oid.hobj.get_hash());

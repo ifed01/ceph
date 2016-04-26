@@ -2417,6 +2417,8 @@ TEST(bluestore_extent_manager, zero_truncate)
   ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF, 0u, mgr.get_block_size() / 2, 0) == mgr.lextents().at(0));
   ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF, mgr.get_block_size() / 2 + 255, some_len2 - mgr.get_block_size() / 2 - 255, 0) == mgr.lextents().at(mgr.get_block_size() / 2 + 255));
 
+  mgr.reset(false);
+
   //Zero the first lextent and partially the subsequent hole (2048 + 250 bytes)
   some_len2 = mgr.blobs().at(FIRST_BLOB_REF).length;
   r = mgr.zero(0, mgr.get_block_size() / 2 + 250, NULL);
@@ -2427,6 +2429,8 @@ TEST(bluestore_extent_manager, zero_truncate)
   ASSERT_EQ(1u, mgr.lextents().size());
   ASSERT_EQ(1u, mgr.blobs().size());
   ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF, mgr.get_block_size() / 2 + 255, some_len2 - mgr.get_block_size() / 2 - 255, 0) == mgr.lextents().at(mgr.get_block_size() / 2 + 255));
+
+  mgr.reset(false);
 
   //Restore from backup
   mgr = backup_mgr;
@@ -2441,6 +2445,8 @@ TEST(bluestore_extent_manager, zero_truncate)
   ASSERT_EQ(1u, mgr.lextents().size());
   ASSERT_EQ(1u, mgr.blobs().size());
   ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF, mgr.get_block_size() / 2 + 260, some_len2 - mgr.get_block_size() / 2 - 260, 0) == mgr.lextents().at(mgr.get_block_size() / 2 + 260));
+
+  mgr.reset(false);
 
   //Restore from backup
   mgr = backup_mgr;
@@ -2459,6 +2465,8 @@ TEST(bluestore_extent_manager, zero_truncate)
   ASSERT_TRUE(mgr.checkZero(OffsLenTuple(some_alloc_offset, ROUND_UP_TO(some_len, mgr.get_block_size()))));
   ASSERT_TRUE(mgr.checkReleases(OffsLenTuple(some_alloc_offset, ROUND_UP_TO(some_len2, mgr.get_min_alloc_size()))));
 
+  mgr.reset(false);
+
   //Restore from backup
   mgr = backup_mgr;
 
@@ -2473,6 +2481,7 @@ TEST(bluestore_extent_manager, zero_truncate)
   ASSERT_EQ(1u, mgr.blobs().size());
   ASSERT_TRUE(bluestore_lextent_t(FIRST_BLOB_REF, 0u, some_len, 0) == mgr.lextents().at(0));
 
+  mgr.reset(false);
 }
 
 TEST(bluestore_extent_manager, write_csum_compressed)
