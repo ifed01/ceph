@@ -559,13 +559,11 @@ void BlueStore::OnodeHashLRU::rename(OnodeRef& oldo,
   OnodeRef o = po->second;
   // install a non-existent onode at old location
   oldo.reset(new Onode(old_oid, o->key));
-  //FIXME: this implementation wouldn't work properly if old hash != new hash
-  //since bnode reference is invalid after reading the onode from the KV
-  oldo->bnode = o->bnode;
+  assert(old_oid.hobj.get_hash() == new_oid.hobj.get_hash());
+  oldo->bnode = o->bnode; //referencing the same bnode as hash values are the same
 
   po->second = oldo;
   lru.push_back(*po->second);
-
 
   // add at new position and fix oid, key
   onode_map.insert(make_pair(new_oid, o));
@@ -868,7 +866,7 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
     bufferlist::iterator p = v.begin();
     ::decode(on->onode, p);
   }
-  on->bnode = get_bnode(oid.hobj.get_hash(), create);
+  on->bnode = get_bnode(oid.hobj.get_hash(), true);
   o.reset(on);
   onode_map.add(oid, o);
   return o;
@@ -897,11 +895,13 @@ BlueStore::BnodeRef BlueStore::Collection::get_bnode(
   int r = store->db->get(PREFIX_OBJ, key, &v);
   dout(20) << " r " << r << " v.len " << v.length() << dendl;
   Bnode *bn;
+  bool update_map = true;
   if (v.length() == 0) {
     assert(r == -ENOENT);
 
     // new
     bn = new Bnode(bnode_id, key);
+    update_map = create;
   }
   else {
     // loaded
@@ -2200,6 +2200,56 @@ int BlueStore::_verify_enode_shared(
   return errors;
 }
 
+int BlueStore::_verify_bnode(
+  uint32_t bnode_id,
+  BnodeRef bnode,
+  vector<bluestore_blob_id>& blob_ids,
+  interval_set<uint64_t> &used_blocks)
+{
+  int errors = 0;
+  map<bluestore_blob_id, size_t> counts_map1, counts_map2;
+  vector<bluestore_extent_t>& v;
+
+  for (auto& b : bnode.blobs) {
+    counts_map1.count[b.first] = b.second.num_refs;
+    v.insert(v.end(), b.begin(), b.end());
+  }
+  for (auto& b : blob_ids) {
+    if (counts_map2.count(b) == 0)
+      counts_map2.count[b] = 1;
+    else
+      ++counts_map2.count[b.first];
+    }
+  }
+
+  if (counts_map1 != counts_map2) {
+    derr << " bnode " << bnode_id << " ref counts " << count_maps1
+      << " != expected " << count_maps2 << dendl;
+    ++errors;
+  }
+
+  interval_set<uint64_t> span;
+  dout(10) << __func__ << " bnode " << bnode_id << " v " << v << dendl;
+  for (auto& p : v) {
+    interval_set<uint64_t> t, i;
+    t.insert(p.offset, p.length);
+    i.intersection_of(t, span);
+    t.subtract(i);
+    dout(20) << __func__ << "  extent " << p << " t " << t << " i " << i
+      << dendl;
+    span.insert(t);
+  }
+  interval_set<uint64_t> i;
+  i.intersection_of(span, used_blocks);
+  if (!i.empty()) {
+    derr << "bnode " << bnode_id << " extent(s) " << i
+      << " already allocated" << dendl;
+    ++errors;
+  }
+  used_blocks.insert(span);
+  return errors;
+}
+
 int BlueStore::fsck()
 {
   dout(1) << __func__ << dendl;
@@ -2210,6 +2260,9 @@ int BlueStore::fsck()
   KeyValueDB::Iterator it;
   EnodeRef enode;
   vector<bluestore_extent_t> hash_shared;
+  BnodeRef bnode;
+  uint32_t bnode_id;
+  vector<bluestore_blob_id> blob_ids_shared;
 
   int r = _open_path();
   if (r < 0)
@@ -2290,6 +2343,13 @@ int BlueStore::fsck()
 	  enode = c->get_enode(o->oid.hobj.get_hash());
 	  hash_shared.clear();
 	}
+	if (!bnode || bnode_id != o->oid.hobj.get_hash()) {
+	  if (bnode)
+	    errors += _verify_bnode_shared(bnode_id, bnode, bnode_id_shared, used_blocks);
+	  bnode_id = o->oid.hobj.get_hash();
+	  bnode = c->get_bnode(bnode_id, false);
+	  bnode_id_shared.clear();
+	}
 	if (o->onode.nid) {
 	  if (used_nids.count(o->onode.nid)) {
 	    derr << " " << oid << " nid " << o->onode.nid << " already in use"
@@ -2318,23 +2378,9 @@ int BlueStore::fsck()
 	    }
 	  }
 	}
-	// blobs
-	for (auto& b : o->bnode->blobs) {
-	  for (auto& e : b.second.extents) {
-	    //FIXME: we need to do the check similar to the one performed for shared blocks
-	    /*if (used_blocks.intersects(e.offset, e.length)) {
-	      derr << " " << oid << " extent " << e
-		   << " already allocated" << dendl;
-	      ++errors;
-	      continue;
-	    }*/
-	    used_blocks.insert(e.offset, e.length);
-	    if (e.end() > bdev->get_size()) {
-	      derr << " " << oid << " extent " << e
-		   << " past end of block device" << dendl;
-	      ++errors;
-	    }
-	  }
+	// lextents
+	for (auto& le : o->onode.lextents) {
+	  bnode_id_shared.push_back(le.blob_id);
 	}
 	// overlays
 	set<string> overlay_keys;
@@ -2451,7 +2497,13 @@ int BlueStore::fsck()
     hash_shared.clear();
     enode.reset();
   }
+  if (bnode) {
+      errors += _verify_bnode_shared(bnode_id, bnode, bnode_id_shared, used_blocks);
+    bnode.reset();
+    bnode_id_shared.clear();
+  }
 
+  //FIXME: check for bnodes too
   dout(1) << __func__ << " checking for stray enodes and onodes" << dendl;
   it = db->get_iterator(PREFIX_OBJ);
   if (it) {
@@ -6812,6 +6864,12 @@ int BlueStore::_rename(TransContext *txc,
   int r;
   ghobject_t old_oid = oldo->oid;
 
+  if (oldo->oid.hobj.get_hash() != newo->oid.hobj.get_hash()) {
+    derr << __func__ << " mismatched hash on " << oldo->oid
+      << " and " << newo->oid << dendl;
+    return -EINVAL;
+  }
+
   if (newo) {
     if (newo->exists) {
       r = -EEXIST;
@@ -6912,9 +6970,9 @@ int BlueStore::_split_collection(TransContext *txc,
   RWLock::WLocker l(c->lock);
   RWLock::WLocker l2(d->lock);
   c->onode_map.clear();
-  c->bnode_map.clear(); //FIXME: is this correct?
+  c->bnode_map.clear();
   d->onode_map.clear();
-  d->bnode_map.clear(); //FIXME: is this correct?
+  d->bnode_map.clear();
   c->cnode.bits = bits;
   assert(d->cnode.bits == bits);
   r = 0;

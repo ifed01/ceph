@@ -705,7 +705,10 @@ private:
   // for fsck
   int _verify_enode_shared(EnodeRef enode, vector<bluestore_extent_t>& v,
 			   interval_set<uint64_t> &used_blocks);
-
+  int _verify_bnode(uint32_t bnode_id,
+		    BnodeRef bnode,
+		    vector<bluestore_blob_id>& blob_ids,
+		    interval_set<uint64_t> &used_blocks);
 
 protected:
   struct BluestoreReadContext {

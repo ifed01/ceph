@@ -142,23 +142,23 @@ protected:
       : bluestore_lextent_t(),
       blob_iterator(blob_it)
     {}
-    live_lextent_t(bluestore_blob_map_t::iterator blob_it, BlobRef blob_ref, uint32_t o, uint32_t l, uint32_t f)
+    live_lextent_t(bluestore_blob_map_t::iterator blob_it, bluestore_blob_id_t blob_ref, uint32_t o, uint32_t l, uint32_t f)
       : bluestore_lextent_t(blob_ref, o, l, f),
       blob_iterator(blob_it)
     {}
   };
   typedef map<uint64_t, live_lextent_t> live_lextent_map_t;
 
-  bluestore_blob_t* get_blob(BlobRef blob_ref);
-  bluestore_blob_map_t::iterator get_blob_iterator(BlobRef blob_ref);
+  bluestore_blob_t* get_blob(bluestore_blob_id_t blob_ref);
+  bluestore_blob_map_t::iterator get_blob_iterator(bluestore_blob_id_t blob_ref);
 
-  void ref_blob(BlobRef blob_ref);
+  void ref_blob(bluestore_blob_id_t blob_ref);
   void ref_blob(bluestore_blob_map_t::iterator blob_it);
   void deref_blob(bluestore_blob_map_t::iterator blob_it, bool zero, void* opaque);
 
   uint64_t get_read_block_size(const bluestore_blob_t*) const;
 
-  void preprocess_changes(uint64_t offset, uint64_t length, bluestore_lextent_map_t* updated_lextents, live_lextent_map_t* removed_lextents, list<BlobRef>* blob2ref);
+  void preprocess_changes(uint64_t offset, uint64_t length, bluestore_lextent_map_t* updated_lextents, live_lextent_map_t* removed_lextents, list<bluestore_blob_id_t>* blob2ref);
 
   int read_whole_blob(const bluestore_blob_t*, void* opaque, bufferlist* result);
   int read_extent_sparse(const bluestore_blob_t*, const bluestore_extent_t* extent, regions2read_t::const_iterator begin, regions2read_t::const_iterator end, void* opaque, ready_regions_t* result);
@@ -166,7 +166,7 @@ protected:
 
   int verify_csum(const bluestore_blob_t* blob, uint64_t x_offset, const bufferlist& bl, void* opaque) const;
 
-  int allocate_raw_blob(uint32_t length, void* opaque, const CheckSumInfo& check_info, BlobRef* blob, bluestore_blob_map_t::iterator* res_blob_it);
+  int allocate_raw_blob(uint32_t length, void* opaque, const CheckSumInfo& check_info, bluestore_blob_id_t* blob, bluestore_blob_map_t::iterator* res_blob_it);
   int compress_and_allocate_blob(
     uint64_t input_offset,
     uint64_t input_length,
@@ -174,7 +174,7 @@ protected:
     void* opaque,
     const CheckSumInfo& check_info,
     const CompressInfo& compress_info,
-    BlobRef* blob,
+    bluestore_blob_id_t* blob,
     bluestore_blob_map_t::iterator* res_blob_it,
     bufferlist* compressed_buffer);
 

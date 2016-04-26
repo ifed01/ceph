@@ -294,7 +294,7 @@ struct bluestore_blob_t
 };
 WRITE_CLASS_ENCODER(bluestore_blob_t)
 
-typedef uint64_t BlobRef;
+typedef uint64_t bluestore_blob_id_t;
 enum {
   UNDEF_BLOB_REF = 0,
   FIRST_BLOB_REF = 1,
@@ -304,14 +304,14 @@ enum {
 struct bluestore_lextent_t {
   static string get_flags_string(unsigned flags);
 
-  BlobRef blob;
+  bluestore_blob_id_t blob;
   uint32_t x_offset; ///< relative offset within the blob
   uint32_t length;
   uint32_t flags;    /// or reserved
 
   bluestore_lextent_t()
     : blob(UNDEF_BLOB_REF), x_offset(0), length(0), flags(0) {}
-  bluestore_lextent_t(BlobRef _blob, uint32_t o, uint32_t l, uint32_t f)
+  bluestore_lextent_t(bluestore_blob_id_t _blob, uint32_t o, uint32_t l, uint32_t f)
     : blob(_blob), x_offset(o), length(l), flags(f) {}
   bluestore_lextent_t(const bluestore_lextent_t& from)
     : blob(from.blob), x_offset(from.x_offset), length(from.length), flags(from.flags) {}
@@ -359,7 +359,7 @@ struct bluestore_lextent_t {
 WRITE_CLASS_ENCODER(bluestore_lextent_t)
 
 typedef map<uint64_t, bluestore_lextent_t> bluestore_lextent_map_t;
-typedef map<BlobRef, bluestore_blob_t> bluestore_blob_map_t;
+typedef map<bluestore_blob_id_t, bluestore_blob_t> bluestore_blob_map_t;
 
 /// onode: per-object metadata
 struct bluestore_onode_t {
