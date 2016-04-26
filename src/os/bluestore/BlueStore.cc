@@ -866,7 +866,7 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
     bufferlist::iterator p = v.begin();
     ::decode(on->onode, p);
   }
-  on->bnode = get_bnode(oid.hobj.get_hash(), true);
+  on->bnode = get_bnode(oid.hobj.get_hash(), create);
   o.reset(on);
   onode_map.add(oid, o);
   return o;
@@ -911,7 +911,8 @@ BlueStore::BnodeRef BlueStore::Collection::get_bnode(
     ::decode(bn->blobs, p);
   }
   b.reset(bn);
-  bnode_map.add(bnode_id, b);
+  if(update_map)
+    bnode_map.add(bnode_id, b);
   return b;
 }
 
@@ -2203,28 +2204,27 @@ int BlueStore::_verify_enode_shared(
 int BlueStore::_verify_bnode(
   uint32_t bnode_id,
   BnodeRef bnode,
-  vector<bluestore_blob_id>& blob_ids,
+  vector<bluestore_blob_id_t>& blob_ids,
   interval_set<uint64_t> &used_blocks)
 {
   int errors = 0;
-  map<bluestore_blob_id, size_t> counts_map1, counts_map2;
-  vector<bluestore_extent_t>& v;
+  map<bluestore_blob_id_t, size_t> counts_map1, counts_map2;
+  vector<bluestore_extent_t> v;
 
-  for (auto& b : bnode.blobs) {
-    counts_map1.count[b.first] = b.second.num_refs;
-    v.insert(v.end(), b.begin(), b.end());
+  for (auto& b : bnode->blobs) {
+    counts_map1[b.first] = b.second.num_refs;
+    v.insert(v.end(), b.second.extents.begin(), b.second.extents.end());
   }
   for (auto& b : blob_ids) {
     if (counts_map2.count(b) == 0)
-      counts_map2.count[b] = 1;
+      counts_map2[b] = 1;
     else
-      ++counts_map2.count[b.first];
-    }
+      ++counts_map2[b];
   }
 
   if (counts_map1 != counts_map2) {
-    derr << " bnode " << bnode_id << " ref counts " << count_maps1
-      << " != expected " << count_maps2 << dendl;
+    derr << " bnode " << bnode_id << " ref counts " << counts_map1
+      << " != expected " << counts_map2 << dendl;
     ++errors;
   }
 
@@ -2261,8 +2261,8 @@ int BlueStore::fsck()
   EnodeRef enode;
   vector<bluestore_extent_t> hash_shared;
   BnodeRef bnode;
-  uint32_t bnode_id;
-  vector<bluestore_blob_id> blob_ids_shared;
+  uint32_t bnode_id = 0;
+  vector<bluestore_blob_id_t> blob_ids_shared;
 
   int r = _open_path();
   if (r < 0)
@@ -2345,10 +2345,10 @@ int BlueStore::fsck()
 	}
 	if (!bnode || bnode_id != o->oid.hobj.get_hash()) {
 	  if (bnode)
-	    errors += _verify_bnode_shared(bnode_id, bnode, bnode_id_shared, used_blocks);
+	    errors += _verify_bnode(bnode_id, bnode, blob_ids_shared, used_blocks);
 	  bnode_id = o->oid.hobj.get_hash();
 	  bnode = c->get_bnode(bnode_id, false);
-	  bnode_id_shared.clear();
+	  blob_ids_shared.clear();
 	}
 	if (o->onode.nid) {
 	  if (used_nids.count(o->onode.nid)) {
@@ -2380,7 +2380,7 @@ int BlueStore::fsck()
 	}
 	// lextents
 	for (auto& le : o->onode.lextents) {
-	  bnode_id_shared.push_back(le.blob_id);
+	  blob_ids_shared.push_back(le.second.blob);
 	}
 	// overlays
 	set<string> overlay_keys;
@@ -2498,9 +2498,9 @@ int BlueStore::fsck()
     enode.reset();
   }
   if (bnode) {
-      errors += _verify_bnode_shared(bnode_id, bnode, bnode_id_shared, used_blocks);
+      errors += _verify_bnode(bnode_id, bnode, blob_ids_shared, used_blocks);
     bnode.reset();
-    bnode_id_shared.clear();
+    blob_ids_shared.clear();
   }
 
   //FIXME: check for bnodes too

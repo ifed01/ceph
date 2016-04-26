@@ -707,7 +707,7 @@ private:
 			   interval_set<uint64_t> &used_blocks);
   int _verify_bnode(uint32_t bnode_id,
 		    BnodeRef bnode,
-		    vector<bluestore_blob_id>& blob_ids,
+		    vector<bluestore_blob_id_t>& blob_ids,
 		    interval_set<uint64_t> &used_blocks);
 
 protected:
