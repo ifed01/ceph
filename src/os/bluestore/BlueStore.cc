@@ -393,7 +393,7 @@ static int get_key_object(const string& key, ghobject_t *oid)
 
 static bool is_bnode_key(const string& key)
 {
-  if (key.size() == 4 + 2 + 8 + 4)
+  if (key.size() == 2 + 8 + 4 + 1)
     return true;
   return false;
 }
@@ -402,23 +402,25 @@ static void get_bnode_key(shard_id_t shard, int64_t pool, uint32_t hash,
   string *key)
 {
   key->clear();
-  _key_encode_u32(0xB10BB10B, key); //FIXME: to remove after enode elimination, is_bnode_key to be adjusted too
   _key_encode_shard(shard, key);
   _key_encode_u64(pool + 0x8000000000000000ull, key);
   _key_encode_u32(hobject_t::_reverse_bits(hash), key);
+  key->append("!");
 }
 
 static int get_key_bnode(const string& key, shard_id_t *shard,
   int64_t *pool, uint32_t *hash)
 {
   const char *p = key.c_str();
-  if (key.length() < 4 + 2 + 8 + 4)
+  if (key.length() < 2 + 8 + 4 + 1)
     return -2;
-  uint32_t prefix;
-  p = _key_decode_u32(p, &prefix); //FIXME: to remove after enode elimination, is_bnode_key to be adjusted too
   p = _key_decode_shard(p, shard);
   p = _key_decode_u64(p, (uint64_t*)pool);
   p = _key_decode_u32(p, hash);
+  if (*p != '!')
+    return -5;
+  ++p;
+  *hash = hobject_t::_reverse_bits(*hash);
   return 0;
 }
 
@@ -690,36 +692,6 @@ void BlueStore::BnodeHashLRU::clear()
   bnode_map.clear();
 }
 
-/*bool BlueStore::BnodeHashLRU::get_next(
-  uint32_t after_blob_id,
-  pair<uint32_t, BnodeRef> *next)
-{
-  std::lock_guard<std::mutex> l(lock);
-  dout(20) << __func__ << " after " << after_blob_id << dendl;
-
-  if (after_blob_id == 0) {
-    if (lru.empty()) {
-      return false;
-    }
-    ceph::unordered_map<uint32_t,BnodeRef>::iterator p = Bnode_map.begin();
-    assert(p != Bnode_map.end());
-    next->first = p->first;
-    next->second = p->second;
-    return true;
-  }
-
-  ceph::unordered_map<uint32_t, BnodeRef>::iterator p = Bnode_map.find(after_blob_id);
-  assert(p != Bnode_map.end()); // for now
-  lru_list_t::iterator pi = lru.iterator_to(*p->second);
-  ++pi;
-  if (pi == lru.end()) {
-    return false;
-  }
-  next->first = pi->bnode_id;
-  next->second = Bnode_map[pi->bnode_id];
-  return true;
-}*/
-
 int BlueStore::BnodeHashLRU::trim(int max)
 {
   std::lock_guard<std::mutex> l(lock);
@@ -835,8 +807,11 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
   }
 
   OnodeRef o = onode_map.lookup(oid);
-  if (o)
+  if (o) {
+    if(create && !o->bnode) //handles the case when onode has been added to the map but no bnode was allocated (bluestore_debug_misc mode ON)
+      o->bnode = get_bnode(oid.hobj.get_hash(), create);
     return o;
+  }
 
   string key;
   get_object_key(oid, &key);
@@ -846,13 +821,12 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
 
   bufferlist v;
   int r = store->db->get(PREFIX_OBJ, key, &v);
-  dout(0) << " r " << r << " v.len " << v.length() << dendl;
+  dout(20) << " r " << r << " v.len " << v.length() << dendl;
   Onode *on;
   if (v.length() == 0) {
     assert(r == -ENOENT);
     if (!g_conf->bluestore_debug_misc &&
 	!create) {
-      dout(0) << " r " << r << " v.len " << v.length() << dendl;
       return OnodeRef();
     }
 
@@ -879,8 +853,11 @@ BlueStore::BnodeRef BlueStore::Collection::get_bnode(
   assert(create ? lock.is_wlocked() : lock.is_locked());
 
   BnodeRef b = bnode_map.lookup(bnode_id);
-  if (b)
+  if (b) {
+    if(create)
+      b->persistent = true;
     return b;
+  }
 
   spg_t pgid;
   if (!cid.is_pg(&pgid))
@@ -888,34 +865,28 @@ BlueStore::BnodeRef BlueStore::Collection::get_bnode(
   string key;
   get_bnode_key(pgid.shard, pgid.pool(), bnode_id, &key);
 
-  dout(10) << __func__ << " bnode_id " << std::hex << bnode_id << std::dec
+  dout(20) << __func__ << " bnode_id " << std::hex << bnode_id << std::dec
     << " key " << pretty_binary_string(key) << " created " << dendl;
 
   bufferlist v;
   int r = store->db->get(PREFIX_OBJ, key, &v);
-  dout(20) << " r " << r << " v.len " << v.length() << dendl;
   Bnode *bn;
-  bool update_map = true;
   if (v.length() == 0) {
     assert(r == -ENOENT);
-
     // new
-    bn = new Bnode(bnode_id, key);
-    update_map = create;
+    bn = new Bnode(bnode_id, key, create); //if create flag is false then we need to allocate fake "in-memory" Bnode (persistent=false) to supply ExtentManager
   }
   else {
     // loaded
     assert(r >= 0);
-    bn = new Bnode(bnode_id, key);
+    bn = new Bnode(bnode_id, key, true);
     bufferlist::iterator p = v.begin();
     ::decode(bn->blobs, p);
   }
   b.reset(bn);
-  if(update_map)
-    bnode_map.add(bnode_id, b);
+  bnode_map.add(bnode_id, b);
   return b;
 }
-
 
 // =======================================================
 
@@ -2263,6 +2234,7 @@ int BlueStore::fsck()
   BnodeRef bnode;
   uint32_t bnode_id = 0;
   vector<bluestore_blob_id_t> blob_ids_shared;
+  set<uint32_t> used_bnodes;
 
   int r = _open_path();
   if (r < 0)
@@ -2347,7 +2319,9 @@ int BlueStore::fsck()
 	  if (bnode)
 	    errors += _verify_bnode(bnode_id, bnode, blob_ids_shared, used_blocks);
 	  bnode_id = o->oid.hobj.get_hash();
-	  bnode = c->get_bnode(bnode_id, false);
+	  bnode = o->bnode; //c->get_bnode(bnode_id, false);
+	  if(bnode->persistent)
+	    used_bnodes.insert(bnode_id);
 	  blob_ids_shared.clear();
 	}
 	if (o->onode.nid) {
@@ -2503,7 +2477,6 @@ int BlueStore::fsck()
     blob_ids_shared.clear();
   }
 
-  //FIXME: check for bnodes too
   dout(1) << __func__ << " checking for stray enodes and onodes" << dendl;
   it = db->get_iterator(PREFIX_OBJ);
   if (it) {
@@ -2525,13 +2498,15 @@ int BlueStore::fsck()
 	continue;
       }
       else if (is_bnode_key(it->key())) {
-	if (expecting_objects) {
+	shard_id_t bn_shard;
+	int64_t bn_pool;
+	uint32_t bn_hash;
+	get_key_bnode(it->key(), &bn_shard, &bn_pool, &bn_hash);
+	if (used_bnodes.count(bn_hash) == 0) {
 	  dout(30) << __func__ << "  had bnode but no objects for "
-	    << std::hex << expecting_hash << std::dec << dendl;
+	    << std::hex << bn_hash << std::dec << dendl;
 	  ++errors;
 	}
-	get_key_bnode(it->key(), &expecting_shard, &expecting_pool,
-	  &expecting_hash);
 	continue;
       }
       int r = get_key_object(it->key(), &oid);
@@ -4042,12 +4017,28 @@ int BlueStore::_txc_finalize(OpSequencer *osr, TransContext *txc)
     dout(20) << "  onode " << (*p)->oid << " is " << bl.length() << dendl;
     txc->t->set(PREFIX_OBJ, (*p)->key, bl);
 
-    bl.clear();
-    ::encode((*p)->bnode->blobs, bl);
-    txc->t->set(PREFIX_OBJ, (*p)->bnode->key, bl);
-
     std::lock_guard<std::mutex> l((*p)->flush_lock);
     (*p)->flush_txns.insert(txc);
+  }
+  // finalize bnodes
+  for (set<BnodeRef>::iterator p = txc->bnodes.begin();
+       p != txc->bnodes.end();
+       ++p) {
+    if ((*p)->blobs.empty()) {
+      dout(20) << "  bnode " << std::hex << (*p)->bnode_id << std::dec
+	       << " blob_map is empty " << (*p)->persistent << dendl;
+      if((*p)->persistent) { //bypass temporary bnodes
+        txc->t->rmkey(PREFIX_OBJ, (*p)->key);
+        (*p)->persistent = false;
+      }
+    } else {
+      bufferlist bl;
+      ::encode((*p)->blobs, bl);
+      dout(20) << "  bnode " << std::hex << (*p)->bnode_id << std::dec
+	       << " blobs " << bl.length() << dendl;
+      txc->t->set(PREFIX_OBJ, (*p)->key, bl);
+      (*p)->persistent = true;
+    }
   }
 
   // finalize enodes

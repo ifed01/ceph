@@ -132,11 +132,13 @@ public:
     boost::intrusive::list_member_hook<> lru_item;
 
     bluestore_blob_map_t blobs;  ///< metadata stored as value in kv store
+    bool persistent;
 
-    Bnode(uint32_t id, const string& k)
+    Bnode(uint32_t id, const string& k, bool _persistent)
       : nref(0),
       bnode_id(id),
-      key(k) {
+      key(k),
+      persistent(_persistent) {
     }
 
     void get() {
@@ -239,7 +241,7 @@ public:
     void _touch(BnodeRef b);
     BnodeRef lookup(uint32_t bnode_id);
     void clear();
-    //bool get_next(uint32_t bnode_id, pair<uin32_t, BnodeRef> *next);
+    bool empty() const { return bnode_map.size() == 0; }
     int trim(int max = -1);
     int _trim(int max);
   };
@@ -359,6 +361,7 @@ public:
 
     set<OnodeRef> onodes;     ///< these onodes need to be updated/written
     set<EnodeRef> enodes;     ///< these enodes need to be updated/written
+    set<BnodeRef> bnodes;     ///< these bnodes need to be updated/written
     KeyValueDB::Transaction t; ///< then we will commit this
     Context *oncommit;         ///< signal on commit
     Context *onreadable;         ///< signal on readable
@@ -399,6 +402,7 @@ public:
 
     void write_onode(OnodeRef &o) {
       onodes.insert(o);
+      bnodes.insert(o->bnode);
     }
     void write_enode(EnodeRef &e) {
       enodes.insert(e);
