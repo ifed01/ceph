@@ -5688,7 +5688,6 @@ int BlueStore::_do_alloc_write(
 			     0, l->length(), *l,
 			     &b->csum_data);
     }
-
     // queue io
     bufferlist::iterator p = l->begin();
     for (auto &v : (*bp)->extents) {
