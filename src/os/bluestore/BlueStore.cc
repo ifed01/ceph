@@ -5447,6 +5447,7 @@ void BlueStore::_do_write_small(
   uint64_t orig_offset = offset;
   uint64_t orig_length = length;
 
+#warning fixme need to look backward at blobs that can cover us.
   // use tail cache?  only worry about a perfect append for now.
   // (fixme: we could also handle near-appends that fall within the
   // same block or read_block or whatever.)
@@ -6223,6 +6224,8 @@ int BlueStore::_do_truncate(
 {
   dout(15) << __func__ << " " << c->cid << " " << o->oid
 	   << " 0x" << std::hex << offset << std::dec << dendl;
+  assert(offset < o->onode.size);
+
   assert(offset < o->onode.size);
 
   // ensure any wal IO has completed before we truncate off any extents
