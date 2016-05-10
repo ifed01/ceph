@@ -6224,11 +6224,8 @@ int BlueStore::_do_truncate(
 {
   dout(15) << __func__ << " " << c->cid << " " << o->oid
 	   << " 0x" << std::hex << offset << std::dec << dendl;
-<<<<<<< HEAD
   assert(offset < o->onode.size);
 
-=======
->>>>>>> wip working partially
   assert(offset < o->onode.size);
 
   // ensure any wal IO has completed before we truncate off any extents
