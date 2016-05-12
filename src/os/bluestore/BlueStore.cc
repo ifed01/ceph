@@ -2713,13 +2713,12 @@ int BlueStore::_do_read(
   if (lext == lextents.begin() && offset + length <= lext->first) {
     bl.append_zero(length);
     return length;
-  }
-  else if (lext == lextents.begin()) {
+  } else if (lext == lextents.begin()) {
     off = lext->first;
     l -= lext->first - offset;
-  }
-  else
+  } else {
     --lext;
+  }
 
   //build blob list to read
   blobs2read_t blobs2read;
@@ -2734,13 +2733,11 @@ int BlueStore::_do_read(
       regions2read_t& regions = blobs2read[bptr];
       regions.push_back(region_t(off, r_off + lext->second.offset, 0, l2read));
       ++lext;
-    }
-    else if (off >= lext->first + lext->second.length){
+    } else if (off >= lext->first + lext->second.length) {
       //handling the case when the first lookup get into the previous block due to the hole
       l2read = 0;
       ++lext;
-    }
-    else {
+    } else {
       //hole found
       l2read = MIN(l, lext->first - off);
     }
@@ -2762,7 +2759,7 @@ int BlueStore::_do_read(
       int r = _read_whole_blob(bptr, o, buffered, &compressed_bl);
       if (r < 0)
 	return r;
-      if (bptr->csum_type != bluestore_blob_t::CSUM_NONE){
+      if (bptr->csum_type != bluestore_blob_t::CSUM_NONE) {
 	r = _verify_csum(bptr, 0, compressed_bl);
 	if (r < 0) {
 	  dout(20) << __func__ << "  blob reading " << r2r_it->logical_offset << "~" << bptr->length << " csum verification failed." << dendl;
@@ -2778,9 +2775,7 @@ int BlueStore::_do_read(
 	ready_regions[r2r_it->logical_offset].substr_of(raw_bl, r2r_it->blob_xoffset, r2r_it->length);
 	++r2r_it;
       }
-
-    }
-    else {
+    } else {
       extents2read_t e2r;
       int r = _blob2read_to_extents2read(bptr, r2r_it, r2r.cend(), &e2r);
       if (r < 0)
@@ -2811,87 +2806,7 @@ int BlueStore::_do_read(
   }
   bl.append_zero(offset + length - off);
   r = bl.length();
-  
-  /*
-  // loop over overlays and data fragments.  overlays take precedence.
-  eend = o->onode.extent_map.end();
-  ep = o->onode.extent_map.lower_bound(offset);
-  if (ep != o->onode.extent_map.begin()) {
-    --ep;
-  }
-  while (length > 0) {
-    if (ep != eend && ep->first + ep->second.length <= offset) {
-      dout(30) << __func__ << " skip lextent " << ep->first << " " << ep->second
-	       << dendl;
-      ++ep;
-      continue;
-    }
 
-    unsigned x_len = length;
-
-    // extent?
-    if (ep != eend && ep->first <= offset) {
-      uint64_t x_off = offset - ep->first;
-      x_len = MIN(x_len, ep->second.length - x_off);
-      uint64_t p_off = x_off + ep->second.offset;
-      bluestore_blob_t *b = c->get_blob_ptr(o, ep->second.blob);
-      dout(30) << __func__ << " lextent 0x" << std::hex << ep->first << std::dec
-	       << ": " << ep->second
-	       << " use 0x" << std::hex << p_off << "~0x" << x_len << std::dec
-	       << " blob " << ep->second.blob << " " << *b
-	       << dendl;
-      vector<bluestore_pextent_t>::iterator p = b->extents.begin();
-      while (x_len > 0) {
-	assert(p != b->extents.end());
-	if (p_off >= p->length) {
-	  p_off -= p->length;
-	  ++p;
-	  continue;
-	}
-	uint64_t p_len = MIN(p->length - p_off, x_len);
-	uint64_t front_extra = p_off % block_size;
-	uint64_t r_off = p_off - front_extra;
-	uint64_t r_len = ROUND_UP_TO(p_len + front_extra, block_size);
-	dout(30) << __func__ << "  reading 0x" << std::hex << r_off << "~0x"
-		 << r_len << std::dec
-		 << " from " << *p << dendl;
-	bufferlist t;
-	r = bdev->read(r_off + p->offset, r_len, &t, &ioc, buffered);
-	if (r < 0) {
-	  goto out;
-	}
-	r = r_len;
-	bufferlist u;
-	u.substr_of(t, front_extra, p_len);
-	bl.claim_append(u);
-	offset += p_len;
-	length -= p_len;
-	p_off = 0;
-	x_off += p_len;
-	x_len -= p_len;
-	++p;
-      }
-      if (x_off == ep->second.length) {
-	++ep;
-      }
-      continue;
-    }
-    if (ep != eend &&
-	ep->first > offset &&
-	ep->first - offset < x_len) {
-      x_len = ep->first - offset;
-    }
-
-    // zero.
-    dout(30) << __func__ << " zero 0x" << std::hex << offset << "~0x" << x_len
-	     << std::dec << dendl;
-    bl.append_zero(x_len);
-    offset += x_len;
-    length -= x_len;
-  }
-  r = bl.length();
-  
- out:*/
   return r;
 }
 
@@ -2906,21 +2821,20 @@ int BlueStore::_read_whole_blob(const bluestore_blob_t* blob, OnodeRef o, bool b
   uint32_t l = blob->length;
   uint64_t ext_pos = 0;
   auto it = blob->extents.cbegin();
-  while (it != blob->extents.cend() && l > 0){
+  while (it != blob->extents.cend() && l > 0) {
     uint32_t r_len = MIN(l, it->length);
     uint32_t x_len = ROUND_UP_TO(r_len, block_size);
 
     bufferlist bl;
     //  dout(30) << __func__ << "  reading " << it->offset << "~" << x_len << dendl;
-    int r = bdev->read( it->offset, x_len, &bl, &ioc, buffered);
+    int r = bdev->read(it->offset, x_len, &bl, &ioc, buffered);
     if (r < 0) {
       return r;
     }
 
-    if (x_len == r_len){
+    if (x_len == r_len) {
       result->claim_append(bl);
-    }
-    else {
+    } else {
       bufferlist u;
       u.substr_of(bl, 0, r_len);
       result->claim_append(u);
