@@ -425,7 +425,7 @@ struct bluestore_blob_t {
   void calc_csum(uint64_t b_off, const bufferlist& bl);
 
   /// verify csum: return offset of error, or -1 for no error.
-  int verify_csum(uint64_t b_off, const bufferlist& bl);
+  int verify_csum(uint64_t b_off, const bufferlist& bl) const;
 
 };
 WRITE_CLASS_ENCODER(bluestore_blob_t)

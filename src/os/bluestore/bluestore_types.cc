@@ -534,7 +534,7 @@ void bluestore_blob_t::calc_csum(uint64_t b_off, const bufferlist& bl)
   }
 }
 
-int bluestore_blob_t::verify_csum(uint64_t b_off, const bufferlist& bl)
+int bluestore_blob_t::verify_csum(uint64_t b_off, const bufferlist& bl) const
 {
   switch (csum_type) {
   case CSUM_NONE:
