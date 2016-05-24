@@ -2879,7 +2879,7 @@ int BlueStore::_do_read(
   interval_set<uint64_t> ready_intervals_in_cache;
   o->bc.read(off, l, ready_regions_in_cache, ready_intervals_in_cache);
   dout(20) << __func__ << " regions in cache 0x" << std::hex
-	   << ready_regions_in_cache.size() << " 0x" << ready_intervals_in_cache
+	   << ready_regions_in_cache.size() << " " << ready_intervals_in_cache
 	   << std::dec << dendl;
 
   //build blob list to read
@@ -2931,7 +2931,7 @@ int BlueStore::_do_read(
 	if (r < 0) {
 	  dout(20) << __func__ << "  blob reading 0x" << std::hex
 		   << r2r_it->logical_offset
-		   << " 0~" << compressed_bl.length()
+		   << " 0~0x" << compressed_bl.length()
 		   << std::dec << " csum verification failed." << dendl;
 	  return -EIO;
 	}
@@ -2972,7 +2972,7 @@ int BlueStore::_do_read(
     if (pc != pc_end && pc->first <= pos) {
       assert(pc->first == pos);
       dout(30) << __func__ << " used cached region 0x" << std::hex
-	       << pc->first << "~" << pc->second.length() << std::dec
+	       << pc->first << "~0x" << pc->second.length() << std::dec
 	       << dendl;
       pos = pc->first + pc->second.length();
       bl.claim_append(pc->second);
@@ -2993,7 +2993,7 @@ int BlueStore::_do_read(
       uint64_t r_len = MIN(l, pr->second.length() - r_off);
       dout(30) << __func__ << " used read region 0x" << std::hex
 	       << r_off << "~" << r_len
-	       << " from 0x" << pr->first << "~" << pr->second.length()
+	       << " from 0x" << pr->first << "~0x" << pr->second.length()
 	       << std::dec << dendl;
       bufferlist tmp;
       tmp.substr_of(pr->second, r_off, r_len);
@@ -3007,7 +3007,7 @@ int BlueStore::_do_read(
     }
     assert(l);
     dout(30) << __func__ << " used zeros for 0x" << std::hex << pos
-	     << "~" << l << std::dec << dendl;
+	     << "~0x" << l << std::dec << dendl;
     bl.append_zero(l);
     pos += l;
   }
@@ -3032,7 +3032,6 @@ int BlueStore::_read_whole_blob(const bluestore_blob_t* blob, OnodeRef o, bool b
     uint32_t x_len = ROUND_UP_TO(r_len, block_size);
 
     bufferlist bl;
-    //  dout(30) << __func__ << "  reading " << it->offset << "~" << x_len << dendl;
     int r = bdev->read(it->offset, x_len, &bl, &ioc, buffered);
     if (r < 0) {
       return r;
@@ -3081,7 +3080,6 @@ int BlueStore::_read_extent_sparse(
     uint64_t x_len = cur->length;
     uint64_t r_len = ROUND_UP_TO(x_len + front_extra, chunk_size);
 
-    //    dout(30) << __func__ << "  reading " << r_off << "~" << r_len << dendl;
     bufferlist bl;
     int r = bdev->read(r_off + extent->offset, r_len, &bl, &ioc, buffered);
     if (r < 0) {
