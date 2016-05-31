@@ -1066,6 +1066,221 @@ TEST_P(StoreTest, SimpleObjectTest) {
   }
 }
 
+TEST_P(StoreTest, StatFSTest) {
+  ObjectStore::Sequencer osr("test");
+  int r;
+  coll_t cid;
+  ghobject_t hoid(hobject_t(sobject_t("Object 1", CEPH_NOSNAP)));
+  {
+    bufferlist in;
+    r = store->read(cid, hoid, 0, 5, in);
+    ASSERT_EQ(-ENOENT, r);
+  }
+  {
+    ObjectStore::Transaction t;
+    t.create_collection(cid, 0);
+    cerr << "Creating collection " << cid << std::endl;
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+  {
+    bool exists = store->exists(cid, hoid);
+    ASSERT_TRUE(!exists);
+
+    ObjectStore::Transaction t;
+    t.touch(cid, hoid);
+    cerr << "Creating object " << hoid << std::endl;
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+
+    exists = store->exists(cid, hoid);
+    ASSERT_EQ(true, exists);
+  }
+  {
+    struct statfs statfs;
+    statfs_ex_t statfs_ex;
+    int r = store->statfs(&statfs, &statfs_ex);
+    ASSERT_EQ(r, 0);
+    ASSERT_EQ(true, statfs_ex.is_empty());
+  }
+/*  {
+    ObjectStore::Transaction t;
+    bufferlist bl, orig;
+    bl.append("abcde");
+    orig = bl;
+    t.remove(cid, hoid);
+    t.write(cid, hoid, 0, 5, bl);
+    cerr << "Remove then create" << std::endl;
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+
+    bufferlist in;
+    r = store->read(cid, hoid, 0, 5, in);
+    ASSERT_EQ(5, r);
+    ASSERT_TRUE(in.contents_equal(orig));
+  }
+  {
+    ObjectStore::Transaction t;
+    bufferlist bl, exp;
+    bl.append("abcde");
+    exp = bl;
+    exp.append(bl);
+    t.write(cid, hoid, 5, 5, bl);
+    cerr << "Append" << std::endl;
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+
+    bufferlist in;
+    r = store->read(cid, hoid, 0, 10, in);
+    ASSERT_EQ(10, r);
+    ASSERT_TRUE(in.contents_equal(exp));
+  }
+  {
+    ObjectStore::Transaction t;
+    bufferlist bl, exp;
+    bl.append("abcdeabcde");
+    exp = bl;
+    t.write(cid, hoid, 0, 10, bl);
+    cerr << "Full overwrite" << std::endl;
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+
+    bufferlist in;
+    r = store->read(cid, hoid, 0, 10, in);
+    ASSERT_EQ(10, r);
+    ASSERT_TRUE(in.contents_equal(exp));
+  }
+  {
+    ObjectStore::Transaction t;
+    bufferlist bl;
+    bl.append("abcde");
+    t.write(cid, hoid, 3, 5, bl);
+    cerr << "Partial overwrite" << std::endl;
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+
+    bufferlist in, exp;
+    exp.append("abcabcdede");
+    r = store->read(cid, hoid, 0, 10, in);
+    ASSERT_EQ(10, r);
+    in.hexdump(cout);
+    ASSERT_TRUE(in.contents_equal(exp));
+  }
+  {
+    {
+      ObjectStore::Transaction t;
+      bufferlist bl;
+      bl.append("fghij");
+      t.truncate(cid, hoid, 0);
+      t.write(cid, hoid, 5, 5, bl);
+      cerr << "Truncate + hole" << std::endl;
+      r = apply_transaction(store, &osr, std::move(t));
+      ASSERT_EQ(r, 0);
+    }
+    {
+    ObjectStore::Transaction t;
+    bufferlist bl;
+    bl.append("abcde");
+    t.write(cid, hoid, 0, 5, bl);
+    cerr << "Reverse fill-in" << std::endl;
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+
+    bufferlist in, exp;
+    exp.append("abcdefghij");
+    r = store->read(cid, hoid, 0, 10, in);
+    ASSERT_EQ(10, r);
+    in.hexdump(cout);
+    ASSERT_TRUE(in.contents_equal(exp));
+  }
+  {
+    ObjectStore::Transaction t;
+    bufferlist bl;
+    bl.append("abcde01234012340123401234abcde01234012340123401234abcde01234012340123401234abcde01234012340123401234");
+    t.write(cid, hoid, 0, bl.length(), bl);
+    cerr << "larger overwrite" << std::endl;
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+
+    bufferlist in;
+    r = store->read(cid, hoid, 0, bl.length(), in);
+    ASSERT_EQ((int)bl.length(), r);
+    in.hexdump(cout);
+    ASSERT_TRUE(in.contents_equal(bl));
+  }
+  {
+    bufferlist bl;
+    bl.append("abcde01234012340123401234abcde01234012340123401234abcde01234012340123401234abcde01234012340123401234");
+
+    //test: offset=len=0 mean read all data
+    bufferlist in;
+    r = store->read(cid, hoid, 0, 0, in);
+    ASSERT_EQ((int)bl.length(), r);
+    in.hexdump(cout);
+    ASSERT_TRUE(in.contents_equal(bl));
+  }
+  {
+    //verifying unaligned csums
+    std::string s1("1"), s2(0x1000, '2'), s3("00");
+    {
+      ObjectStore::Transaction t;
+      bufferlist bl;
+      bl.append(s1);
+      bl.append(s2);
+      t.truncate(cid, hoid, 0);
+      t.write(cid, hoid, 0x1000-1, bl.length(), bl);
+      cerr << "Write unaligned csum, stage 1" << std::endl;
+      r = apply_transaction(store, &osr, std::move(t));
+      ASSERT_EQ(r, 0);
+    }
+
+    bufferlist in, exp1, exp2, exp3;
+    exp1.append(s1);
+    exp2.append(s2);
+    exp3.append(s3);
+    r = store->read(cid, hoid, 0x1000-1, 1, in);
+    ASSERT_EQ(1, r);
+    ASSERT_TRUE(in.contents_equal(exp1));
+    in.clear();
+    r = store->read(cid, hoid, 0x1000, 0x1000, in);
+    ASSERT_EQ(0x1000, r);
+    ASSERT_TRUE(in.contents_equal(exp2));
+
+    {
+      ObjectStore::Transaction t;
+      bufferlist bl;
+      bl.append(s3);
+      t.write(cid, hoid, 1, bl.length(), bl);
+      cerr << "Write unaligned csum, stage 2" << std::endl;
+      r = apply_transaction(store, &osr, std::move(t));
+      ASSERT_EQ(r, 0);
+    }
+    in.clear();
+    r = store->read(cid, hoid, 1, 2, in);
+    ASSERT_EQ(2, r);
+    ASSERT_TRUE(in.contents_equal(exp3));
+    in.clear();
+    r = store->read(cid, hoid, 0x1000-1, 1, in);
+    ASSERT_EQ(1, r);
+    ASSERT_TRUE(in.contents_equal(exp1));
+    in.clear();
+    r = store->read(cid, hoid, 0x1000, 0x1000, in);
+    ASSERT_EQ(0x1000, r);
+    ASSERT_TRUE(in.contents_equal(exp2));
+
+  }
+*/
+  {
+    ObjectStore::Transaction t;
+    t.remove(cid, hoid);
+    t.remove_collection(cid);
+    cerr << "Cleaning" << std::endl;
+    r = apply_transaction(store, &osr, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+}
+
 TEST_P(StoreTest, ManySmallWrite) {
   ObjectStore::Sequencer osr("test");
   int r;
