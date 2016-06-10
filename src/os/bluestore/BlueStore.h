@@ -137,8 +137,9 @@ public:
     }
 
     BufferSpace *space;
-    uint32_t state;            ///< STATE_*
-    uint32_t flags;            ///< FLAG_*
+    uint16_t state;             ///< STATE_*
+    uint16_t cache_private = 0; ///< opaque (to us) value used by Cache impl
+    uint32_t flags;             ///< FLAG_*
     uint64_t seq;
     uint64_t offset, length;
     bufferlist data;
@@ -253,18 +254,19 @@ public:
     // must be called under protection of the Cache lock
     void _clear();
 
-    void discard(uint64_t offset, uint64_t length) {
+    // return value is the highest cache_private of a trimmed buffer, or 0.
+    int discard(uint64_t offset, uint64_t length) {
       std::lock_guard<std::mutex> l(cache->lock);
-      _discard(offset, length);
+      return _discard(offset, length);
     }
-    void _discard(uint64_t offset, uint64_t length);
+    int _discard(uint64_t offset, uint64_t length);
 
     void write(uint64_t seq, uint64_t offset, bufferlist& bl, unsigned flags) {
       std::lock_guard<std::mutex> l(cache->lock);
-      _discard(offset, bl.length());
-      _add_buffer(new Buffer(this, Buffer::STATE_WRITING, seq, offset, bl,
-			     flags),
-		  (flags & Buffer::FLAG_NOCACHE) ? 0 : 1, nullptr);
+      Buffer *b = new Buffer(this, Buffer::STATE_WRITING, seq, offset, bl,
+			     flags);
+      b->cache_private = _discard(offset, bl.length());
+      _add_buffer(b, (flags & Buffer::FLAG_NOCACHE) ? 0 : 1, nullptr);
     }
     void finish_write(uint64_t seq);
     void did_read(uint64_t offset, bufferlist& bl) {
@@ -506,7 +508,8 @@ public:
     virtual void _touch_onode(OnodeRef& o) = 0;
 
     virtual void _add_buffer(Buffer *b, int level, Buffer *near) = 0;
-    virtual void _rm_buffer(Buffer *b) = 0;
+    /// remove a buffer.  return level to be used by any replacement buffer.
+    virtual int _rm_buffer(Buffer *b) = 0;
     virtual void _adjust_buffer_size(Buffer *b, int64_t delta) = 0;
     virtual void _touch_buffer(Buffer *b) = 0;
 
@@ -563,10 +566,11 @@ public:
       }
       buffer_size += b->length;
     }
-    void _rm_buffer(Buffer *b) override {
+    int _rm_buffer(Buffer *b) override {
       buffer_size -= b->length;
       auto q = buffer_lru.iterator_to(*b);
       buffer_lru.erase(q);
+      return 1;
     }
     void _adjust_buffer_size(Buffer *b, int64_t delta) override {
       buffer_size += delta;
