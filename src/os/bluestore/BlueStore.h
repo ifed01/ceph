@@ -522,6 +522,7 @@ public:
 #endif
   };
 
+  /// simple LRU cache for onodes and buffers
   struct LRUCache : public Cache {
   private:
     typedef boost::intrusive::list<
@@ -587,7 +588,143 @@ public:
 #ifdef DEBUG_CACHE
     void _audit(const char *s) override;
 #endif
+  };
 
+  // 2Q cache for buffers, LRU for onodes
+  struct TwoQCache : public Cache {
+  private:
+    // stick with LRU for onodes for now (fixme?)
+    typedef boost::intrusive::list<
+      Onode,
+      boost::intrusive::member_hook<
+        Onode,
+	boost::intrusive::list_member_hook<>,
+	&Onode::lru_item> > onode_lru_list_t;
+    typedef boost::intrusive::list<
+      Buffer,
+      boost::intrusive::member_hook<
+	Buffer,
+	boost::intrusive::list_member_hook<>,
+	&Buffer::lru_item> > buffer_list_t;
+
+    onode_lru_list_t onode_lru;
+
+    buffer_list_t buffer_hot;      //< "Am" hot buffers
+    buffer_list_t buffer_warm_in;  //< "A1in" newly warm buffers
+    buffer_list_t buffer_warm_out; //< "A1out" empty buffers we've evicted
+    uint64_t buffer_bytes = 0;        //< bytes
+
+    enum {
+      BUFFER_NEW = 0,
+      BUFFER_WARM_IN,   ///< in buffer_warm_in
+      BUFFER_WARM_OUT,  ///< in buffer_warm_out
+      BUFFER_HOT,       ///< in buffer_hot
+    };
+
+  public:
+    void _add_onode(OnodeRef& o, int level) override {
+      if (level > 0)
+	onode_lru.push_front(*o);
+      else
+	onode_lru.push_back(*o);
+    }
+    void _rm_onode(OnodeRef& o) override {
+      auto q = onode_lru.iterator_to(*o);
+      onode_lru.erase(q);
+    }
+    void _touch_onode(OnodeRef& o) override;
+
+    void _add_buffer(Buffer *b, int level, Buffer *near) override {
+      if (near) {
+	b->cache_private = near->cache_private;
+	switch (b->cache_private) {
+	case BUFFER_WARM_IN:
+	  buffer_warm_in.insert(buffer_warm_in.iterator_to(*near), *b);
+	  break;
+	case BUFFER_WARM_OUT:
+	  buffer_warm_out.insert(buffer_warm_out.iterator_to(*near), *b);
+	  break;
+	case BUFFER_HOT:
+	  buffer_hot.insert(buffer_hot.iterator_to(*near), *b);
+	  break;
+	default:
+	  assert(0 == "bad cache_private");
+	}
+      } else if (b->cache_private == BUFFER_NEW) {
+	b->cache_private = BUFFER_WARM_IN;
+	if (level > 0) {
+	  buffer_warm_in.push_front(*b);
+	} else {
+	  // take caller hint to start at the back of the warm queue
+	  buffer_warm_in.push_back(*b);
+	}
+      } else {
+	// ew got a hint from discard
+	switch (b->cache_private) {
+	case BUFFER_WARM_IN:
+	  // stay in warm_in.  move to front, even though 2Q doesn't actually
+	  // do this.
+	  buffer_warm_in.push_front(*b);
+	  break;
+	case BUFFER_WARM_OUT:
+	  // move to hot.  fall-thru
+	case BUFFER_HOT:
+	  buffer_hot.push_front(*b);
+	  break;
+	default:
+	  assert(0 == "bad cache_private");
+	}
+      }
+      if (!b->is_empty()) {
+	buffer_bytes += b->length;
+      }
+    }
+    int _rm_buffer(Buffer *b) override {
+      if (!b->is_empty()) {
+	buffer_bytes -= b->length;
+      }
+      switch (b->cache_private) {
+      case BUFFER_WARM_IN:
+	buffer_warm_in.erase(buffer_warm_in.iterator_to(*b));
+	return 1;
+      case BUFFER_WARM_OUT:
+	buffer_warm_out.erase(buffer_warm_out.iterator_to(*b));
+	return 2;
+      case BUFFER_HOT:
+	buffer_hot.erase(buffer_hot.iterator_to(*b));
+	return 2;
+      default:
+	assert(0 == "bad cache_priavte");
+      }
+    }
+    void _adjust_buffer_size(Buffer *b, int64_t delta) override {
+      if (!b->is_empty()) {
+	buffer_bytes += delta;
+      }
+    }
+    void _touch_buffer(Buffer *b) override {
+      switch (b->cache_private) {
+      case BUFFER_WARM_IN:
+	// do nothing (somewhat counter-intuitively!)
+	break;
+      case BUFFER_WARM_OUT:
+	// move from warm_out to hot LRU
+	assert(0 == "this happens via discard hint");
+	break;
+      case BUFFER_HOT:
+	// move to front of hot LRU
+	buffer_hot.erase(buffer_hot.iterator_to(*b));
+	buffer_hot.push_front(*b);
+	break;
+      }
+      _audit("_touch_buffer end");
+    }
+
+    void trim(uint64_t onode_max, uint64_t buffer_max) override;
+
+#ifdef DEBUG_CACHE
+    void _audit(const char *s) override;
+#endif
   };
 
   struct OnodeSpace {

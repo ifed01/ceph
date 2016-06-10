@@ -430,6 +430,31 @@ static void get_wal_key(uint64_t seq, string *out)
   _key_encode_u64(seq, out);
 }
 
+struct Int64ArrayMergeOperator : public KeyValueDB::MergeOperator {
+  virtual void merge_nonexistant(
+    const char *rdata, size_t rlen, std::string *new_value) override {
+    *new_value = std::string(rdata, rlen);
+  }
+  virtual void merge(
+    const char *ldata, size_t llen,
+    const char *rdata, size_t rlen,
+    std::string *new_value) {
+    assert(llen == rlen);
+    assert((rlen % 8) == 0);
+    new_value->resize(rlen);
+    const __le64* lv = (const __le64*)ldata;
+    const __le64* rv = (const __le64*)rdata;
+    __le64* nv = &(__le64&)new_value->at(0);
+    for (size_t i = 0; i < rlen >> 3; ++i) {
+      nv[i] = lv[i] + rv[i];
+    }
+  }
+  // We use each operator name and each prefix to construct the
+  // overall RocksDB operator name for consistency check at open time.
+  virtual string name() const {
+    return "int64_array";
+  }
+};
 
 // Buffer
 
@@ -450,6 +475,8 @@ BlueStore::Cache *BlueStore::Cache::create(string type)
 {
   if (type == "lru")
     return new LRUCache;
+  if (type == "2q")
+    return new TwoQCache;
   assert(0 == "unrecognized cache type");
 }
 
@@ -560,31 +587,141 @@ void BlueStore::LRUCache::_audit(const char *when)
 }
 #endif
 
-struct Int64ArrayMergeOperator : public KeyValueDB::MergeOperator {
-  virtual void merge_nonexistant(
-    const char *rdata, size_t rlen, std::string *new_value) override {
-    *new_value = std::string(rdata, rlen);
-  }
-  virtual void merge(
-    const char *ldata, size_t llen,
-    const char *rdata, size_t rlen,
-    std::string *new_value) {
-    assert(llen == rlen);
-    assert((rlen % 8) == 0);
-    new_value->resize(rlen);
-    const __le64* lv = (const __le64*)ldata;
-    const __le64* rv = (const __le64*)rdata;
-    __le64* nv = &(__le64&)new_value->at(0);
-    for (size_t i = 0; i < rlen >> 3; ++i) {
-      nv[i] = lv[i] + rv[i];
+// TwoQCache
+#undef dout_prefix
+#define dout_prefix *_dout << "bluestore.2QCache(" << this << ") "
+
+
+void BlueStore::TwoQCache::_touch_onode(OnodeRef& o)
+{
+  auto p = onode_lru.iterator_to(*o);
+  onode_lru.erase(p);
+  onode_lru.push_front(*o);
+}
+
+void BlueStore::TwoQCache::trim(uint64_t onode_max, uint64_t buffer_max)
+{
+  std::lock_guard<std::mutex> l(lock);
+
+  dout(20) << __func__ << " onodes " << onode_lru.size() << " / " << onode_max
+	   << " buffers " << buffer_bytes << " / " << buffer_max
+	   << dendl;
+
+  _audit("trim start");
+
+  // buffers
+  uint64_t num_buffers = buffer_hot.size() + buffer_warm_in.size();
+  if (num_buffers) {
+    // for simplicity, we assume buffer sizes are uniform across hot
+    // and warm_in.  FIXME?
+    uint64_t avg_buffer_size = buffer_bytes / num_buffers;
+    uint64_t kin = buffer_max / avg_buffer_size / 4;
+    uint64_t khot = kin;
+    uint64_t kout = buffer_max / avg_buffer_size / 2;
+    // if hot is small, give slack to warm_in.
+    if (buffer_hot.size() < kin) {
+      kin += kin - buffer_hot.size();
+    }
+    dout(20) << __func__ << " num_buffers " << num_buffers
+	     << " (hot " << buffer_hot.size()
+	     << " + warm_in " << buffer_warm_in.size() << ")"
+	     << " avg size " << avg_buffer_size
+	     << " warm_out " << buffer_warm_out.size()
+	     << " khot " << khot << " kin " << kin << " kout " << kout
+	     << dendl;
+    while (buffer_hot.size() > khot) {
+      Buffer *b = &*buffer_hot.rbegin();
+      assert(b->is_clean());
+      dout(20) << __func__ << " buffer_hot rm " << *b << dendl;
+      b->space->_rm_buffer(b);
+    }
+    while (buffer_warm_in.size() > kin) {
+      Buffer *b = &*buffer_warm_in.rbegin();
+      assert(b->is_clean());
+      dout(20) << __func__ << " buffer_warm_in -> out " << *b << dendl;
+      b->state = Buffer::STATE_EMPTY;
+      b->data.clear();
+      buffer_warm_in.erase(buffer_warm_in.iterator_to(*b));
+      buffer_warm_out.push_front(*b);
+      b->cache_private = BUFFER_WARM_OUT;
+    }
+    while (buffer_warm_out.size() > kout) {
+      Buffer *b = &*buffer_warm_out.rbegin();
+      assert(b->is_empty());
+      dout(20) << __func__ << " buffer_warm_out rm " << *b << dendl;
+      b->space->_rm_buffer(b);
     }
   }
-  // We use each operator name and each prefix to construct the
-  // overall RocksDB operator name for consistency check at open time.
-  virtual string name() const {
-    return "int64_array";
+
+  // onodes
+  int num = onode_lru.size() - onode_max;
+  if (num <= 0)
+    return; // don't even try
+
+  auto p = onode_lru.end();
+  if (num)
+    --p;
+  while (num > 0) {
+    Onode *o = &*p;
+    int refs = o->nref.load();
+    if (refs > 1) {
+      dout(20) << __func__ << "  " << o->oid << " has " << refs
+	       << " refs; stopping with " << num << " left to trim" << dendl;
+      break;
+    }
+    dout(30) << __func__ << "  trim " << o->oid << dendl;
+    if (p != onode_lru.begin()) {
+      onode_lru.erase(p--);
+    } else {
+      onode_lru.erase(p);
+      assert(num == 1);
+    }
+    o->get();  // paranoia
+    o->space->onode_map.erase(o->oid);
+    o->blob_map._clear();    // clear blobs and their buffers, too
+    o->put();
+    --num;
   }
-};
+}
+
+#ifdef DEBUG_CACHE
+void BlueStore::TwoQCache::_audit(const char *when)
+{
+  if (true) {
+    dout(10) << __func__ << " " << when << " start" << dendl;
+    uint64_t s = 0;
+    for (auto i = buffer_hot.begin(); i != buffer_hot.end(); ++i) {
+      s += i->length;
+    }
+    for (auto i = buffer_warm_in.begin(); i != buffer_warm_in.end(); ++i) {
+      s += i->length;
+    }
+    if (s != buffer_bytes) {
+      derr << __func__ << " buffer_bytes " << buffer_bytes << " actual " << s
+	   << dendl;
+      assert(s == buffer_bytes);
+    }
+    dout(20) << __func__ << " " << when << " buffer_bytes " << buffer_bytes
+	     << " ok" << dendl;
+  }
+  if (false) {
+    uint64_t lc = 0, oc = 0;
+    set<OnodeSpace*> spaces;
+    for (auto i = onode_lru.begin(); i != onode_lru.end(); ++i) {
+      assert(i->space->onode_map.count(i->oid));
+      if (spaces.count(i->space) == 0) {
+	spaces.insert(i->space);
+	oc += i->space->onode_map.size();
+      }
+      ++lc;
+    }
+    if (lc != oc) {
+      derr << " lc " << lc << " oc " << oc << dendl;
+    }
+  }
+}
+#endif
+
 
 // BufferSpace
 
