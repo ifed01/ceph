@@ -211,8 +211,7 @@ public:
     void _add_buffer(Buffer *b) {
       cache->_audit_lru("_add_buffer start");
       buffer_map[b->offset].reset(b);
-      cache->buffer_lru.push_front(*b);
-      cache->buffer_size += b->length;
+      cache->_add_buffer(b);
       if (b->is_writing()) {
 	writing.push_back(*b);
       }
@@ -223,8 +222,7 @@ public:
     }
     void _rm_buffer(map<uint64_t,std::unique_ptr<Buffer>>::iterator p) {
       cache->_audit_lru("_rm_buffer start");
-      cache->buffer_size -= p->second->length;
-      cache->buffer_lru.erase(cache->buffer_lru.iterator_to(*p->second));
+      cache->_rm_buffer(p->second.get());
       if (p->second->is_writing()) {
 	writing.erase(writing.iterator_to(*p->second));
       }
@@ -497,9 +495,6 @@ public:
         Onode,
 	boost::intrusive::list_member_hook<>,
 	&Onode::lru_item> > onode_lru_list_t;
-    onode_lru_list_t onode_lru;
-
-  public:
     typedef boost::intrusive::list<
       Buffer,
       boost::intrusive::member_hook<
@@ -507,9 +502,14 @@ public:
 	boost::intrusive::list_member_hook<>,
 	&Buffer::lru_item> > buffer_lru_list_t;
 
-    std::mutex lock;                ///< protect lru and other structures
+    onode_lru_list_t onode_lru;
+
     buffer_lru_list_t buffer_lru;
     uint64_t buffer_size = 0;
+
+  public:
+
+    std::mutex lock;                ///< protect lru and other structures
 
     void _add_onode(OnodeRef& o) {
         onode_lru.push_front(*o);
@@ -520,6 +520,18 @@ public:
     }
     void _touch_onode(OnodeRef& o);
 
+    void _add_buffer(Buffer *b) {
+      buffer_lru.push_front(*b);
+      buffer_size += b->length;
+    }
+    void _rm_buffer(Buffer *b) {
+      buffer_size -= b->length;
+      auto q = buffer_lru.iterator_to(*b);
+      buffer_lru.erase(q);
+    }
+    void _adjust_buffer_size(Buffer *b, int64_t delta) {
+      buffer_size += delta;
+    }
     void _touch_buffer(Buffer *b) {
       auto p = buffer_lru.iterator_to(*b);
       buffer_lru.erase(p);

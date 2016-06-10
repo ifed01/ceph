@@ -610,7 +610,7 @@ void BlueStore::BufferSpace::_discard(uint64_t offset, uint64_t length)
       break;
     }
     if (b->offset < offset) {
-      uint64_t front = offset - b->offset;
+      int64_t front = offset - b->offset;
       if (b->offset + b->length > offset + length) {
 	// drop middle (split)
 	uint64_t tail = b->offset + b->length - (offset + length);
@@ -621,13 +621,13 @@ void BlueStore::BufferSpace::_discard(uint64_t offset, uint64_t length)
 	} else {
 	  _add_buffer(new Buffer(this, b->state, b->seq, end, tail));
 	}
-	cache->buffer_size -= b->length - front;
+	cache->_adjust_buffer_size(b, front - (int64_t)b->length);
 	b->truncate(front);
 	cache->_audit_lru("discard end 1");
 	return;
       } else {
 	// drop tail
-	cache->buffer_size -= b->length - front;
+	cache->_adjust_buffer_size(b, front - (int64_t)b->length);
 	b->truncate(front);
 	++i;
 	continue;
