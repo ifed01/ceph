@@ -615,9 +615,9 @@ void BlueStore::TwoQCache::trim(uint64_t onode_max, uint64_t buffer_max)
     // for simplicity, we assume buffer sizes are uniform across hot
     // and warm_in.  FIXME?
     uint64_t avg_buffer_size = buffer_bytes / num_buffers;
-    uint64_t kin = buffer_max / avg_buffer_size / 4;
+    uint64_t kin = buffer_max / avg_buffer_size / 2;
     uint64_t khot = kin;
-    uint64_t kout = buffer_max / avg_buffer_size / 2;
+    uint64_t kout = buffer_max / avg_buffer_size;
     // if hot is small, give slack to warm_in.
     if (buffer_hot.size() < kin) {
       kin += kin - buffer_hot.size();
@@ -639,6 +639,7 @@ void BlueStore::TwoQCache::trim(uint64_t onode_max, uint64_t buffer_max)
       Buffer *b = &*buffer_warm_in.rbegin();
       assert(b->is_clean());
       dout(20) << __func__ << " buffer_warm_in -> out " << *b << dendl;
+      buffer_bytes -= b->length;
       b->state = Buffer::STATE_EMPTY;
       b->data.clear();
       buffer_warm_in.erase(buffer_warm_in.iterator_to(*b));
