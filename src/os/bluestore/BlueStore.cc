@@ -4591,12 +4591,10 @@ void BlueStore::_txc_state_proc(TransContext *txc)
       //assert(txc->osr->qlock.is_locked());  // see _txc_finish_io
       txc->log_state_latency(logger, l_bluestore_state_io_done_lat);
       txc->state = TransContext::STATE_KV_QUEUED;
-      // FIXME: use a per-txc dirty blob list?
-      for (auto& o : txc->onodes) {
-	for (auto& p : o->blob_map.blob_map) {
-	  p.bc.finish_write(txc->seq);
-	}
+      for (auto& b : txc->blobs) {
+        b.bc.finish_write(txc->seq);
       }
+      txc->blobs.clear();
       if (!g_conf->bluestore_sync_transaction) {
 	if (g_conf->bluestore_sync_submit_transaction) {
 	  _txc_finalize_kv(txc, txc->t);
@@ -5790,8 +5788,8 @@ void BlueStore::_do_write_small(
 	       << " pad 0x" << head_pad << " + 0x" << tail_pad
 	       << std::dec << " of mutable " << blob << ": " << b << dendl;
       assert(b->blob.is_unreferenced(b_off, b_len));
-      b->bc.write(txc->seq, b_off, padded,
-		  wctx->buffered ? 0 : Buffer::FLAG_NOCACHE);
+      _buffer_cache_write(txc, b, b_off, padded, wctx->buffered ? 0 : Buffer::FLAG_NOCACHE);
+
       b->blob.map_bl(
 	b_off, padded,
 	[&](uint64_t offset, uint64_t length, bufferlist& t) {
@@ -5861,8 +5859,8 @@ void BlueStore::_do_write_small(
 	b->blob.is_allocated(b_off, b_len)) {
       bluestore_wal_op_t *op = _get_wal_op(txc, o);
       op->op = bluestore_wal_op_t::OP_WRITE;
-      b->bc.write(txc->seq, b_off, padded,
-		  wctx->buffered ? 0 : Buffer::FLAG_NOCACHE);
+      _buffer_cache_write(txc, b, b_off, padded, wctx->buffered ? 0 : Buffer::FLAG_NOCACHE);
+
       b->blob.map(
 	b_off, b_len,
 	[&](uint64_t offset, uint64_t length) {
@@ -5894,7 +5892,7 @@ void BlueStore::_do_write_small(
   b = o->blob_map.new_blob(c->cache);
   unsigned alloc_len = min_alloc_size;
   uint64_t b_off = offset % alloc_len;
-  b->bc.write(txc->seq, b_off, bl, wctx->buffered ? 0 : Buffer::FLAG_NOCACHE);
+  _buffer_cache_write(txc, b, b_off, bl, wctx->buffered ? 0 : Buffer::FLAG_NOCACHE);
   _pad_zeros(&bl, &b_off, block_size);
   o->onode.punch_hole(offset, length, &wctx->lex_old);
   bluestore_lextent_t& lex = o->onode.extent_map[offset] =
@@ -5929,7 +5927,7 @@ void BlueStore::_do_write_big(
     auto l = MIN(max_blob_len, length);
     bufferlist t;
     blp.copy(l, t);
-    b->bc.write(txc->seq, 0, t, wctx->buffered ? 0 : Buffer::FLAG_NOCACHE);
+    _buffer_cache_write(txc, b, 0, t, wctx->buffered ? 0 : Buffer::FLAG_NOCACHE);
     wctx->write(b, l, 0, t, false);
     o->onode.punch_hole(offset, l, &wctx->lex_old);
     o->onode.extent_map[offset] = bluestore_lextent_t(b->id, 0, l);
