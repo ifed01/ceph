@@ -6126,9 +6126,9 @@ void BlueStore::_wctx_finish(
       dout(20) << __func__ << " rm blob " << *b << dendl;
       txc->statfs_delta.compressed() -= b->blob.get_compressed_payload_length();
       if (l.blob >= 0) {
-	o->blob_map.erase(b);
+	o->blob_map.erase(b, true);
       } else {
-	o->bnode->blob_map.erase(b);
+	o->bnode->blob_map.erase(b, true);
       }
     } else {
       dout(20) << __func__ << " keep blob " << *b << dendl;
@@ -6679,7 +6679,7 @@ int BlueStore::_clone(TransContext *txc,
       for (auto& p : oldo->onode.extent_map) {
 	if (!p.second.is_shared() && moved_blobs.count(p.second.blob) == 0) {
 	  Blob *b = oldo->blob_map.get(p.second.blob);
-	  oldo->blob_map.erase(b);
+	  oldo->blob_map.erase(b, false);
 	  newo->bnode->blob_map.claim(b);
 	  moved_blobs[p.second.blob] = b->id;
 	  dout(30) << __func__ << "  moving old onode blob " << p.second.blob

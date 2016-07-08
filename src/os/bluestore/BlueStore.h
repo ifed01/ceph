@@ -359,9 +359,12 @@ public:
       blob_map.insert(*b);
     }
 
-    void erase(Blob *b) {
+    void erase(Blob *b, bool release) {
       blob_map.erase(*b);
       b->id = 0;
+      if (release) {
+        delete b;
+      }
     }
 
     int64_t get_new_id() {
@@ -373,8 +376,7 @@ public:
       while (!blob_map.empty()) {
 	Blob *b = &*blob_map.begin();
 	b->bc._clear();
-	erase(b);
-	delete b;
+	erase(b, true);
       }
     }
 
