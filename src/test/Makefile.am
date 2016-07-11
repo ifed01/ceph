@@ -10,10 +10,6 @@ if ENABLE_SERVER
 include test/Makefile-server.am
 endif
 
-if WITH_FIO_DIR
-include test/fio/Makefile.am
-endif
-
 ## Unknown/other tests
 
 ceph_test_timers_SOURCES = test/TestTimers.cc
@@ -31,6 +27,7 @@ bin_DEBUGPROGRAMS += ceph_test_rewrite_latency
 ceph_test_crypto_SOURCES = test/testcrypto.cc
 ceph_test_crypto_LDADD = $(CEPH_GLOBAL)
 bin_DEBUGPROGRAMS += ceph_test_crypto
+
 
 ## Build tests
 # These should all use explicit _CXXFLAGS so avoid basename conflicts
