@@ -12,22 +12,18 @@ add_subdirectory(shec)
 
 if (HAVE_BETTER_YASM_ELF64)
   add_subdirectory(isa)
-  set(EC_ISA_LIB ec_isa)
+  set(EC_ISA_LIB ceph_isa)
 endif (HAVE_BETTER_YASM_ELF64)
-
-add_library(erasure_code STATIC ErasureCodePlugin.cc)
-target_link_libraries(erasure_code ${CMAKE_DL_LIBS})
-add_dependencies(erasure_code ${CMAKE_SOURCE_DIR}/src/ceph_ver.h)
 
 add_library(erasure_code_objs OBJECT ErasureCode.cc)
 
 add_custom_target(erasure_code_plugins DEPENDS
     ${EC_ISA_LIB}
-    ec_lrc
-    ec_jerasure)
-if(TARGET ec_jerasure_sse3)
-  add_dependencies(erasure_code_plugins ec_jerasure_sse3)
+    ceph_lrc
+    ceph_jerasure)
+if(TARGET ceph_jerasure_sse3)
+  add_dependencies(erasure_code_plugins ceph_jerasure_sse3)
 endif()
-if(TARGET ec_jerasure_sse4)
-  add_dependencies(erasure_code_plugins ec_jerasure_sse4)
+if(TARGET ceph_jerasure_sse4)
+  add_dependencies(erasure_code_plugins ceph_jerasure_sse4)
 endif()
