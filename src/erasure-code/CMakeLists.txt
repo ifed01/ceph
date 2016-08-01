@@ -20,7 +20,9 @@ add_library(erasure_code_objs OBJECT ErasureCode.cc)
 add_custom_target(erasure_code_plugins DEPENDS
     ${EC_ISA_LIB}
     ceph_lrc
-    ceph_jerasure)
+    ceph_jerasure
+    ceph_shec
+)
 if(TARGET ceph_jerasure_sse3)
   add_dependencies(erasure_code_plugins ceph_jerasure_sse3)
 endif()
