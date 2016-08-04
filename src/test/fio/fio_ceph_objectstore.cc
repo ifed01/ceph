@@ -235,7 +235,7 @@ int fio_ceph_os_setup(thread_data* td)
     // get or create the global Engine instance
     auto engine = Engine::get_instance(td);
     // create a Job for this thread
-    td->io_ops->data = new Job(engine, td);
+    td->io_ops_data = new Job(engine, td);
   } catch (std::exception& e) {
     std::cerr << "setup failed with " << e.what() << std::endl;
     return -1;
@@ -245,8 +245,8 @@ int fio_ceph_os_setup(thread_data* td)
 
 void fio_ceph_os_cleanup(thread_data* td)
 {
-  auto job = static_cast<Job*>(td->io_ops->data);
-  td->io_ops->data = nullptr;
+  auto job = static_cast<Job*>(td->io_ops_data);
+  td->io_ops_data = nullptr;
   delete job;
 }
 
@@ -254,14 +254,14 @@ void fio_ceph_os_cleanup(thread_data* td)
 io_u* fio_ceph_os_event(thread_data* td, int event)
 {
   // return the requested event from fio_ceph_os_getevents()
-  auto job = static_cast<Job*>(td->io_ops->data);
+  auto job = static_cast<Job*>(td->io_ops_data);
   return job->events[event];
 }
 
 int fio_ceph_os_getevents(thread_data* td, unsigned int min,
                           unsigned int max, const timespec* t)
 {
-  auto job = static_cast<Job*>(td->io_ops->data);
+  auto job = static_cast<Job*>(td->io_ops_data);
   unsigned int events = 0;
   io_u* u;
   unsigned int i;
@@ -301,7 +301,7 @@ int fio_ceph_os_queue(thread_data* td, io_u* u)
 {
   fio_ro_check(td, u);
 
-  auto job = static_cast<Job*>(td->io_ops->data);
+  auto job = static_cast<Job*>(td->io_ops_data);
   auto& object = job->objects[u->file->engine_data];
   auto& coll = object.coll;
   auto& os = job->engine->os;
