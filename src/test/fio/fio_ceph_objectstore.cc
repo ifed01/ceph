@@ -147,6 +147,7 @@ struct Job {
   std::vector<Collection> collections; //< spread objects over collections
   std::vector<Object> objects; //< associate an object with each fio_file
   std::vector<io_u*> events; //< completions for fio_ceph_os_event()
+  const bool unlink; //< unlink objects on destruction
 
   Job(Engine* engine, const thread_data* td);
   ~Job();
@@ -154,7 +155,8 @@ struct Job {
 
 Job::Job(Engine* engine, const thread_data* td)
   : engine(engine),
-    events(td->o.iodepth)
+    events(td->o.iodepth),
+    unlink(td->o.unlink)
 {
   // use the fio thread_number for our unique pool id
   const uint64_t pool = Collection::MIN_POOL_ID + td->thread_number;
@@ -204,19 +206,21 @@ Job::Job(Engine* engine, const thread_data* td)
 
 Job::~Job()
 {
-  ObjectStore::Transaction t;
-  // remove our objects
-  for (auto& obj : objects) {
-    t.remove(obj.coll.cid, obj.oid);
+  if (unlink) {
+    ObjectStore::Transaction t;
+    // remove our objects
+    for (auto& obj : objects) {
+      t.remove(obj.coll.cid, obj.oid);
+    }
+    // remove our collections
+    for (auto& coll : collections) {
+      t.remove_collection(coll.cid);
+    }
+    ObjectStore::Sequencer sequencer("job cleanup");
+    int r = engine->os->apply_transaction(&sequencer, std::move(t));
+    if (r)
+      derr << "job cleanup failed with " << cpp_strerror(-r) << dendl;
   }
-  // remove our collections
-  for (auto& coll : collections) {
-    t.remove_collection(coll.cid);
-  }
-  ObjectStore::Sequencer sequencer("job cleanup");
-  int r = engine->os->apply_transaction(&sequencer, std::move(t));
-  if (r)
-    derr << "job cleanup failed with " << cpp_strerror(-r) << dendl;
 }
 
 
