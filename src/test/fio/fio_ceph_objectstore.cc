@@ -189,12 +189,7 @@ Job::Job(Engine* engine, const thread_data* td)
 
     // associate each object with a collection in a round-robin fashion
     auto& coll = collections[i % collections.size()];
-
     objects.emplace_back(f->file_name, coll);
-    auto& oid = objects.back().oid;
-
-    t.touch(coll.cid, oid);
-    t.truncate(coll.cid, oid, file_size);
   }
 
   // apply the entire transaction synchronously
