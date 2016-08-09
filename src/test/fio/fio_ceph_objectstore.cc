@@ -369,7 +369,7 @@ void fio_ceph_os_io_u_free(thread_data* td, io_u* u)
 // ioengine_ops for get_ioengine()
 struct ceph_ioengine : public ioengine_ops {
   ceph_ioengine() : ioengine_ops({}) {
-    strncpy(name, "ceph-os", sizeof(name));
+    name        = "ceph-os";
     version     = FIO_IOOPS_VERSION;
     flags       = FIO_DISKLESSIO;
     setup       = fio_ceph_os_setup;
