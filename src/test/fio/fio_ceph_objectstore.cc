@@ -15,6 +15,7 @@
 #include "os/ObjectStore.h"
 #include "global/global_init.h"
 #include "common/errno.h"
+#include "include/intarith.h"
 #include "include/stringify.h"
 
 #include <fio.h>
@@ -169,6 +170,8 @@ Job::Job(Engine* engine, const thread_data* td)
   assert(count > 0);
   collections.reserve(count);
 
+  const int split_bits = cbits(count - 1);
+
   ObjectStore::Transaction t;
   for (uint32_t i = 0; i < count; i++) {
     auto pg = spg_t{pg_t{i, pool}};
@@ -176,7 +179,7 @@ Job::Job(Engine* engine, const thread_data* td)
 
     auto& cid = collections.back().cid;
     if (!engine->os->collection_exists(cid))
-      t.create_collection(cid, 0);
+      t.create_collection(cid, split_bits);
   }
 
   const uint64_t file_size = td->o.size / max(1u, td->o.nr_files);
