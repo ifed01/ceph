@@ -380,6 +380,7 @@ void BlueFS::umount()
 {
   dout(1) << __func__ << dendl;
 
+  dout(0) << "bluefs wal written:"<< logger->get(l_bluefs_bytes_written_wal)<<" "<<logger->get(l_bluefs_bytes_written_sst)<<dendl;
   sync_metadata();
 
   _close_writer(log_writer);
