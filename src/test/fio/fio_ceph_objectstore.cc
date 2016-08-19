@@ -66,8 +66,23 @@ struct Engine {
   boost::intrusive_ptr<CephContext> cct;
   std::unique_ptr<ObjectStore> os;
 
+  std::mutex lock;
+  int ref_count;
+
   Engine(const thread_data* td);
   ~Engine();
+
+  void ref() {
+    std::lock_guard<std::mutex> l(lock);
+    ++ref_count;
+  }
+  void deref() {
+    std::lock_guard<std::mutex> l(lock);
+    --ref_count;
+    if (!ref_count) {
+      os->umount();
+    }
+  }
 
   static Engine* get_instance(thread_data* td) {
     // note: creates an Engine with the options associated with the first job
@@ -76,7 +91,7 @@ struct Engine {
   }
 };
 
-Engine::Engine(const thread_data* td)
+Engine::Engine(const thread_data* td) : ref_count(0)
 {
   // add the ceph command line arguments
   auto o = static_cast<const Options*>(td->eo);
@@ -119,7 +134,8 @@ Engine::Engine(const thread_data* td)
 
 Engine::~Engine()
 {
-  os->umount();
+//  os->umount();
+  assert(!ref_count);
 }
 
 
@@ -161,6 +177,7 @@ Job::Job(Engine* engine, const thread_data* td)
     events(td->o.iodepth),
     unlink(td->o.unlink)
 {
+  engine->ref();
   // use the fio thread_number for our unique pool id
   const uint64_t pool = Collection::MIN_POOL_ID + td->thread_number;
 
@@ -205,8 +222,10 @@ Job::Job(Engine* engine, const thread_data* td)
   // apply the entire transaction synchronously
   ObjectStore::Sequencer sequencer("job init");
   int r = engine->os->apply_transaction(&sequencer, std::move(t));
-  if (r)
+  if (r) {
+    engine->deref();
     throw std::system_error(r, std::system_category(), "job init");
+  }
 }
 
 Job::~Job()
@@ -226,6 +245,7 @@ Job::~Job()
     if (r)
       derr << "job cleanup failed with " << cpp_strerror(-r) << dendl;
   }
+  engine->deref();
 }
 
 
