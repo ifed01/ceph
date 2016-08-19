@@ -298,9 +298,7 @@ public:
 
   public:
     Blob(int64_t i, Cache *c) : nref(0), id(i), bc(c) {}
-    ~Blob() {
-      assert(bc.empty());
-    }
+    ~Blob();
 
     friend void intrusive_ptr_add_ref(Blob *b) { b->get(); }
     friend void intrusive_ptr_release(Blob *b) { b->put(); }
@@ -319,12 +317,14 @@ public:
     friend ostream& operator<<(ostream& out, const Blob &b) {
       return out << b.id << ":" << b.blob;
     }
-
+    void predecoded() const;
+    void decoded() const;
     const bluestore_blob_t& get_blob() const {
       if (undecoded) {
 	bufferlist::iterator p = blob_bl.begin();
 	::decode(blob, p);
 	undecoded = false;
+	decoded();
       }
       return blob;
     }
@@ -333,6 +333,7 @@ public:
 	bufferlist::iterator p = blob_bl.begin();
 	::decode(blob, p);
 	undecoded = false;
+	decoded();
       }
       if (!dirty) {
 	dirty = true;
@@ -374,6 +375,7 @@ public:
       ::decode(blob_bl, p);
       undecoded = true;
       dirty = false;
+      predecoded();
     }
   };
   typedef boost::intrusive_ptr<Blob> BlobRef;

@@ -1140,7 +1140,22 @@ bool BlueStore::OnodeSpace::map_any(std::function<bool(OnodeRef)> f)
 
 #undef dout_prefix
 #define dout_prefix *_dout << "bluestore.blob(" << this << ") "
+std::atomic_int undecoded_count;
+ 
+BlueStore::Blob::~Blob() {
+  assert(bc.empty());
+  if( blob_bl.length() > 0 && undecoded)
+    ++undecoded_count;
+}
 
+void BlueStore::Blob::predecoded() const
+{
+  dout(0)<<__func__<<" " << id << dendl;
+}
+void BlueStore::Blob::decoded() const
+{
+  dout(0)<<__func__<<" " << id << dendl;
+}
 void BlueStore::Blob::discard_unallocated()
 {
   get_blob();
@@ -1637,7 +1652,7 @@ int BlueStore::_write_bdev_label(string path, bluestore_bdev_label_t label)
 
 int BlueStore::_read_bdev_label(string path, bluestore_bdev_label_t *label)
 {
-  dout(10) << __func__ << dendl;
+  dout(0) << __func__ << dendl;
   int fd = ::open(path.c_str(), O_RDONLY);
   if (fd < 0) {
     fd = -errno;
@@ -2865,7 +2880,7 @@ int BlueStore::mount()
 int BlueStore::umount()
 {
   assert(mounted);
-  dout(1) << __func__ << dendl;
+  dout(0) << __func__ << dendl;
 
   _sync();
   _reap_collections();
@@ -2900,6 +2915,7 @@ int BlueStore::umount()
       return -EIO;
     }
   }
+  dout(0) << __func__ << " done:" << undecoded_count << dendl;
   return 0;
 }
 
@@ -3658,7 +3674,7 @@ int BlueStore::_do_read(
   map<uint64_t,bluestore_lextent_t>::iterator ep, eend;
   int r = 0;
 
-  dout(20) << __func__ << " 0x" << std::hex << offset << "~" << length
+  dout(0) << __func__ << " 0x" << std::hex << offset << "~" << length
            << " size 0x" << o->onode.size << " (" << std::dec
            << o->onode.size << ")" << dendl;
   bl.clear();
@@ -5815,6 +5831,7 @@ void BlueStore::_dump_bnode(BnodeRef b, int log_level)
 {
   if (!g_conf->subsys.should_gather(ceph_subsys_bluestore, log_level))
     return;
+dout(0)<< __func__ << dendl;
   dout(log_level) << __func__ << " " << b
 		  << " " << std::hex << b->hash << std::dec << dendl;
   _dump_blob_map(b->blob_map, log_level);
