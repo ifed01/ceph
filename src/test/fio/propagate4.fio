@@ -1,0 +1,15 @@
+# Runs a 4k random write test against the ceph BlueStore.
+[global]
+ioengine=/usr/local/lib/libfio_ceph_objectstore.so # must be found in your LD_LIBRARY_PATH
+
+conf=ceph-bluestore.conf # must point to a valid ceph configuration file
+directory=./fio-bluestore # directory for osd_data
+
+rw=write
+iodepth=16
+size=256m
+
+[bluestore]
+nr_files=63
+bs=64k
+numjobs=32
