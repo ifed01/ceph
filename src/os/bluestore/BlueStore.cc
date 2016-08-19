@@ -1143,6 +1143,10 @@ bool BlueStore::OnodeSpace::map_any(std::function<bool(OnodeRef)> f)
 #undef dout_prefix
 #define dout_prefix *_dout << "bluestore.blob(" << this << ") "
 
+BlueStore::Blob::~Blob() {
+  assert(bc.empty());
+}
+
 void BlueStore::Blob::discard_unallocated()
 {
   get_blob();
@@ -2898,7 +2902,7 @@ int BlueStore::mount()
 int BlueStore::umount()
 {
   assert(mounted);
-  dout(1) << __func__ << dendl;
+  dout(0) << __func__ << dendl;
 
   _sync();
   _reap_collections();

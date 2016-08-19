@@ -298,9 +298,7 @@ public:
 
   public:
     Blob(int64_t i, Cache *c) : nref(0), id(i), bc(c) {}
-    ~Blob() {
-      assert(bc.empty());
-    }
+    ~Blob();
 
     friend void intrusive_ptr_add_ref(Blob *b) { b->get(); }
     friend void intrusive_ptr_release(Blob *b) { b->put(); }
@@ -325,6 +323,7 @@ public:
 	bufferlist::iterator p = blob_bl.begin();
 	::decode(blob, p);
 	undecoded = false;
+
       }
       return blob;
     }
