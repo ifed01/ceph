@@ -329,12 +329,15 @@ int fio_ceph_os_queue(thread_data* td, io_u* u)
   auto& os = job->engine->os;
 
   if (u->ddir == DDIR_WRITE) {
+    // provide a hint if we're likely to read this data back
+    const int flags = td_rw(td) ? CEPH_OSD_OP_FLAG_FADVISE_WILLNEED : 0;
+
     bufferlist bl;
     bl.push_back(buffer::create_static(u->xfer_buflen,
                                        static_cast<char*>(u->xfer_buf)));
     // enqueue a write transaction on the collection's sequencer
     ObjectStore::Transaction t;
-    t.write(coll.cid, object.oid, u->offset, u->xfer_buflen, bl);
+    t.write(coll.cid, object.oid, u->offset, u->xfer_buflen, bl, flags);
     os->queue_transaction(&coll.sequencer, std::move(t), new UnitComplete(u));
     return FIO_Q_QUEUED;
   }
