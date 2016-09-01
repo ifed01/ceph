@@ -3560,6 +3560,16 @@ public:
     return status;
   }
 
+  void fsck() {
+    Mutex::Locker locker(lock);
+    EnterExit ee("fsck");
+    while (in_flight)
+      cond.Wait(lock);
+    store->umount();
+    store->fsck();
+    store->mount();
+  }
+
   void scan() {
     Mutex::Locker locker(lock);
     EnterExit ee("scan");
@@ -3726,23 +3736,25 @@ void doSyntheticTest(boost::scoped_ptr<ObjectStore>& store,
       cerr << "Op " << i << std::endl;
       test_obj.print_internal_state();
     }
-    boost::uniform_int<> true_false(0, 99);
+    boost::uniform_int<> true_false(0, 999);
     int val = true_false(rng);
-    if (val > 97) {
+    if (val > 998) {
+      test_obj.fsck();
+    } else if (val > 970) {
       test_obj.scan();
-    } else if (val > 95) {
+    } else if (val > 950) {
       test_obj.stat();
-    } else if (val > 85) {
+    } else if (val > 850) {
       test_obj.zero();
-    } else if (val > 80) {
+    } else if (val > 800) {
       test_obj.unlink();
-    } else if (val > 55) {
+    } else if (val > 550) {
       test_obj.write();
-    } else if (val > 50) {
+    } else if (val > 500) {
       test_obj.clone();
-    } else if (val > 30) {
+    } else if (val > 300) {
       test_obj.stash();
-    } else if (val > 10) {
+    } else if (val > 100) {
       test_obj.read();
     } else {
       test_obj.truncate();
