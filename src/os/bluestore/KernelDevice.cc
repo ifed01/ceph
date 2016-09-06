@@ -366,7 +366,7 @@ void KernelDevice::aio_submit(IOContext *ioc)
     if (retries)
       dout(1) << __func__ << " retries " << retries << dendl;
     if (r) {
-      derr << " aio submit got " << cpp_strerror(r) << dendl;
+      //derr << " aio submit got " << cpp_strerror(r) << dendl;
       assert(r == 0);
     }
   }
