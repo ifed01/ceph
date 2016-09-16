@@ -3314,7 +3314,7 @@ int BlueStore::_balance_bluefs_freespace(vector<bluestore_pextent_t> *extents)
 
     // hard cap to fit into 32 bits
     reclaim = MIN(reclaim, 1ull<<31);
-    dout(10) << __func__ << " reclaiming " << reclaim
+    dout(0) << __func__ << " reclaiming " << reclaim
 	     << " (" << pretty_si_t(reclaim) << ")" << dendl;
 
     while (reclaim > 0) {
@@ -3331,6 +3331,8 @@ int BlueStore::_balance_bluefs_freespace(vector<bluestore_pextent_t> *extents)
       alloc->release(offset, length);
 
       reclaim -= length;
+      dout(0) << __func__ << " reclaiming ctd. " << reclaim
+	     << " (" << pretty_si_t(reclaim) << ")" << dendl;
     }
 
     ret = 1;

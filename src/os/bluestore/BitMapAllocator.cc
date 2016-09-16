@@ -83,6 +83,8 @@ void BitMapAllocator::insert_free(uint64_t off, uint64_t len)
 int BitMapAllocator::reserve(uint64_t need)
 {
   int nblks = need / m_block_size; // apply floor
+if( need % m_block_size )
+dout(0)<<__func__<<" "<<need<< " "<<m_block_size<<dendl;
   assert(!(need % m_block_size));
   dout(10) << __func__ << " instance " << (uint64_t) this
            << " num_used " << m_bit_alloc->get_used_blocks()
