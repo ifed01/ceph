@@ -676,7 +676,6 @@ struct bluestore_onode_t {
     }
     void dump(Formatter *f) const;
   };
-  vector<shard_info> extent_map_shards; ///< extent map shards (if any)
 
   uint32_t expected_object_size = 0;
   uint32_t expected_write_size = 0;
@@ -691,7 +690,6 @@ struct bluestore_onode_t {
     denc(v.size, p);
     denc(v.attrs, p);
     denc(v.omap_head, p);
-    denc(v.extent_map_shards, p);
     denc(v.expected_object_size, p);
     denc(v.expected_write_size, p);
     denc(v.alloc_hint_flags, p);

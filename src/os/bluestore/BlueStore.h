@@ -582,9 +582,9 @@ public:
 
   /// a sharded extent map, mapping offsets to lextents to blobs
   struct ExtentMap {
-    Onode *onode;
     extent_map_t extent_map;        ///< map of Extents to Blobs
     blob_map_t spanning_blob_map;   ///< blobs that span shards
+    vector<shard_info> extent_map_shards; ///< extent map shards (if any)
 
     struct Shard {
       string key;            ///< kv key
@@ -599,12 +599,14 @@ public:
 
     bool needs_reshard = false;   ///< true if we must reshard
 
-    ExtentMap(Onode *o);
+    ExtentMap();
     ~ExtentMap() {
       extent_map.clear_and_dispose([&](Extent *e) { delete e; });
     }
 
     void clear() {
+      extent_map_shards.clear();
+      spanning_blob_map.clear();
       extent_map.clear();
       extent_map.clear_and_dispose([&](Extent *e) { delete e; });
       shards.clear();
@@ -616,9 +618,8 @@ public:
 		     unsigned *pn);
     void decode_some(bufferlist& bl);
 
-    void bound_encode_spanning_blobs(size_t& p);
-    void encode_spanning_blobs(bufferlist::contiguous_appender& p);
-    void decode_spanning_blobs(Collection *c, bufferptr::iterator& p);
+    void bound_internals(size_t& p);
+    void encode_internals(bufferlist::contiguous_appender& p, size_t& blob_part);
 
     BlobRef get_spanning_blob(int id) {
       auto p = spanning_blob_map.find(id);
@@ -626,11 +627,11 @@ public:
       return p->second;
     }
 
-    bool update(Onode *on, KeyValueDB::Transaction t, bool force);
-    void reshard(Onode *on, uint64_t min_alloc_size);
+    bool update(KeyValueDB::Transaction t, bool force);
+    void reshard(Onode *o, uint64_t min_alloc_size);
 
     /// initialize Shards from the onode
-    void init_shards(Onode *on, bool loaded, bool dirty);
+    void init_shards(bool loaded, bool dirty);
 
     /// return index of shard containing offset
     /// or -1 if not found
@@ -674,6 +675,7 @@ public:
 
     /// ensure that a range of the map is loaded
     void fault_range(KeyValueDB *db,
+		     Onode *on,
 		     uint32_t offset, uint32_t length);
 
     /// ensure a range of the map is marked dirty
@@ -716,7 +718,7 @@ public:
                         BlobRef b, extent_map_t *old_extents);
 
     /// split a blob (and referring extents)
-    BlobRef split_blob(BlobRef lb, uint32_t blob_offset, uint32_t pos);
+    BlobRef split_blob(BlobRef lb, BlobRef rb, uint32_t blob_offset, uint32_t pos);
 
     bool do_write_check_depth(
       uint64_t onode_size,
@@ -725,6 +727,10 @@ public:
       uint8_t  *blob_depth,
       uint64_t *gc_start_offset,
       uint64_t *gc_end_offset);
+  private:
+    void encode_spanning_blobs(bufferlist::contiguous_appender& p);
+    void decode_spanning_blobs(Collection *c, bufferptr::iterator& p);
+
   };
 
   struct OnodeSpace;
