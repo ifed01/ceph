@@ -287,6 +287,7 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
            << " cache size to " << g_conf->rocksdb_cache_size
            << " num of cache shards to " << (1 << g_conf->rocksdb_cache_shard_bits) << dendl;
 
+  opt.statistics = rocksdb::CreateDBStatistics();
   opt.merge_operator.reset(new MergeOperatorRouter(*this));
   status = rocksdb::DB::Open(opt, path, &db);
   if (!status.ok()) {
@@ -296,6 +297,7 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
   
   PerfCountersBuilder plb(g_ceph_context, "rocksdb", l_rocksdb_first, l_rocksdb_last);
   plb.add_u64_counter(l_rocksdb_gets, "get", "Gets");
+  plb.add_u64_counter(l_rocksdb_gets_bytes, "get bytes", "Gets Bytes");
   plb.add_u64_counter(l_rocksdb_txns, "submit_transaction", "Submit transactions");
   plb.add_u64_counter(l_rocksdb_txns_sync, "submit_transaction_sync", "Submit transactions sync");
   plb.add_time_avg(l_rocksdb_get_latency, "get_latency", "Get latency");
@@ -310,6 +312,9 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
   plb.add_time_avg(l_rocksdb_write_delay_time, "rocksdb_write_delay_time", "Rocksdb write delay time");
   plb.add_time_avg(l_rocksdb_write_pre_and_post_process_time, 
       "rocksdb_write_pre_and_post_time", "total time spent on writing a record, excluding write process");
+  plb.add_u64_counter(l_rocksdb_merge_contiguous_bytes, "merge_contiguous_bytes", "Contiguous data merged");
+  plb.add_u64_counter(l_rocksdb_merge_bytes, "merge_bytes", "Non-contiguous data merged");
+  plb.add_u64_counter(l_rocksdb_merges, "merges", "Total merges");
   logger = plb.create_perf_counters();
   cct->get_perfcounters_collection()->add(logger);
 
@@ -318,6 +323,9 @@ int RocksDBStore::do_open(ostream &out, bool create_if_missing)
     compact();
     derr << "Finished compacting rocksdb store" << dendl;
   }
+  string statstr;
+  db->GetProperty("rocksdb.stats", &statstr);
+  derr<<"rocksdb stats on open:"<<statstr<<dendl;
   return 0;
 }
 
@@ -348,6 +356,31 @@ RocksDBStore::~RocksDBStore()
 
 void RocksDBStore::close()
 {
+  const size_t count = 8;
+   const char* keys[count]      = {"S", "T", "C", "O", "M", "L", "B", "b"};
+   const char* keys_last[count] = {"T", "U", "D", "P", "N", "M", "C", "c"};
+   rocksdb::Range ranges[count];
+   for( size_t i = 0; i < count; i++) {
+     ranges[i] = rocksdb::Range(keys[i], keys_last[i]);
+   }
+   uint64_t sizes[count];
+   db->GetApproximateSizes(ranges, count, sizes);
+   derr<<"Sizes:" << dendl;
+   for( size_t i = 0; i < count; i++) {
+     derr<<"  "<<keys[i]<<":"<<sizes[i]<<dendl;
+   }
+
+  derr<<"r:" << logger->get(l_rocksdb_gets)<< "/" << logger->get(l_rocksdb_gets_bytes) << " ts:"<<logger->get(l_rocksdb_txns)<<"c:" << logger->get(l_rocksdb_compact)<<dendl;
+  derr<<"merges:" << logger->get(l_rocksdb_merges)<< " bytes:"<<logger->get(l_rocksdb_merge_contiguous_bytes)<<"+" << logger->get(l_rocksdb_merge_bytes)<<dendl;
+
+  string statstr;
+  db->GetProperty("rocksdb.stats", &statstr);
+  derr<<"rocksdb stats on close:"<<statstr<<dendl;
+
+  auto stats = db->GetOptions().statistics;
+  std::string s = stats->ToString();
+  derr<<"rocksdb cache stats:" << s <<dendl;
+
   // stop compaction thread
   compact_queue_lock.Lock();
   if (compact_thread.is_started()) {
@@ -539,12 +572,15 @@ void RocksDBStore::RocksDBTransactionImpl::merge(
     bat.Merge(rocksdb::Slice(key),
 	       rocksdb::Slice(to_set_bl.buffers().front().c_str(),
 			    to_set_bl.length()));
+    db->get_logger()->inc(l_rocksdb_merge_contiguous_bytes, to_set_bl.length());
   } else {
     // make a copy
     bufferlist val = to_set_bl;
     bat.Merge(rocksdb::Slice(key),
 	     rocksdb::Slice(val.c_str(), val.length()));
+    db->get_logger()->inc(l_rocksdb_merge_bytes, val.length());
   }
+  db->get_logger()->inc(l_rocksdb_merges);
 }
 
 //gets will bypass RocksDB row cache, since it uses iterator
@@ -559,8 +595,10 @@ int RocksDBStore::get(
     std::string value;
     std::string bound = combine_strings(prefix, *i);
     auto status = db->Get(rocksdb::ReadOptions(), rocksdb::Slice(bound), &value);
+    logger->inc(l_rocksdb_gets_bytes, value.size());
     if (status.ok())
       (*out)[*i].append(value);
+
   }
   utime_t lat = ceph_clock_now(g_ceph_context) - start;
   logger->inc(l_rocksdb_gets);
@@ -581,6 +619,7 @@ int RocksDBStore::get(
   k = combine_strings(prefix, key);
   s = db->Get(rocksdb::ReadOptions(), rocksdb::Slice(k), &value);
   if (s.ok()) {
+    logger->inc(l_rocksdb_gets_bytes, value.size());
     out->append(value);
   } else {
     r = -ENOENT;

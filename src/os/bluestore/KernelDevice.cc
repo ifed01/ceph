@@ -31,6 +31,13 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "bdev(" << path << ") "
 
+enum {
+  l_bluestore_kdevice_first = 732700,
+  l_bluestore_kdevice_written,
+  l_bluestore_kdevice_read,
+  l_bluestore_kdevice_last
+};
+
 KernelDevice::KernelDevice(aio_callback_t cb, void *cbpriv)
   : fd_direct(-1),
     fd_buffered(-1),
@@ -48,6 +55,12 @@ KernelDevice::KernelDevice(aio_callback_t cb, void *cbpriv)
   zeros = buffer::create_page_aligned(1048576);
   zeros.zero();
   rotational = true;
+
+}
+
+KernelDevice::~KernelDevice()
+{
+  close_logger();
 }
 
 int KernelDevice::_lock()
@@ -68,6 +81,8 @@ int KernelDevice::open(string p)
 {
   path = p;
   int r = 0;
+  PerfCountersBuilder b(g_ceph_context, string("KernelDevice-"+path),
+                          l_bluestore_kdevice_first, l_bluestore_kdevice_last);
   dout(1) << __func__ << " path " << path << dendl;
 
   fd_direct = ::open(path.c_str(), O_RDWR | O_DIRECT);
@@ -146,6 +161,11 @@ int KernelDevice::open(string p)
   r = _aio_start();
   assert(r == 0);
 
+  b.add_u64(l_bluestore_kdevice_written, "written", "Total bytes written");
+  b.add_u64(l_bluestore_kdevice_read, "read", "Total bytes read");
+  logger = b.create_perf_counters();
+  g_ceph_context->get_perfcounters_collection()->add(logger);
+
   dout(1) << __func__
 	  << " size " << size
 	  << " (0x" << std::hex << size << std::dec << ", "
@@ -168,6 +188,7 @@ int KernelDevice::open(string p)
 void KernelDevice::close()
 {
   dout(1) << __func__ << dendl;
+  close_logger();
   _aio_stop();
 
   assert(fs);
@@ -446,6 +467,8 @@ int KernelDevice::aio_write(
       bl.rebuild_aligned_size_and_memory(block_size, block_size)) {
     dout(20) << __func__ << " rebuilding buffer to be aligned" << dendl;
   }
+
+  logger->inc(l_bluestore_kdevice_written, bl.length());
   dout(40) << "data: ";
   bl.hexdump(*_dout);
   *_dout << dendl;
@@ -542,6 +565,7 @@ int KernelDevice::read(uint64_t off, uint64_t len, bufferlist *pbl,
   pbl->clear();
   pbl->push_back(std::move(p));
 
+  logger->inc(l_bluestore_kdevice_read, pbl->length());
   dout(40) << "data: ";
   pbl->hexdump(*_dout);
   *_dout << dendl;
@@ -570,6 +594,7 @@ int KernelDevice::direct_read_unaligned(uint64_t off, uint64_t len, char *buf)
   assert((uint64_t)r == aligned_len);
   memcpy(buf, p.c_str() + (off - aligned_off), len);
 
+  logger->inc(l_bluestore_kdevice_read, len);
   dout(40) << __func__ << " data: ";
   bufferlist bl;
   bl.append(buf, len);
@@ -625,6 +650,7 @@ int KernelDevice::read_random(uint64_t off, uint64_t len, char *buf,
     assert((uint64_t)r == len);
   }
 
+  logger->inc(l_bluestore_kdevice_read, len);
   dout(40) << __func__ << " data: ";
   bufferlist bl;
   bl.append(buf, len);
@@ -650,3 +676,13 @@ int KernelDevice::invalidate_cache(uint64_t off, uint64_t len)
   return r;
 }
 
+void KernelDevice::close_logger()
+{
+  if (!logger) {
+    return;
+  }
+  derr << __func__ << " " << path << ":" << logger->get(l_bluestore_kdevice_written) << "/" << logger->get(l_bluestore_kdevice_read) << dendl;
+  g_ceph_context->get_perfcounters_collection()->remove(logger);
+  delete logger;
+  logger = nullptr;
+}

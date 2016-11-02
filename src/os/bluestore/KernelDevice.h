@@ -19,6 +19,7 @@
 
 #include "os/fs/FS.h"
 #include "include/interval_set.h"
+#include "common/perf_counters.h"
 
 #include "BlockDevice.h"
 
@@ -52,6 +53,7 @@ class KernelDevice : public BlockDevice {
   } aio_thread;
 
   std::atomic_int injecting_crash;
+  PerfCounters *logger = nullptr;
 
   void _aio_thread();
   int _aio_start();
@@ -72,8 +74,10 @@ class KernelDevice : public BlockDevice {
   void debug_aio_link(FS::aio_t& aio);
   void debug_aio_unlink(FS::aio_t& aio);
 
+  void close_logger();
 public:
   KernelDevice(aio_callback_t cb, void *cbpriv);
+  virtual ~KernelDevice();
 
   void aio_submit(IOContext *ioc) override;
 

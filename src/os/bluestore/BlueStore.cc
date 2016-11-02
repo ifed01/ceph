@@ -1611,9 +1611,9 @@ bool BlueStore::ExtentMap::update(Onode *o, KeyValueDB::Transaction t,
 	}
 	bufferlist bl;
 	unsigned n;
-	if (encode_some(p->offset, endoff - p->offset, bl, &n)) {
-	  return true;
-	}
+	bool never_happen = encode_some(p->offset, endoff - p->offset, bl, &n);
+	assert(!never_happen);
+
         size_t len = bl.length();
 	dout(20) << __func__ << " shard 0x" << std::hex
 		 << p->offset << std::dec << " is " << len
@@ -2810,6 +2810,7 @@ void BlueStore::_init_logger()
             "garbage collected bytes");
   b.add_u64(l_bluestore_blob_split, "bluestore_blob_split",
             "Sum for blob splitting due to resharding");
+  b.add_u64(l_bluestore_bypass_onode_update, "bluestore_bypass_onode_update", "XXXXX");
   logger = b.create_perf_counters();
   g_ceph_context->get_perfcounters_collection()->add(logger);
 }
@@ -3852,7 +3853,7 @@ int BlueStore::_setup_block_symlink_or_file(
 
 int BlueStore::mkfs()
 {
-  dout(1) << __func__ << " path " << path << dendl;
+  derr << __func__ << " path " << path << dendl;
   int r;
   uuid_d old_fsid;
 
@@ -3860,7 +3861,7 @@ int BlueStore::mkfs()
     string done;
     r = read_meta("mkfs_done", &done);
     if (r == 0) {
-      dout(1) << __func__ << " already created" << dendl;
+      derr << __func__ << " already created" << dendl;
       if (g_conf->bluestore_fsck_on_mkfs) {
         r = fsck(g_conf->bluestore_fsck_on_mkfs_deep);
         if (r < 0) {
@@ -4173,6 +4174,13 @@ int BlueStore::umount()
 {
   assert(mounted);
   dout(1) << __func__ << dendl;
+  _update_cache_logger();
+  derr<<"logger:" << " m:"
+                  << logger->get(l_bluestore_onode_misses) << " h:"
+                  << logger->get(l_bluestore_onode_hits) << " r:"
+                  << logger->get(l_bluestore_onode_reshard) << " b:"
+                  << logger->get(l_bluestore_bypass_onode_update) << " o:"
+                  << logger->get(l_bluestore_onodes) << dendl;
 
   _sync();
 
@@ -4570,7 +4578,7 @@ int BlueStore::fsck(bool deep)
       }
     }
   }
-  dout(1) << __func__ << " checking shared_blobs" << dendl;
+/*  dout(1) << __func__ << " checking shared_blobs" << dendl;
   it = db->get_iterator(PREFIX_SHARED_BLOB);
   if (it) {
     for (it->lower_bound(string()); it->valid(); it->next()) {
@@ -4711,7 +4719,7 @@ int BlueStore::fsck(bool deep)
       ++errors;
     }
   }
-
+*/
  out_scan:
   coll_map.clear();
  out_alloc:
@@ -6451,7 +6459,7 @@ void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
       o->extent_map.reshard(o.get(), min_alloc_size);
       reshard = o->extent_map.update(o.get(), t, true);
       if (reshard) {
-	dout(20) << __func__ << " warning: still wants reshard, check options?"
+	derr << __func__ << " warning: still wants reshard, check options?"
 		 << dendl;
       }
       logger->inc(l_bluestore_onode_reshard);
@@ -6485,7 +6493,12 @@ void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
 	     << blob_part << " bytes spanning blobs + "
 	     << extent_part << " bytes inline extents)"
 	     << dendl;
-    t->set(PREFIX_OBJ, o->key, bl);
+    if (bl == o->inline_bl) {
+      logger->inc(l_bluestore_bypass_onode_update);
+    } else {
+      t->set(PREFIX_OBJ, o->key, bl);
+      o->inline_bl.swap(bl);
+    }
 
     std::lock_guard<std::mutex> l(o->flush_lock);
     o->flush_txns.insert(txc);
@@ -6742,7 +6755,7 @@ void BlueStore::_kv_sync_thread()
 	  }
 	  bufferlist bl;
 	  ::encode(bluefs_extents, bl);
-	  dout(10) << __func__ << " bluefs_extents now 0x" << std::hex
+	  derr << __func__ << " bluefs_extents now 0x" << std::hex
 		   << bluefs_extents << std::dec << dendl;
 	  synct->set(PREFIX_SUPER, "bluefs_extents", bl);
 	}

@@ -96,6 +96,7 @@ enum {
   l_bluestore_gc,
   l_bluestore_gc_bytes,
   l_bluestore_blob_split,
+  l_bluestore_bypass_onode_update,
   l_bluestore_last
 };
 
@@ -793,6 +794,7 @@ public:
     bool exists;              ///< true if object logically exists
 
     ExtentMap extent_map;
+    bufferlist inline_bl;
 
     std::mutex flush_lock;  ///< protect flush_txns
     std::condition_variable flush_cond;   ///< wait here for unapplied txns

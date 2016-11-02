@@ -347,6 +347,7 @@ void BlueFS::_stop_alloc()
 
 int BlueFS::mount()
 {
+  vector<pair<uint64_t,uint64_t> > v;
   dout(1) << __func__ << dendl;
 
   int r = _open_super();
@@ -385,6 +386,12 @@ int BlueFS::mount()
            << dendl;
 
   _init_logger();
+
+  derr<<"mounted: "<<dendl;
+  get_usage(&v);
+  for( auto i = 0; i<v.size(); i++)
+    derr<<i<<":"<<v[i].second-v[i].first<<" "<<v[i].first<<dendl;
+
   return 0;
 
  out:
@@ -395,6 +402,12 @@ int BlueFS::mount()
 void BlueFS::umount()
 {
   dout(1) << __func__ << dendl;
+
+  vector<pair<uint64_t,uint64_t> > v;
+  derr<<__func__<<" " <<logger->get(l_bluefs_log_compactions)<<dendl;
+  get_usage(&v);
+  for( auto i = 0; i<v.size(); i++)
+    derr<<i<<":"<<v[i].second-v[i].first<<dendl;
 
   sync_metadata();
 

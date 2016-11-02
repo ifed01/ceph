@@ -123,7 +123,9 @@ Engine::Engine(const thread_data* td) : ref_count(0)
 
   os->set_cache_shards(g_conf->osd_op_num_shards);
 
+  utime_t start = ceph_clock_now(NULL);
   int r = os->mkfs();
+  cerr<<"mkfs completeded in "<<ceph_clock_now(NULL)-start;
   if (r < 0)
     throw std::system_error(-r, std::system_category(), "mkfs failed");
 
@@ -214,8 +216,8 @@ Job::Job(Engine* engine, const thread_data* td)
     objects.emplace_back(f->file_name, coll);
     auto& oid = objects.back().oid;
 
-    t.touch(coll.cid, oid);
-    t.truncate(coll.cid, oid, file_size);
+//    t.touch(coll.cid, oid);
+//    t.truncate(coll.cid, oid, file_size);
   }
 
   // apply the entire transaction synchronously
