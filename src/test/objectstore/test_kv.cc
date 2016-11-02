@@ -255,6 +255,141 @@ TEST_P(KVTest, Merge) {
   fini();
 }
 
+/*
+ * DB Cache usage test case
+ */
+TEST_P(KVTest, CacheUse) {
+  db->init("compression=kNoCompression,max_write_buffer_number=16,min_write_buffer_number_to_merge=1,write_buffer_size=65536,recycle_log_file_num=16,disableWAL=false");
+  ASSERT_EQ(0, db->create_and_open(cout));
+  {
+    KeyValueDB::Transaction t = db->get_transaction();
+    string s(128*1024, 'a');
+    bufferlist value;
+/*    value.append("valuevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevalue");
+    t->set("prefix", "key", value);
+    value.clear();
+    value.append("value2");
+    t->set("prefix", "key2", value);
+    value.clear();*/
+    value.append(s);
+/*    t->set("prefix", "key3", value);
+    db->submit_transaction_sync(t);
+
+
+    t = db->get_transaction();
+    t->set("prefix2", "key2", value);
+    t->set("prefix2", "key3", value);
+    db->submit_transaction_sync(t);
+
+    usleep(1 * 1000000);*/
+/*    bufferlist v1, v2;
+    ASSERT_EQ(0, db->get("prefix", "key", &v1));
+    ASSERT_EQ(v1.length(), 80u);
+    (v1.c_str())[v1.length()] = 0x0;
+    ASSERT_EQ(std::string(v1.c_str()), std::string("valuevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevaluevalue"));
+    ASSERT_EQ(0, db->get("prefix", "key3", &v2));
+    ASSERT_EQ(v2.length(), s.size());
+    (v2.c_str())[v2.length()] = 0x0;
+    ASSERT_EQ(std::string(v2.c_str()), s);*/
+/*
+    t = db->get_transaction();
+    t->rmkey("prefix2", "key2");
+    t->rmkey("prefix", "key");
+    t->set("prefix", "key", value);
+    db->submit_transaction_sync(t);*/
+    for( int i = 0; i<600; i++ )
+    {
+if((i%100) == 0 )
+  printf(">%d\n",i);
+    t = db->get_transaction();
+    t->set("prefix", stringify(i), value);
+    db->submit_transaction_sync(t);
+    bufferlist v1;
+    ASSERT_EQ(0, db->get("prefix", stringify(i), &v1));
+
+    }
+    for( int i = 0; i<600; i++ )
+    {
+if((i%100) == 0 )
+  printf(">%d\n",i);
+    t = db->get_transaction();
+    t->rmkey("prefix", stringify(i));
+    //t->set("prefix", stringify(i), value);
+    db->submit_transaction_sync(t);
+    }
+  }
+  fini();
+}
+
+/*
+ * DB Cache usage test case for data merge
+ */
+struct TestMergeOperator : public KeyValueDB::MergeOperator {
+  virtual void merge_nonexistent(
+    const char *rdata, size_t rlen, std::string *new_value) override {
+    *new_value = std::string(rdata, rlen);
+  }
+  virtual void merge(
+    const char *ldata, size_t llen,
+    const char *rdata, size_t rlen,
+    std::string *new_value) {
+//    assert(llen == rlen);
+//    assert((rlen % 8) == 0);
+    new_value->resize(rlen);
+    *new_value = std::string(rdata, rlen);
+  }
+  // We use each operator name and each prefix to construct the
+  // overall RocksDB operator name for consistency check at open time.
+  virtual string name() const {
+    return "test_merge";
+  }
+};
+
+TEST_P(KVTest, CacheMergeUse) {
+    ceph::shared_ptr<TestMergeOperator> merge_op(new TestMergeOperator);
+  db->init("compression=kNoCompression,max_write_buffer_number=16,min_write_buffer_number_to_merge=1,write_buffer_size=65536,recycle_log_file_num=16,disableWAL=false");
+  db->set_merge_operator("prefix", merge_op);
+  ASSERT_EQ(0, db->create_and_open(cout));
+  {
+    KeyValueDB::Transaction t = db->get_transaction();
+    string s(128*1024 - 1000, 'a');
+    string s2(128*1024, 'a');
+    bufferlist value;
+    value.append(s);
+
+printf(">>>!!!\n");
+    for( int i = 0; i<600; i++ )
+    {
+if((i%100) == 0 )
+  printf(">%d\n",i);
+    t = db->get_transaction();
+    t->merge("prefix", stringify(i), value);
+    db->submit_transaction_sync(t);
+      bufferlist v1;
+      ASSERT_EQ(0, db->get("prefix", stringify(i), &v1));
+    }
+printf(">>>!!!\n");
+/*    for( int i = 0; i<1000; i++ )
+    {
+      bufferlist v1;
+      ASSERT_EQ(0, db->get("prefix", stringify(i), &v1));
+    }*/
+printf(">>>!!!\n");
+    bufferlist value2;
+    value2.append(s2);
+    for( int i = 0; i<600; i++ )
+    {
+if((i%100) == 0 )
+  printf(">%d\n",i);
+    t = db->get_transaction();
+    t->merge("prefix", stringify(i), value2);
+    db->submit_transaction_sync(t);
+/*      bufferlist v1;
+      ASSERT_EQ(0, db->get("prefix", stringify(i), &v1));*/
+    }
+  }
+  fini();
+}
 
 INSTANTIATE_TEST_CASE_P(
   KeyValueDB,

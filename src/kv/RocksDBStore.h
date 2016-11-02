@@ -25,6 +25,7 @@ class PerfCounters;
 enum {
   l_rocksdb_first = 34300,
   l_rocksdb_gets,
+  l_rocksdb_gets_bytes,
   l_rocksdb_txns,
   l_rocksdb_txns_sync,
   l_rocksdb_get_latency,
@@ -34,6 +35,9 @@ enum {
   l_rocksdb_compact_range,
   l_rocksdb_compact_queue_merge,
   l_rocksdb_compact_queue_len,
+  l_rocksdb_merge_contiguous_bytes,
+  l_rocksdb_merge_bytes,
+  l_rocksdb_merges,
   l_rocksdb_last,
 };
 
@@ -87,6 +91,9 @@ class RocksDBStore : public KeyValueDB {
   void compact_range_async(const string& start, const string& end);
 
 public:
+  PerfCounters* get_logger() {
+    return logger;
+  }
   /// compact the underlying rocksdb store
   bool compact_on_mount;
   bool disableWAL;
