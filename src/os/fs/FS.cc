@@ -188,7 +188,7 @@ int FS::zero(int fd, uint64_t offset, uint64_t length)
 int FS::aio_queue_t::submit(aio_t &aio, int *retries)
 {
   // 2^16 * 125us = ~8 seconds, so max sleep is ~16 seconds
-  int attempts = 16;
+  int attempts = 64;
   int delay = 125;
   iocb *piocb = &aio.iocb;
   while (true) {
