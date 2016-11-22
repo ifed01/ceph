@@ -212,6 +212,12 @@ struct bluestore_extent_ref_map_t {
   bool empty() const {
     return ref_map.empty();
   }
+  bool contains_only(uint64_t offset, uint32_t length) const {
+    return ref_map.size() == 1 &&
+      ref_map.begin()->first == offset &&
+      ref_map.begin()->second.length == length &&
+      ref_map.begin()->second.refs == 1;
+  }
 
   void get(uint64_t offset, uint32_t len);
   void put(uint64_t offset, uint32_t len, PExtentVector *release);
