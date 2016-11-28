@@ -21,6 +21,7 @@
 #include "compressor/CompressionPlugin.h"
 #include "ZlibCompressor.h"
 #include "common/debug.h"
+#include <zlib.h>
 
 #define dout_subsys ceph_subsys_mon
 // -----------------------------------------------------------------------------
@@ -28,9 +29,18 @@
 class CompressionPluginZlib : public CompressionPlugin {
 public:
   bool has_isal = false;
+  bool qat_started = false;
 
   explicit CompressionPluginZlib(CephContext *cct) : CompressionPlugin(cct)
   {}
+
+  ~CompressionPluginZlib()
+  {
+    if (qat_started) {
+      zlibShutdownEngine();
+    }
+  }
+
 
   virtual int factory(CompressorRef *cs,
                       std::ostream *ss)
@@ -43,6 +53,11 @@ public:
       isal = false;
     }
     if (compressor == 0 || has_isal != isal) {
+      if (!isal && !qat_started && cct->_conf->compressor_zlib_qat) {
+        zlibSetupEngine(100000 /*polling interval*/, Z_QAT_DEFAULT_MAX_NUM_RETRIES);
+        zlibStartupEngine(Z_HW_COMP_HW_DECOMP);
+        qat_started = true;
+      }
       compressor = CompressorRef(new ZlibCompressor(isal));
       has_isal = isal;
     }

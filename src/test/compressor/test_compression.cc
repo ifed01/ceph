@@ -33,7 +33,6 @@
 #include "common/Clock.h"
 
 #include <zlib.h>
-static long polling_interval = 100000;
 
 class CompressorTest : public ::testing::Test,
 			public ::testing::WithParamInterface<const char*> {
@@ -920,6 +919,7 @@ TEST(PerfTest, perf_compare_zlib) //should be prior to _qat test case to avoid i
 {
   //original zlib
   g_conf->set_val("compressor_zlib_isal", "false");
+  g_conf->set_val("compressor_zlib_qat", "false");
   g_ceph_context->_conf->apply_changes(NULL);
   CompressorRef zlib = Compressor::create(g_ceph_context, "zlib");
   do_compress_perf_compare(zlib,  "zlib", 
@@ -938,9 +938,8 @@ TEST(PerfTest, perf_compare_qat)
   }
 
   g_conf->set_val("compressor_zlib_isal", "false");
+  g_conf->set_val("compressor_zlib_qat", "true");
   //zlib + QAT  
-  zlibSetupEngine(polling_interval, Z_QAT_DEFAULT_MAX_NUM_RETRIES);
-  zlibStartupEngine(Z_HW_COMP_HW_DECOMP);
   CompressorRef zlib2 = Compressor::create(g_ceph_context, "zlib");
   do_compress_perf_compare(zlib2,  "zlib+qat",
     g_conf->bluestore_block_path.c_str(), //corpus file location
@@ -948,7 +947,6 @@ TEST(PerfTest, perf_compare_qat)
     g_conf->bluestore_max_ops, //used as core count
     g_conf->async_compressor_threads );
 
-  zlibShutdownEngine();
 }
 
 

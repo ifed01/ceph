@@ -99,6 +99,7 @@ OPTION(xio_max_send_inline, OPT_INT, 512) // xio maximum threshold to send inlin
 
 OPTION(compressor_zlib_isal, OPT_BOOL, false)
 OPTION(compressor_zlib_level, OPT_INT, 5) //regular zlib compression level, not applicable to isa-l optimized version
+OPTION(compressor_zlib_qat, OPT_BOOL, false)
 
 OPTION(async_compressor_enabled, OPT_BOOL, false)
 OPTION(async_compressor_type, OPT_STR, "snappy")
