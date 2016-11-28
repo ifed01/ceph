@@ -1,0 +1,146 @@
+[==========] Running 5 tests from 1 test case.
+[----------] Global test environment set-up.
+[----------] 5 tests from PerfTest
+[ RUN      ] PerfTest.perf_compare_dummy
+Summary: orig 22883mb -> 22883mb ratio=1 via none/8192 in 3788 msec. cores/threads = 1/8
+ctx switches 1221, use(%) 100, user(%) 98, kernel(%) 1
+[       OK ] PerfTest.perf_compare_dummy (15423 ms)
+[ RUN      ] PerfTest.perf_compare_snappy
+Summary: orig 22883mb -> 10287mb ratio=0.449576 via snappy/8192 in 51274 msec. cores/threads = 1/8
+ctx switches 14817, use(%) 100, user(%) 99, kernel(%) 0
+[       OK ] PerfTest.perf_compare_snappy (62731 ms)
+[ RUN      ] PerfTest.perf_compare_isal
+Summary: orig 22883mb -> 9458mb ratio=0.41334 via zlib+isal/8192 in 83056 msec. cores/threads = 1/8
+ctx switches 23914, use(%) 100, user(%) 99, kernel(%) 0
+[       OK ] PerfTest.perf_compare_isal (94499 ms)
+[ RUN      ] PerfTest.perf_compare_zlib
+Summary: orig 22883mb -> 7512mb ratio=0.328286 via zlib/8192 in 317511 msec. cores/threads = 1/8
+ctx switches 91042, use(%) 100, user(%) 99, kernel(%) 0
+[       OK ] PerfTest.perf_compare_zlib (328947 ms)
+[ RUN      ] PerfTest.perf_compare_qat
+Summary: orig 22883mb -> 8086mb ratio=0.353365 via zlib+qat/8192 in 73510 msec. cores/threads = 1/8
+ctx switches 5134435, use(%) 101, user(%) 46, kernel(%) 54
+[       OK ] PerfTest.perf_compare_qat (87013 ms)
+[----------] 5 tests from PerfTest (588613 ms total)
+
+[----------] Global test environment tear-down
+[==========] 5 tests from 1 test case ran. (588613 ms total)
+[  PASSED  ] 5 tests.
+Note: Google Test filter = PerfTest*
+[==========] Running 5 tests from 1 test case.
+[----------] Global test environment set-up.
+[----------] 5 tests from PerfTest
+[ RUN      ] PerfTest.perf_compare_dummy
+Summary: orig 22883mb -> 22883mb ratio=1 via none/16384 in 3744 msec. cores/threads = 1/8
+ctx switches 1120, use(%) 100, user(%) 99, kernel(%) 1
+[       OK ] PerfTest.perf_compare_dummy (14975 ms)
+[ RUN      ] PerfTest.perf_compare_snappy
+Summary: orig 22883mb -> 9731mb ratio=0.425288 via snappy/16384 in 49528 msec. cores/threads = 1/8
+ctx switches 14226, use(%) 100, user(%) 99, kernel(%) 0
+[       OK ] PerfTest.perf_compare_snappy (60543 ms)
+[ RUN      ] PerfTest.perf_compare_isal
+Summary: orig 22883mb -> 8862mb ratio=0.387299 via zlib+isal/16384 in 70870 msec. cores/threads = 1/8
+ctx switches 23448, use(%) 100, user(%) 99, kernel(%) 0
+[       OK ] PerfTest.perf_compare_isal (81876 ms)
+[ RUN      ] PerfTest.perf_compare_zlib
+Summary: orig 22883mb -> 7102mb ratio=0.3104 via zlib/16384 in 266156 msec. cores/threads = 1/8
+ctx switches 78150, use(%) 100, user(%) 99, kernel(%) 0
+[       OK ] PerfTest.perf_compare_zlib (277175 ms)
+[ RUN      ] PerfTest.perf_compare_qat
+Summary: orig 22883mb -> 7774mb ratio=0.339746 via zlib+qat/16384 in 40843 msec. cores/threads = 1/8
+ctx switches 2702031, use(%) 100, user(%) 50, kernel(%) 50
+[       OK ] PerfTest.perf_compare_qat (55008 ms)
+[----------] 5 tests from PerfTest (489577 ms total)
+
+[----------] Global test environment tear-down
+[==========] 5 tests from 1 test case ran. (489577 ms total)
+[  PASSED  ] 5 tests.
+Note: Google Test filter = PerfTest*
+[==========] Running 5 tests from 1 test case.
+[----------] Global test environment set-up.
+[----------] 5 tests from PerfTest
+[ RUN      ] PerfTest.perf_compare_dummy
+Summary: orig 22883mb -> 22883mb ratio=1 via none/65536 in 3358 msec. cores/threads = 1/8
+ctx switches 980, use(%) 100, user(%) 98, kernel(%) 1
+[       OK ] PerfTest.perf_compare_dummy (14201 ms)
+[ RUN      ] PerfTest.perf_compare_snappy
+Summary: orig 22883mb -> 9044mb ratio=0.395235 via snappy/65536 in 51855 msec. cores/threads = 1/8
+ctx switches 17726, use(%) 100, user(%) 93, kernel(%) 7
+[       OK ] PerfTest.perf_compare_snappy (62493 ms)
+[ RUN      ] PerfTest.perf_compare_isal
+Summary: orig 22883mb -> 8421mb ratio=0.36801 via zlib+isal/65536 in 63053 msec. cores/threads = 1/8
+ctx switches 18194, use(%) 100, user(%) 99, kernel(%) 0
+[       OK ] PerfTest.perf_compare_isal (73687 ms)
+[ RUN      ] PerfTest.perf_compare_zlib
+Summary: orig 22883mb -> 6675mb ratio=0.29174 via zlib/65536 in 275099 msec. cores/threads = 1/8
+ctx switches 79915, use(%) 100, user(%) 94, kernel(%) 5
+[       OK ] PerfTest.perf_compare_zlib (285723 ms)
+[ RUN      ] PerfTest.perf_compare_qat
+^[`Summary: orig 22883mb -> 7484mb ratio=0.327073 via zlib+qat/65536 in 20598 msec. cores/threads = 1/8
+ctx switches 1003506, use(%) 86, user(%) 50, kernel(%) 35
+[       OK ] PerfTest.perf_compare_qat (33006 ms)
+[----------] 5 tests from PerfTest (469111 ms total)
+
+[----------] Global test environment tear-down
+[==========] 5 tests from 1 test case ran. (469111 ms total)
+[  PASSED  ] 5 tests.
+Note: Google Test filter = PerfTest*
+[==========] Running 5 tests from 1 test case.
+[----------] Global test environment set-up.
+[----------] 5 tests from PerfTest
+[ RUN      ] PerfTest.perf_compare_dummy
+Summary: orig 22883mb -> 22883mb ratio=1 via none/262144 in 4057 msec. cores/threads = 1/8
+ctx switches 1222, use(%) 100, user(%) 98, kernel(%) 1
+[       OK ] PerfTest.perf_compare_dummy (14925 ms)
+[ RUN      ] PerfTest.perf_compare_snappy
+Summary: orig 22883mb -> 9043mb ratio=0.395201 via snappy/262144 in 53100 msec. cores/threads = 1/8
+ctx switches 1050579, use(%) 100, user(%) 94, kernel(%) 6
+[       OK ] PerfTest.perf_compare_snappy (63771 ms)
+[ RUN      ] PerfTest.perf_compare_isal
+Summary: orig 22883mb -> 8310mb ratio=0.363192 via zlib+isal/262144 in 60550 msec. cores/threads = 1/8
+ctx switches 17453, use(%) 100, user(%) 99, kernel(%) 0
+[       OK ] PerfTest.perf_compare_isal (71226 ms)
+[ RUN      ] PerfTest.perf_compare_zlib
+Summary: orig 22883mb -> 6564mb ratio=0.286855 via zlib/262144 in 276477 msec. cores/threads = 1/8
+ctx switches 80709, use(%) 100, user(%) 96, kernel(%) 3
+[       OK ] PerfTest.perf_compare_zlib (287140 ms)
+[ RUN      ] PerfTest.perf_compare_qat
+Summary: orig 22883mb -> 7420mb ratio=0.324286 via zlib+qat/262144 in 27129 msec. cores/threads = 1/8
+ctx switches 1043962, use(%) 82, user(%) 63, kernel(%) 18
+[       OK ] PerfTest.perf_compare_qat (39007 ms)
+[----------] 5 tests from PerfTest (476070 ms total)
+
+[----------] Global test environment tear-down
+[==========] 5 tests from 1 test case ran. (476070 ms total)
+[  PASSED  ] 5 tests.
+
+Note: Google Test filter = PerfTest*
+[==========] Running 5 tests from 1 test case.
+[----------] Global test environment set-up.
+[----------] 5 tests from PerfTest
+[ RUN      ] PerfTest.perf_compare_dummy
+Summary: orig 22883mb -> 22883mb ratio=1 via none/4194304 in 5006 msec. cores/threads = 1/8
+ctx switches 1475, use(%) 100, user(%) 98, kernel(%) 1
+[       OK ] PerfTest.perf_compare_dummy (15724 ms)
+[ RUN      ] PerfTest.perf_compare_snappy
+Summary: orig 22883mb -> 9043mb ratio=0.39519 via snappy/4194304 in 55758 msec. cores/threads = 1/8
+ctx switches 51061, use(%) 100, user(%) 94, kernel(%) 6
+[       OK ] PerfTest.perf_compare_snappy (66231 ms)
+[ RUN      ] PerfTest.perf_compare_isal
+Summary: orig 22883mb -> 8276mb ratio=0.361688 via zlib+isal/4194304 in 65353 msec. cores/threads = 1/8
+ctx switches 18893, use(%) 100, user(%) 99, kernel(%) 0
+[       OK ] PerfTest.perf_compare_isal (76054 ms)
+[ RUN      ] PerfTest.perf_compare_zlib
+Summary: orig 22883mb -> 6528mb ratio=0.285316 via zlib/4194304 in 276234 msec. cores/threads = 1/8
+ctx switches 79587, use(%) 100, user(%) 99, kernel(%) 0
+[       OK ] PerfTest.perf_compare_zlib (286727 ms)
+[ RUN      ] PerfTest.perf_compare_qat
+Summary: orig 22883mb -> 7399mb ratio=0.323362 via zlib+qat/4194304 in 35274 msec. cores/threads = 1/8
+ctx switches 1207321, use(%) 81, user(%) 71, kernel(%) 7
+[       OK ] PerfTest.perf_compare_qat (47007 ms)
+[----------] 5 tests from PerfTest (491743 ms total)
+
+[----------] Global test environment tear-down
+[==========] 5 tests from 1 test case ran. (491743 ms total)
+[  PASSED  ] 5 tests.
+

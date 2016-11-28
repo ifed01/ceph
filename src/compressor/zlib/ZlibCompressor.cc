@@ -36,7 +36,7 @@ _prefix(std::ostream* _dout)
 }
 // -----------------------------------------------------------------------------
 
-#define MAX_LEN (CEPH_PAGE_SIZE)
+#define MAX_LEN1 (CEPH_PAGE_SIZE)
 
 // default window size for Zlib 1.2.8, negated for raw deflate
 #define ZLIB_DEFAULT_WIN_SIZE -15
@@ -76,6 +76,7 @@ int ZlibCompressor::zlib_compress(const bufferlist &in, bufferlist &out)
     int flush = i != in.buffers().end() ? Z_NO_FLUSH : Z_FINISH;
 
     strm.next_in = c_in;
+    size_t MAX_LEN = len;
     do {
       bufferptr ptr = buffer::create_page_aligned(MAX_LEN);
       strm.next_out = (unsigned char*)ptr.c_str() + begin;
@@ -85,13 +86,15 @@ int ZlibCompressor::zlib_compress(const bufferlist &in, bufferlist &out)
         ptr.c_str()[0] = 0;
         begin = 0;
       }
-      ret = deflate(&strm, flush);    /* no bad return value */
-      if (ret == Z_STREAM_ERROR) {
-         dout(1) << "Compression error: compress return Z_STREAM_ERROR("
-              << ret << ")" << dendl;
-         deflateEnd(&strm);
-         return -1;
-      }
+      do {
+        ret = deflate(&strm, flush);    /* no bad return value */
+        if (ret == Z_STREAM_ERROR) {
+           dout(1) << "Compression error: compress return Z_STREAM_ERROR("
+                << ret << ")" << dendl;
+           deflateEnd(&strm);
+           return -1;
+        }
+      } while(ret == Z_OK && strm.avail_out != 0);
       have = MAX_LEN - strm.avail_out;
       out.append(ptr, 0, have);
     } while (strm.avail_out == 0);
@@ -131,6 +134,7 @@ int ZlibCompressor::isal_compress(const bufferlist &in, bufferlist &out)
     strm.flush = FINISH_FLUSH;
 
     strm.next_in = c_in;
+    size_t MAX_LEN = len;
 
     do {
       bufferptr ptr = buffer::create_page_aligned(MAX_LEN);
@@ -196,6 +200,7 @@ int ZlibCompressor::decompress(bufferlist::iterator &p, size_t compressed_size, 
   }
 
   size_t remaining = MIN(p.get_remaining(), compressed_size);
+  size_t MAX_LEN = MAX_LEN1;
 
   while(remaining) {
     long unsigned int len = p.get_ptr_and_advance(remaining, &c_in);
