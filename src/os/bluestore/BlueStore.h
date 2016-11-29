@@ -2171,6 +2171,9 @@ public:
     perf_tracker.update_from_perfcounters(*logger);
     return perf_tracker.get_cur_stats();
   }
+  const PerfCounters* get_perf_counters() const {
+    return logger;
+  }
 
   int queue_transactions(
     Sequencer *osr,
