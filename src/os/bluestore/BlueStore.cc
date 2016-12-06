@@ -2393,7 +2393,29 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
     assert(r >= 0);
     on = new Onode(this, oid, key);
     on->exists = true;
+    
     bufferptr::iterator p = v.front().begin();
+    if (g_conf->bluestore_minimize_db_use){
+      on->onode.short_description.decode(p);
+
+      // read it
+      IOContext ioc(NULL);  // FIXME?
+      v.clear();
+      auto& sd = on->onode.short_description;
+      int r = map_extents(
+	sd.get_allocations(),
+	0, sd.get_ondisk_length(),
+	[&](uint64_t offset, uint64_t length) {
+	  bufferlist t;
+	  int r = store->bdev->read(offset, length, &t, &ioc, false);
+	  if (r < 0)
+	    return r;
+	  v.claim_append(t);
+	  return 0;
+        });
+      assert(r>=0);
+      p = v.front().begin();
+    }
     on->onode.decode(p);
 
     // initialize extent_map
@@ -6411,6 +6433,51 @@ void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
 	     << blob_part << " bytes spanning blobs + "
 	     << extent_part << " bytes inline extents)"
 	     << dendl;
+    if (g_conf->bluestore_minimize_db_use) {
+
+      int count = 0;
+      uint64_t final_length = ROUND_UP_TO(bl.length(), min_alloc_size);
+      AllocExtentVector extents = AllocExtentVector(final_length / min_alloc_size);
+
+      int r = alloc->reserve(final_length);
+      if (r < 0) {
+	derr << __func__ << " failed to reserve 0x" << std::hex << final_length << std::dec
+	  << dendl;
+	assert(false); //FIXME:
+      }
+      r = alloc->alloc_extents(final_length, min_alloc_size, max_alloc_size,
+	0, &extents, &count);
+      assert(r == 0);
+      assert(count > 0);
+      txc->statfs_delta.allocated() += final_length;
+
+      for (int i = 0; i < count; i++) {
+	txc->allocated.insert(extents[i].offset, extents[i].length);
+      }
+      uint64_t offs = 0;
+      _pad_zeros(&bl, &offs, block_size);
+      // queue io
+      map_extents_bl(
+	extents,
+	offs,
+	bl,
+	[&](uint64_t offset, uint64_t length, bufferlist& t) {
+	  bdev->aio_write(offset, t, &txc->ioc, false);
+      });
+      o->onode.short_description.swap_allocations(extents); //extents will contain previous extents on return
+      for (auto e : extents) {
+	dout(20) << __func__ << "  release " << e << dendl;
+	txc->released.insert(e.offset, e.length);
+	txc->statfs_delta.allocated() -= e.length;
+      }
+
+      bound = 0;
+      denc(o->onode.short_description, bound);
+      bl.clear();
+      auto p = bl.get_contiguous_appender(bound, true);
+      denc(o->onode.short_description, p);
+      
+    }
     t->set(PREFIX_OBJ, o->key, bl);
 
     std::lock_guard<std::mutex> l(o->flush_lock);

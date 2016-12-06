@@ -78,6 +78,40 @@ public:
   uint64_t end() const {
     return offset + length;
   }
+  DENC(AllocExtent, v, p) {
+    denc(v.offset, p);
+    denc(v.length, p);
+  }
+};
+WRITE_CLASS_DENC(AllocExtent)
+
+template<>
+struct denc_traits<AllocExtentVector> {
+  enum { supported = true };
+  enum { bounded = false };
+  enum { featured = false };
+  static void bound_encode(const AllocExtentVector& v, size_t& p) {
+    p += sizeof(uint32_t);
+    size_t per = 0;
+    denc(*(AllocExtent*)nullptr, per);
+    p += per * v.size();
+  }
+  static void encode(const AllocExtentVector& v,
+	     bufferlist::contiguous_appender& p) {
+    denc_varint(v.size(), p);
+    for (auto& i : v) {
+      denc(i, p);
+    }
+  }
+  static void decode(AllocExtentVector& v, bufferptr::iterator& p) {
+    unsigned num;
+    denc_varint(num, p);
+    v.clear();
+    v.resize(num);
+    for (unsigned i=0; i<num; ++i) {
+      denc(v[i], p);
+    }
+  }
 };
 
 class ExtentList {
@@ -683,6 +717,32 @@ WRITE_CLASS_DENC(bluestore_shared_blob_t)
 
 ostream& operator<<(ostream& out, const bluestore_shared_blob_t& o);
 
+/// onode: per-object metadata
+class bluestore_short_onode_t {
+  AllocExtentVector extents;
+public:
+  void swap_allocations(AllocExtentVector& new_extents) {
+    extents.swap(new_extents);
+  }
+  const AllocExtentVector& get_allocations() const {
+    return extents;
+  }
+  uint32_t get_ondisk_length() const {
+    uint32_t len = 0;
+    for (auto &p : extents) {
+      len += p.length;
+    }
+    return len;
+  }
+
+  DENC(bluestore_short_onode_t, v, p) {
+    DENC_START(1, 1, p);
+    denc(v.extents, p);
+    DENC_FINISH(p);
+  }
+};
+WRITE_CLASS_DENC(bluestore_short_onode_t)
+
 struct bluestore_onode_t {
   uint64_t nid = 0;                    ///< numeric id (locally unique)
   uint64_t size = 0;                   ///< object size
@@ -691,6 +751,7 @@ struct bluestore_onode_t {
   enum {
     FLAG_OMAP = 1,
   };
+  bluestore_short_onode_t short_description;
 
   struct shard_info {
     uint32_t offset = 0;  ///< logical offset for start of shard
