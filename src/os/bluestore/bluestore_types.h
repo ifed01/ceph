@@ -268,6 +268,61 @@ static inline bool operator!=(const bluestore_extent_ref_map_t& l,
   return !(l == r);
 }
 
+//generic method to apply a function a specific extents subset from the specified extents container
+template <class C>
+int map_extents(const C& extents_container,
+  uint64_t x_off, uint64_t x_len,
+  std::function<int(uint64_t, uint64_t)> f) {
+  auto p = extents_container.begin();
+  assert(p != extents_container.end());
+  while (x_off >= p->length) {
+    x_off -= p->length;
+    ++p;
+    assert(p != extents_container.end());
+  }
+  while (x_len > 0) {
+    assert(p != extents_container.end());
+    uint64_t l = MIN(p->length - x_off, x_len);
+    int r = f(p->offset + x_off, l);
+    if (r < 0)
+      return r;
+    x_off = 0;
+    x_len -= l;
+    ++p;
+  }
+  return 0;
+}
+
+
+//generic method to apply a function on input buffer list using extents container
+template <class C>
+void map_extents_bl(
+  const C& extents_container,
+  uint64_t x_off,
+  bufferlist& bl,
+  std::function<void(uint64_t, uint64_t, bufferlist&)> f) {
+
+  auto p = extents_container.begin();
+  assert(p != extents_container.end());
+  while (x_off >= p->length) {
+    x_off -= p->length;
+    ++p;
+    assert(p != extents_container.end());
+  }
+  bufferlist::iterator it = bl.begin();
+  uint64_t x_len = bl.length();
+  while (x_len > 0) {
+    assert(p != extents_container.end());
+    uint64_t l = MIN(p->length - x_off, x_len);
+    bufferlist t;
+    it.copy(l, t);
+    f(p->offset + x_off, l, t);
+    x_off = 0;
+    x_len -= l;
+    ++p;
+  }
+}
+
 /// blob: a piece of data on disk
 struct bluestore_blob_t {
   enum {
@@ -509,47 +564,13 @@ struct bluestore_blob_t {
 
   int map(uint64_t x_off, uint64_t x_len,
 	   std::function<int(uint64_t,uint64_t)> f) const {
-    auto p = extents.begin();
-    assert(p != extents.end());
-    while (x_off >= p->length) {
-      x_off -= p->length;
-      ++p;
-      assert(p != extents.end());
-    }
-    while (x_len > 0) {
-      assert(p != extents.end());
-      uint64_t l = MIN(p->length - x_off, x_len);
-      int r = f(p->offset + x_off, l);
-      if (r < 0)
-        return r;
-      x_off = 0;
-      x_len -= l;
-      ++p;
-    }
-    return 0;
+    return map_extents(extents, x_off, x_len, f);
   }
+
   void map_bl(uint64_t x_off,
 	      bufferlist& bl,
 	      std::function<void(uint64_t,uint64_t,bufferlist&)> f) const {
-    auto p = extents.begin();
-    assert(p != extents.end());
-    while (x_off >= p->length) {
-      x_off -= p->length;
-      ++p;
-      assert(p != extents.end());
-    }
-    bufferlist::iterator it = bl.begin();
-    uint64_t x_len = bl.length();
-    while (x_len > 0) {
-      assert(p != extents.end());
-      uint64_t l = MIN(p->length - x_off, x_len);
-      bufferlist t;
-      it.copy(l, t);
-      f(p->offset + x_off, l, t);
-      x_off = 0;
-      x_len -= l;
-      ++p;
-    }
+    map_extents_bl(extents, x_off, bl, f);
   }
 
   uint32_t get_ondisk_length() const {
@@ -662,13 +683,11 @@ WRITE_CLASS_DENC(bluestore_shared_blob_t)
 
 ostream& operator<<(ostream& out, const bluestore_shared_blob_t& o);
 
-/// onode: per-object metadata
 struct bluestore_onode_t {
   uint64_t nid = 0;                    ///< numeric id (locally unique)
   uint64_t size = 0;                   ///< object size
   map<string, bufferptr> attrs;        ///< attrs
   uint8_t flags = 0;
-
   enum {
     FLAG_OMAP = 1,
   };
