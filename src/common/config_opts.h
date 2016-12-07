@@ -999,6 +999,9 @@ OPTION(bluestore_bluefs_reclaim_ratio, OPT_FLOAT, .20) // how much to reclaim at
 OPTION(bluestore_block_path, OPT_STR, "")
 OPTION(bluestore_block_size, OPT_U64, 10 * 1024*1024*1024)  // 10gb for testing
 OPTION(bluestore_block_create, OPT_BOOL, true)
+OPTION(bluestore_block_index_path, OPT_STR, "")
+OPTION(bluestore_block_index_size, OPT_U64, 512 * 1024*1024)  // 512mb for testing
+OPTION(bluestore_block_index_create, OPT_BOOL, true)
 OPTION(bluestore_block_db_path, OPT_STR, "")
 OPTION(bluestore_block_db_size, OPT_U64, 0)   // rocksdb ssts (hot/warm)
 OPTION(bluestore_block_db_create, OPT_BOOL, false)

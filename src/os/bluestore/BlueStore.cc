@@ -2008,7 +2008,12 @@ void BlueStore::ExtentMap::fault_range(
 	     << std::dec << " for " << onode->oid << dendl;
 	assert(r >= 0);
       }
-      decode_some(v);
+      if (g_conf->bluestore_minimize_db_use) {
+        assert(false); //should never happen - FIXME
+      } else {
+        decode_some(v);
+      }
+    
       p->loaded = true;
       dout(20) << __func__ << " open shard 0x" << std::hex << p->offset
 	       << std::dec << " (" << v.length() << " bytes)" << dendl;
@@ -2407,7 +2412,7 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
 	0, sd.get_ondisk_length(),
 	[&](uint64_t offset, uint64_t length) {
 	  bufferlist t;
-	  int r = store->bdev->read(offset, length, &t, &ioc, false);
+	  int r = store->bdev_index->read(offset, length, &t, &ioc, false);
 	  if (r < 0)
 	    return r;
 	  v.claim_append(t);
@@ -2498,8 +2503,11 @@ BlueStore::BlueStore(CephContext *cct, const string& path)
     bluefs_shared_bdev(0),
     db(NULL),
     bdev(NULL),
+    bdev_index(NULL),
     fm(NULL),
+    fm_index(NULL),
     alloc(NULL),
+    alloc_index(NULL),
     path_fd(-1),
     fsid_fd(-1),
     mounted(false),
@@ -2901,8 +2909,10 @@ void BlueStore::_set_alloc_sizes(void)
     min_alloc_size = g_conf->bluestore_min_alloc_size;
   } else {
     assert(bdev);
+    assert(bdev_index);
     if (bdev->is_rotational()) {
       min_alloc_size = g_conf->bluestore_min_alloc_size_hdd;
+      assert(bdev_index->is_rotational()); //FIXME: temporary
     } else {
       min_alloc_size = g_conf->bluestore_min_alloc_size_ssd;
     }
@@ -2922,16 +2932,29 @@ int BlueStore::_open_bdev(bool create)
 {
   bluestore_bdev_label_t label;
   assert(bdev == NULL);
+  assert(bdev_index == NULL);
   string p = path + "/block";
   bdev = BlockDevice::create(p, aio_cb, static_cast<void*>(this));
   int r = bdev->open(p);
   if (r < 0)
     goto fail;
-
+  
   if (bdev->supported_bdev_label()) {
     r = _check_or_set_bdev_label(p, bdev->get_size(), "main", create);
     if (r < 0)
       goto fail_close;
+  }
+
+  p += ".index";
+  bdev_index = BlockDevice::create(p, aio_cb, static_cast<void*>(this));
+  r = bdev_index->open(p);
+  if (r < 0)
+    goto fail;
+
+  if (bdev_index->supported_bdev_label()) {
+    r = _check_or_set_bdev_label(p, bdev_index->get_size(), "main", create);
+    if (r < 0)
+      goto fail_close_index;
   }
 
   // initialize global block parameters
@@ -2943,11 +2966,15 @@ int BlueStore::_open_bdev(bool create)
   _set_alloc_sizes();
   return 0;
 
- fail_close:
+fail_close_index:
+  bdev_index->close();
+fail_close:
   bdev->close();
  fail:
   delete bdev;
   bdev = NULL;
+  delete bdev_index;
+  bdev_index = NULL;
   return r;
 }
 
@@ -2957,18 +2984,28 @@ void BlueStore::_close_bdev()
   bdev->close();
   delete bdev;
   bdev = NULL;
+
+  assert(bdev_index);
+  bdev_index->close();
+  delete bdev_index;
+  bdev_index = NULL;
 }
 
-int BlueStore::_open_fm(bool create)
+int BlueStore::_open_fm(
+  bool create,
+  const string& freelist_type,
+  FreelistManager*& fm,
+  BlockDevice* bdev,
+  const interval_set<uint64_t>* bluefs_extents)
 {
   assert(fm == NULL);
-  fm = FreelistManager::create(freelist_type, db, PREFIX_ALLOC);
+  fm = FreelistManager::create(freelist_type, db, freelist_type == "bitmap_index" ? "I" : PREFIX_ALLOC); //FIXME
 
   if (create) {
     // initialize freespace
     dout(20) << __func__ << " initializing freespace" << dendl;
     KeyValueDB::Transaction t = db->get_transaction();
-    {
+    if ( freelist_type != "bitmap_index") { //FIXME: ugly hack
       bufferlist bl;
       bl.append(freelist_type);
       t->set(PREFIX_SUPER, "freelist_type", bl);
@@ -2976,16 +3013,16 @@ int BlueStore::_open_fm(bool create)
     fm->create(bdev->get_size(), t);
 
     uint64_t reserved = 0;
-    if (g_conf->bluestore_bluefs) {
-      assert(bluefs_extents.num_intervals() == 1);
-      interval_set<uint64_t>::iterator p = bluefs_extents.begin();
+    if (g_conf->bluestore_bluefs && bluefs_extents) {
+      assert(bluefs_extents->num_intervals() == 1);
+      interval_set<uint64_t>::const_iterator p = bluefs_extents->begin();
       reserved = p.get_start() + p.get_len();
       dout(20) << __func__ << " reserved 0x" << std::hex << reserved << std::dec
 	       << " for bluefs" << dendl;
       bufferlist bl;
-      ::encode(bluefs_extents, bl);
+      ::encode(*bluefs_extents, bl);
       t->set(PREFIX_SUPER, "bluefs_extents", bl);
-      dout(20) << __func__ << " bluefs_extents 0x" << std::hex << bluefs_extents
+      dout(20) << __func__ << " bluefs_extents 0x" << std::hex << *bluefs_extents
 	       << std::dec << dendl;
     } else {
       reserved = BLUEFS_START;
@@ -3049,7 +3086,7 @@ int BlueStore::_open_fm(bool create)
   return 0;
 }
 
-void BlueStore::_close_fm()
+void BlueStore::_close_fm(FreelistManager*& fm)
 {
   dout(10) << __func__ << dendl;
   assert(fm);
@@ -3058,7 +3095,7 @@ void BlueStore::_close_fm()
   fm = NULL;
 }
 
-int BlueStore::_open_alloc()
+int BlueStore::_open_alloc(Allocator *& alloc, FreelistManager* fm, BlockDevice* bdev, const interval_set<uint64_t>* bluefs_extents)
 {
   assert(alloc == NULL);
   assert(bdev->get_size());
@@ -3079,17 +3116,18 @@ int BlueStore::_open_alloc()
 	   << " in " << num << " extents"
 	   << dendl;
 
-  // also mark bluefs space as allocated
-  for (auto e = bluefs_extents.begin(); e != bluefs_extents.end(); ++e) {
-    alloc->init_rm_free(e.get_start(), e.get_len());
+  if (bluefs_extents) {
+    // also mark bluefs space as allocated
+    for (auto e = bluefs_extents->begin(); e != bluefs_extents->end(); ++e) {
+      alloc->init_rm_free(e.get_start(), e.get_len());
+    }
+    dout(10) << __func__ << " marked bluefs_extents 0x" << std::hex
+	     << *bluefs_extents << std::dec << " as allocated" << dendl;
   }
-  dout(10) << __func__ << " marked bluefs_extents 0x" << std::hex
-	   << bluefs_extents << std::dec << " as allocated" << dendl;
-
   return 0;
 }
 
-void BlueStore::_close_alloc()
+void BlueStore::_close_alloc(Allocator *& alloc)
 {
   assert(alloc);
   alloc->shutdown();
@@ -3865,6 +3903,13 @@ int BlueStore::mkfs()
 				   g_conf->bluestore_block_create);
   if (r < 0)
     goto out_close_fsid;
+
+  r = _setup_block_symlink_or_file("block.index", g_conf->bluestore_block_index_path,
+		   g_conf->bluestore_block_index_size,
+		   g_conf->bluestore_block_index_create);
+  if (r < 0)
+    goto out_close_fsid;
+
   if (g_conf->bluestore_bluefs) {
     r = _setup_block_symlink_or_file("block.wal", g_conf->bluestore_block_wal_path,
 	g_conf->bluestore_block_wal_size,
@@ -3886,35 +3931,43 @@ int BlueStore::mkfs()
   if (r < 0)
     goto out_close_bdev;
 
-  r = _open_fm(true);
+  r = _open_fm(true, freelist_type, fm, bdev, &bluefs_extents);
   if (r < 0)
     goto out_close_db;
 
-  _save_min_min_alloc_size(min_alloc_size);
-
-  r = _open_alloc();
+  r = _open_fm(true,  "bitmap_index", fm_index, bdev_index, nullptr);
   if (r < 0)
     goto out_close_fm;
 
+  _save_min_min_alloc_size(min_alloc_size);
+
+  r = _open_alloc(alloc, fm, bdev, &bluefs_extents);
+  if (r < 0)
+    goto out_close_fm_index;
+
+  r = _open_alloc(alloc_index, fm_index, bdev_index, nullptr);
+  if (r < 0)
+    goto out_close_alloc;
+
   r = write_meta("kv_backend", g_conf->bluestore_kvbackend);
   if (r < 0)
-    goto out_close_alloc;
+    goto out_close_alloc_index;
   r = write_meta("bluefs", stringify((int)g_conf->bluestore_bluefs));
   if (r < 0)
-    goto out_close_alloc;
+    goto out_close_alloc_index;
 
   if (fsid != old_fsid) {
     r = _write_fsid();
     if (r < 0) {
       derr << __func__ << " error writing fsid: " << cpp_strerror(r) << dendl;
-      goto out_close_alloc;
+      goto out_close_alloc_index;
     }
   }
 
   // indicate success by writing the 'mkfs_done' file
   r = write_meta("mkfs_done", "yes");
   if (r < 0)
-    goto out_close_alloc;
+    goto out_close_alloc_index;
   dout(10) << __func__ << " success" << dendl;
 
   if (bluefs &&
@@ -3946,10 +3999,14 @@ int BlueStore::mkfs()
     dout(10) << __func__ << " done preconditioning" << dendl;
   }
 
+ out_close_alloc_index:
+  _close_alloc(alloc_index);
  out_close_alloc:
-  _close_alloc();
+  _close_alloc(alloc);
+ out_close_fm_index:
+  _close_fm(fm_index);
  out_close_fm:
-  _close_fm();
+  _close_fm(fm);
  out_close_db:
   _close_db();
  out_close_bdev:
@@ -4039,17 +4096,25 @@ int BlueStore::mount()
   if (r < 0)
     goto out_db;
 
-  r = _open_fm(false);
+  r = _open_fm(false, freelist_type, fm, bdev, &bluefs_extents);
   if (r < 0)
     goto out_db;
 
-  r = _open_alloc();
+  r = _open_fm(false, "bitmap_index", fm_index, bdev_index, nullptr);
   if (r < 0)
     goto out_fm;
 
-  r = _open_collections();
+  r = _open_alloc(alloc, fm, bdev, &bluefs_extents);
+  if (r < 0)
+    goto out_fm_index;
+
+  r = _open_alloc(alloc_index, fm_index, bdev_index, nullptr);
   if (r < 0)
     goto out_alloc;
+
+  r = _open_collections();
+  if (r < 0)
+    goto out_alloc_index;
 
   r = _reload_logger();
   if (r < 0)
@@ -4089,10 +4154,14 @@ int BlueStore::mount()
   }
  out_coll:
   coll_map.clear();
+ out_alloc_index:
+  _close_alloc(alloc_index);
  out_alloc:
-  _close_alloc();
+  _close_alloc(alloc);
+ out_fm_index:
+  _close_fm(fm_index);
  out_fm:
-  _close_fm();
+  _close_fm(fm);
  out_db:
   _close_db();
  out_bdev:
@@ -4130,8 +4199,10 @@ int BlueStore::umount()
   dout(20) << __func__ << " closing" << dendl;
 
   mounted = false;
-  _close_alloc();
-  _close_fm();
+  _close_alloc(alloc_index);
+  _close_alloc(alloc);
+  _close_fm(fm_index);
+  _close_fm(fm);
   _close_db();
   _close_bdev();
   _close_fsid();
@@ -4204,6 +4275,7 @@ int BlueStore::_fsck_check_extents(
 
 int BlueStore::fsck(bool deep)
 {
+  return 0; //FIXME:
   dout(1) << __func__ << (deep ? " (deep)" : " (shallow)") << " start" << dendl;
   int errors = 0;
   set<uint64_t> used_nids;
@@ -4257,17 +4329,25 @@ int BlueStore::fsck(bool deep)
   if (r < 0)
     goto out_db;
 
-  r = _open_fm(false);
+  r = _open_fm(false, freelist_type, fm, bdev, &bluefs_extents);
   if (r < 0)
     goto out_db;
 
-  r = _open_alloc();
+  r = _open_fm(false, "bitmap_index", fm_index, bdev_index, nullptr);
   if (r < 0)
     goto out_fm;
 
-  r = _open_collections(&errors);
+  r = _open_alloc(alloc, fm, bdev, &bluefs_extents);
+  if (r < 0)
+    goto out_fm_index;
+
+  r = _open_alloc(alloc_index, fm_index, bdev_index, nullptr);
   if (r < 0)
     goto out_alloc;
+
+  r = _open_collections(&errors);
+  if (r < 0)
+    goto out_alloc_index;
 
   used_blocks.resize(bdev->get_size() / block_size);
   apply(
@@ -4289,7 +4369,7 @@ int BlueStore::fsck(bool deep)
     r = bluefs->fsck();
     if (r < 0) {
       coll_map.clear();
-      goto out_alloc;
+      goto out_alloc_index;
     }
     if (r > 0)
       errors += r;
@@ -4655,10 +4735,14 @@ int BlueStore::fsck(bool deep)
 
  out_scan:
   coll_map.clear();
+ out_alloc_index:
+  _close_alloc(alloc_index);
  out_alloc:
-  _close_alloc();
+  _close_alloc(alloc);
+ out_fm_index:
+  _close_fm(fm_index);
  out_fm:
-  _close_fm();
+  _close_fm(fm);
  out_db:
   it.reset();  // before db is closed
   _close_db();
@@ -4694,6 +4778,7 @@ void BlueStore::_sync()
 
   // flush aios in flight
   bdev->flush();
+  bdev_index->flush();
 
   std::unique_lock<std::mutex> l(kv_lock);
   while (!kv_committing.empty() ||
@@ -6228,22 +6313,29 @@ void BlueStore::_txc_state_proc(TransContext *txc)
     switch (txc->state) {
     case TransContext::STATE_PREPARE:
       txc->log_state_latency(logger, l_bluestore_state_prepare_lat);
-      if (txc->ioc.has_pending_aios()) {
-	txc->state = TransContext::STATE_AIO_WAIT;
-	txc->had_ios = true;
+      if (txc->ioc.has_pending_aios() || txc->ioc_index.has_pending_aios()) {
+        if (txc->ioc.has_pending_aios() && txc->ioc_index.has_pending_aios()) {
+	  txc->aio_cnt = 3; //2 (submitted)+ 1 to indicate "had_io" when they're completed
+        } else {
+	  txc->aio_cnt = 2; //1 (submitted)+ 1 to indicate "had_io" when they're completed
+        }
 	_txc_aio_submit(txc);
 	return;
+      } else {
+        ++txc->aio_cnt; //just to have 0 in aio_cnt after the fall-thru below.
       }
       // ** fall-thru **
 
     case TransContext::STATE_AIO_WAIT:
-      txc->log_state_latency(logger, l_bluestore_state_aio_wait_lat);
-      _txc_finish_io(txc);  // may trigger blocked txc's too
+      if (--txc->aio_cnt == 1) {
+        txc->log_state_latency(logger, l_bluestore_state_aio_wait_lat);
+        _txc_finish_io(txc);  // may trigger blocked txc's too
+      }
       return;
 
     case TransContext::STATE_IO_DONE:
       //assert(txc->osr->qlock.is_locked());  // see _txc_finish_io
-      if (txc->had_ios) {
+      if (txc->aio_cnt.load() == 1) {
 	++txc->osr->txc_with_unstable_io;
       }
       txc->log_state_latency(logger, l_bluestore_state_io_done_lat);
@@ -6313,7 +6405,7 @@ void BlueStore::_txc_state_proc(TransContext *txc)
 
     case TransContext::STATE_WAL_APPLYING:
       txc->log_state_latency(logger, l_bluestore_state_wal_applying_lat);
-      if (txc->ioc.has_pending_aios()) {
+      if (txc->ioc.has_pending_aios()) { //FIXME:
 	txc->state = TransContext::STATE_WAL_AIO_WAIT;
 	_txc_aio_submit(txc);
 	return;
@@ -6439,20 +6531,20 @@ void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
       uint64_t final_length = ROUND_UP_TO(bl.length(), min_alloc_size);
       AllocExtentVector extents = AllocExtentVector(final_length / min_alloc_size);
 
-      int r = alloc->reserve(final_length);
+      int r = alloc_index->reserve(final_length);
       if (r < 0) {
 	derr << __func__ << " failed to reserve 0x" << std::hex << final_length << std::dec
 	  << dendl;
 	assert(false); //FIXME:
       }
-      r = alloc->alloc_extents(final_length, min_alloc_size, max_alloc_size,
+      r = alloc_index->alloc_extents(final_length, min_alloc_size, max_alloc_size,
 	0, &extents, &count);
       assert(r == 0);
       assert(count > 0);
-      txc->statfs_delta.allocated() += final_length;
+      //txc->statfs_delta.allocated() += final_length;
 
       for (int i = 0; i < count; i++) {
-	txc->allocated.insert(extents[i].offset, extents[i].length);
+	txc->allocated_index.insert(extents[i].offset, extents[i].length);
       }
       uint64_t offs = 0;
       _pad_zeros(&bl, &offs, block_size);
@@ -6462,13 +6554,13 @@ void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
 	offs,
 	bl,
 	[&](uint64_t offset, uint64_t length, bufferlist& t) {
-	  bdev->aio_write(offset, t, &txc->ioc, false);
+	  bdev_index->aio_write(offset, t, &txc->ioc_index, false);
       });
       o->onode.short_description.swap_allocations(extents); //extents will contain previous extents on return
       for (auto e : extents) {
 	dout(20) << __func__ << "  release " << e << dendl;
-	txc->released.insert(e.offset, e.length);
-	txc->statfs_delta.allocated() -= e.length;
+	txc->released_index.insert(e.offset, e.length);
+	//txc->statfs_delta.allocated() -= e.length;
       }
 
       bound = 0;
@@ -6615,6 +6707,8 @@ void BlueStore::_txc_finalize_kv(TransContext *txc, KeyValueDB::Transaction t)
   dout(20) << __func__ << " txc " << txc << std::hex
 	   << " allocated 0x" << txc->allocated
 	   << " released 0x" << txc->released
+	   << " allocated_index 0x" << txc->allocated_index
+	   << " released_index 0x" << txc->released_index
 	   << std::dec << dendl;
 
   // We have to handle the case where we allocate *and* deallocate the
@@ -6655,6 +6749,41 @@ void BlueStore::_txc_finalize_kv(TransContext *txc, KeyValueDB::Transaction t)
     fm->release(p.get_start(), p.get_len(), t);
   }
 
+  tmp_allocated.clear();
+  tmp_released.clear();
+  pallocated = &txc->allocated_index;
+  preleased = &txc->released_index;
+  if (!txc->allocated_index.empty() && !txc->released_index.empty()) {
+    interval_set<uint64_t> overlap;
+    overlap.intersection_of(txc->allocated_index, txc->released_index);
+    if (!overlap.empty()) {
+      tmp_allocated = txc->allocated_index;
+      tmp_allocated.subtract(overlap);
+      tmp_released = txc->released_index;
+      tmp_released.subtract(overlap);
+      dout(20) << __func__ << "  overlap 0x" << std::hex << overlap
+	<< ", new allocated 0x" << tmp_allocated
+	<< " released 0x" << tmp_released << std::dec
+	<< dendl;
+      pallocated = &tmp_allocated;
+      preleased = &tmp_released;
+    }
+  }
+
+  // update freelist with non-overlap sets
+  for (interval_set<uint64_t>::iterator p = pallocated->begin();
+    p != pallocated->end();
+    ++p) {
+    fm_index->allocate(p.get_start(), p.get_len(), t);
+  }
+  for (interval_set<uint64_t>::iterator p = preleased->begin();
+    p != preleased->end();
+    ++p) {
+    dout(20) << __func__ << " release 0x" << std::hex << p.get_start()
+      << "~" << p.get_len() << std::dec << dendl;
+    fm_index->release(p.get_start(), p.get_len(), t);
+  }
+
   _txc_update_store_statfs(txc);
 }
 
@@ -6668,9 +6797,19 @@ void BlueStore::_txc_release_alloc(TransContext *txc)
       alloc->release(p.get_start(), p.get_len());
     }
   }
+  if (!g_conf->bluestore_debug_no_reuse_blocks) {
+    for (interval_set<uint64_t>::iterator p = txc->released_index.begin();
+      p != txc->released_index.end();
+      ++p) {
+      alloc_index->release(p.get_start(), p.get_len());
+    }
+  }
 
   txc->allocated.clear();
   txc->released.clear();
+
+  txc->allocated_index.clear();
+  txc->released_index.clear();
 }
 
 void BlueStore::_kv_sync_thread()
@@ -6703,9 +6842,11 @@ void BlueStore::_kv_sync_thread()
       dout(30) << __func__ << " wal_cleaning txc " << wal_cleaning << dendl;
 
       alloc->commit_start();
+      alloc_index->commit_start();
 
       // flush/barrier on block device
       bdev->flush();
+      bdev_index->flush();
 
       // we will use one final transaction to force a sync
       KeyValueDB::Transaction synct = db->get_transaction();
@@ -6744,7 +6885,7 @@ void BlueStore::_kv_sync_thread()
       }
       for (auto txc : kv_committing) {
 	_txc_release_alloc(txc);
-	if (txc->had_ios) {
+	if (txc->aio_cnt.load() == 1) {
 	  --txc->osr->txc_with_unstable_io;
 	}
       }
@@ -6808,6 +6949,7 @@ void BlueStore::_kv_sync_thread()
 	wal_cleaning.pop_front();
       }
 
+      alloc_index->commit_finish();
       alloc->commit_finish();
 
       // this is as good a place as any ...
@@ -7023,7 +7165,12 @@ int BlueStore::queue_transactions(
 void BlueStore::_txc_aio_submit(TransContext *txc)
 {
   dout(10) << __func__ << " txc " << txc << dendl;
-  bdev->aio_submit(&txc->ioc);
+  if (txc->ioc.has_pending_aios()) {
+    bdev->aio_submit(&txc->ioc);
+  }
+  if (txc->ioc_index.has_pending_aios()) {
+    bdev_index->aio_submit(&txc->ioc_index);
+  }
 }
 
 void BlueStore::_txc_add_transaction(TransContext *txc, Transaction *t)

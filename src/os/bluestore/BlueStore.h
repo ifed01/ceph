@@ -1228,6 +1228,7 @@ public:
     bluestore_wal_transaction_t *wal_txn; ///< wal transaction (if any)
 
     interval_set<uint64_t> allocated, released;
+    interval_set<uint64_t> allocated_index, released_index;
     struct volatile_statfs{
       enum {
         STATFS_ALLOCATED = 0,
@@ -1280,8 +1281,9 @@ public:
     } statfs_delta;
 
 
-    IOContext ioc;
-    bool had_ios = false;  ///< true if we submitted IOs before our kv txn
+    IOContext ioc, ioc_index;
+    std::atomic_int aio_cnt = {0};     ///< how many aio are runninng + 1 to track we had such ios (had_ios replacement)
+
 
     CollectionRef first_collection;  ///< first referenced collection
 
@@ -1302,6 +1304,7 @@ public:
 	onreadable_sync(NULL),
 	wal_txn(NULL),
 	ioc(this),
+	ioc_index(this),
 	start(ceph_clock_now(g_ceph_context)) {
         last_stamp = start;
     }
@@ -1488,10 +1491,10 @@ private:
   BlueFS *bluefs;
   unsigned bluefs_shared_bdev;  ///< which bluefs bdev we are sharing
   KeyValueDB *db;
-  BlockDevice *bdev;
+  BlockDevice *bdev, *bdev_index;
   std::string freelist_type;
-  FreelistManager *fm;
-  Allocator *alloc;
+  FreelistManager *fm, *fm_index;
+  Allocator *alloc, *alloc_index;
   uuid_d fsid;
   int path_fd;  ///< open handle to $path
   int fsid_fd;  ///< open handle (locked) to $path/fsid
@@ -1614,10 +1617,10 @@ private:
   void _close_bdev();
   int _open_db(bool create);
   void _close_db();
-  int _open_fm(bool create);
-  void _close_fm();
-  int _open_alloc();
-  void _close_alloc();
+  int _open_fm(bool create, const string& freelist_type, FreelistManager*& fm, BlockDevice* bdev, const interval_set<uint64_t>* bluefs_extents);
+  void _close_fm(FreelistManager*& fm);
+  int _open_alloc(Allocator *& alloc, FreelistManager* fm, BlockDevice* bdev, const interval_set<uint64_t>* bluefs_extents);
+  void _close_alloc(Allocator *& alloc);
   int _open_collections(int *errors=0);
   void _close_collections();
 
