@@ -717,8 +717,8 @@ WRITE_CLASS_DENC(bluestore_shared_blob_t)
 
 ostream& operator<<(ostream& out, const bluestore_shared_blob_t& o);
 
-/// onode: per-object metadata
-class bluestore_short_onode_t {
+/// metadata to track block device allocations
+class bluestore_allocation_t {
   AllocExtentVector extents;
 public:
   void swap_allocations(AllocExtentVector& new_extents) {
@@ -735,14 +735,66 @@ public:
     return len;
   }
 
-  DENC(bluestore_short_onode_t, v, p) {
+  DENC(bluestore_allocation_t, v, p) {
     DENC_START(1, 1, p);
     denc(v.extents, p);
     DENC_FINISH(p);
   }
 };
-WRITE_CLASS_DENC(bluestore_short_onode_t)
+WRITE_CLASS_DENC(bluestore_allocation_t)
 
+//ostream& operator<<(ostream& out, const bluestore_shared_blob_t& o);
+/*
+struct bluestore_allocation_vector_t : public vector<bluestore_allocation_t>
+{
+  DENC(bluestore_allocation_vector_t, v, p) {
+    DENC_START(1, 1, p);
+    unsigned num = v.size();
+    denc_varint(num, p);
+    v.resize(num); //need for decoding, no-op for encoding
+    for (size_t i = 0; i < num; i++) {
+      denc(v[i], p);
+    }
+    DENC_FINISH(p);
+  }
+};
+WRITE_CLASS_DENC(bluestore_allocation_vector_t)
+*/
+typedef mempool::bluestore_alloc::vector<bluestore_allocation_t> bluestore_allocation_vector_t;
+
+template<>
+struct denc_traits<bluestore_allocation_vector_t> {
+  enum { supported = true };
+  enum { bounded = false };
+  enum { featured = false };
+  static void bound_encode(const bluestore_allocation_vector_t& v, size_t& p) {
+    p += sizeof(uint32_t);
+    size_t per = 0;
+    //do full enumeration, FIXME?
+    for (size_t i = 0; i < v.size(); i++) {
+      denc(v[i], per);
+    }
+    p += per * v.size();
+  }
+  static void encode(const bluestore_allocation_vector_t& v,
+    bufferlist::contiguous_appender& p) {
+    denc_varint(v.size(), p);
+    for (auto& i : v) {
+      denc(i, p);
+    }
+  }
+  static void decode(bluestore_allocation_vector_t& v, bufferptr::iterator& p) {
+    unsigned num;
+    denc_varint(num, p);
+    v.clear();
+    v.resize(num);
+    for (unsigned i = 0; i<num; ++i) {
+      denc(v[i], p);
+    }
+  }
+};
+
+/// onode: per-object metadata
 struct bluestore_onode_t {
   uint64_t nid = 0;                    ///< numeric id (locally unique)
   uint64_t size = 0;                   ///< object size
@@ -751,7 +803,7 @@ struct bluestore_onode_t {
   enum {
     FLAG_OMAP = 1,
   };
-  bluestore_short_onode_t short_description;
+  bluestore_allocation_t pextents;
 
   struct shard_info {
     uint32_t offset = 0;  ///< logical offset for start of shard

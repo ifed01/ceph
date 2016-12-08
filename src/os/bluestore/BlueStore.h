@@ -640,6 +640,7 @@ public:
       bool dirty = false;    ///< true if shard is dirty and needs reencoding
     };
     mempool::bluestore_meta_other::vector<Shard> shards;    ///< shards
+    bluestore_allocation_vector_t pextents;            ///< pextents for shards
 
     bufferlist inline_bl;    ///< cached encoded map, if unsharded; empty=>dirty
 
@@ -675,7 +676,18 @@ public:
       return p->second;
     }
 
-    bool update(Onode *on, std::map<std::string, bufferlist>& db_data_candidate, bool force);
+    struct UpdateResultRecord{
+      bluestore_allocation_t* pextent;
+      bufferlist encoded_data;
+
+      UpdateResultRecord(bluestore_allocation_t* new_pext, bufferlist& new_data)
+	: pextent(new_pext) {
+	encoded_data.claim_append(new_data);
+      }
+    };
+    typedef std::map<std::string, UpdateResultRecord> UpdateResult;
+
+    bool update(Onode *on, bool force, UpdateResult& to_store);
     void reshard(Onode *on, uint64_t min_alloc_size);
 
     /// initialize Shards from the onode
@@ -1657,6 +1669,12 @@ private:
   void _txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t);
   void _txc_state_proc(TransContext *txc);
   void _txc_aio_submit(TransContext *txc);
+
+  void do_index_write(
+    TransContext *txc,
+    bufferlist& bl,
+    AllocExtentVector& extents);
+
 public:
   void _txc_aio_finish(void *p) {
     _txc_state_proc(static_cast<TransContext*>(p));

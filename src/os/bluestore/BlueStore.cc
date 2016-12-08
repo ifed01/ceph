@@ -1578,8 +1578,8 @@ BlueStore::ExtentMap::ExtentMap(Onode *o)
 
 
 bool BlueStore::ExtentMap::update(Onode *o,
-                                  std::map<std::string, bufferlist>& db_data_candidate,
-                                  bool force)
+                                  bool force,
+				  ExtentMap::UpdateResult& to_store)
 {
   assert(!needs_reshard);
   if (o->onode.extent_map_shards.empty()) {
@@ -1598,6 +1598,7 @@ bool BlueStore::ExtentMap::update(Onode *o,
     // will persist in the onode key, see below
   } else {
     auto p = shards.begin();
+    size_t i = 0;
     while (p != shards.end()) {
       auto n = p;
       ++n;
@@ -1614,7 +1615,7 @@ bool BlueStore::ExtentMap::update(Onode *o,
 	  return true;
 	}
         size_t len = bl.length();
-	dout(20) << __func__ << " shard 0x" << std::hex
+	derr/*dout(20)*/ << __func__ << " shard 0x" << std::hex
 		 << p->offset << std::dec << " is " << len
 		 << " bytes (was " << p->shard_info->bytes << ") from " << n
 		 << " extents" << dendl;
@@ -1626,10 +1627,11 @@ bool BlueStore::ExtentMap::update(Onode *o,
 	assert(p->shard_info->offset == p->offset);
 	p->shard_info->bytes = len;
 	p->shard_info->extents = n;
-	db_data_candidate.emplace(p->key, bl);
+	to_store.emplace(p->key, UpdateResultRecord(&pextents.at(i), bl));
 	p->dirty = false;
       }
       p = n;
+      ++i;
     }
   }
   return false;
@@ -1966,6 +1968,7 @@ void BlueStore::ExtentMap::decode_spanning_blobs(
 void BlueStore::ExtentMap::init_shards(Onode *on, bool loaded, bool dirty)
 {
   shards.resize(on->onode.extent_map_shards.size());
+  pextents.resize(on->onode.extent_map_shards.size());
   unsigned i = 0;
   for (auto &s : on->onode.extent_map_shards) {
     get_extent_shard_key(on->key, s.offset, &shards[i].key);
@@ -1997,30 +2000,60 @@ void BlueStore::ExtentMap::fault_range(
     assert((size_t)start < shards.size());
     auto p = &shards[start];
     if (!p->loaded) {
-      if (first_key) {
-        get_extent_shard_key(onode->key, p->offset, &key);
-        first_key = false;
-      } else
-        rewrite_extent_shard_key(p->offset, &key);
-      bufferlist v;
-      int r = db->get(PREFIX_OBJ, key, &v);
-      if (r < 0) {
-	derr << __func__ << " missing shard 0x" << std::hex << p->offset
-	     << std::dec << " for " << onode->oid << dendl;
+      if (g_conf->bluestore_minimize_db_use){
+
+	// read it
+	IOContext ioc(NULL);  // FIXME?
+	bufferlist v;
+	auto& sd = onode->extent_map.pextents[start];
+	int r = map_extents(
+	  sd.get_allocations(),
+	  0, 
+	  sd.get_ondisk_length(),
+	  [&](uint64_t offset, uint64_t length) {
+	    bufferlist t;
+	    int r = onode->c->store->bdev_index->read(offset, length, &t, &ioc, false);
+	    if (r < 0)
+	      return r;
+	    v.claim_append(t);
+	    return 0;
+	  }
+	);
 	assert(r >= 0);
-      }
-      if (g_conf->bluestore_minimize_db_use) {
-        assert(false); //should never happen - FIXME
+        bufferlist bl;
+        auto it = v.begin();
+        ::decode(bl, it);  //unwrap length-prefixed content
+        decode_some(bl);
+
+
+	p->loaded = true;
+	dout(20) << __func__ << " open shard 0x" << std::hex << p->offset
+	         << std::dec << " (" << v.length() << " bytes)" << dendl;
+	assert(p->dirty == false);
+	assert(bl.length() == p->shard_info->bytes);
       } else {
-        decode_some(v);
-      }
-    
-      p->loaded = true;
-      dout(20) << __func__ << " open shard 0x" << std::hex << p->offset
-	       << std::dec << " (" << v.length() << " bytes)" << dendl;
-      assert(p->dirty == false);
-      assert(v.length() == p->shard_info->bytes);
-    }
+	if (first_key) {
+	  get_extent_shard_key(onode->key, p->offset, &key);
+	  first_key = false;
+	} else
+	  rewrite_extent_shard_key(p->offset, &key);
+	bufferlist v;
+	int r = db->get(PREFIX_OBJ, key, &v);
+	if (r < 0) {
+	  derr << __func__ << " missing shard 0x" << std::hex << p->offset
+	       << std::dec << " for " << onode->oid << dendl;
+	  assert(r >= 0);
+	}
+
+	decode_some(v);
+
+	p->loaded = true;
+	dout(20) << __func__ << " open shard 0x" << std::hex << p->offset
+		 << std::dec << " (" << v.length() << " bytes)" << dendl;
+	assert(p->dirty == false);
+	assert(v.length() == p->shard_info->bytes);
+      } //g_conf->bluestore_minimize_db_use
+    } //!p->loaded
     ++start;
   }
 }
@@ -2402,12 +2435,13 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
     
     bufferptr::iterator p = v.front().begin();
     if (g_conf->bluestore_minimize_db_use){
-      on->onode.short_description.decode(p);
+      denc(on->onode.pextents, p);
+      denc(on->extent_map.pextents, p);
 
       // read it
       IOContext ioc(NULL);  // FIXME?
       v.clear();
-      auto& sd = on->onode.short_description;
+      auto& sd = on->onode.pextents;
       int r = map_extents(
 	sd.get_allocations(),
 	0, sd.get_ondisk_length(),
@@ -6320,6 +6354,7 @@ void BlueStore::_txc_state_proc(TransContext *txc)
         } else {
 	  txc->aio_cnt = 2; //1 (submitted)+ 1 to indicate "had_io" when they're completed
         }
+        txc->state = TransContext::STATE_AIO_WAIT;
 	_txc_aio_submit(txc);
 	return;
       } else {
@@ -6328,7 +6363,7 @@ void BlueStore::_txc_state_proc(TransContext *txc)
       // ** fall-thru **
 
     case TransContext::STATE_AIO_WAIT:
-      if (--txc->aio_cnt == 1) {
+      if (--txc->aio_cnt <= 1) {
         txc->log_state_latency(logger, l_bluestore_state_aio_wait_lat);
         _txc_finish_io(txc);  // may trigger blocked txc's too
       }
@@ -6469,6 +6504,42 @@ void BlueStore::_txc_finish_io(TransContext *txc)
 	   p->state == TransContext::STATE_IO_DONE);
 }
 
+void BlueStore::do_index_write(
+  TransContext *txc,
+  bufferlist& bl,
+  AllocExtentVector& extents)
+{
+  int count = 0;
+  uint64_t final_length = ROUND_UP_TO(bl.length(), min_alloc_size);
+  extents.resize(final_length / min_alloc_size);
+
+  int r = alloc_index->reserve(final_length);
+  if (r < 0) {
+    derr << __func__ << " failed to reserve 0x" << std::hex << final_length << std::dec
+      << dendl;
+    assert(false); //FIXME:
+  }
+  r = alloc_index->alloc_extents(final_length, min_alloc_size, max_alloc_size,
+    0, &extents, &count);
+  assert(r == 0);
+  assert(count > 0);
+  //txc->statfs_delta.allocated() += final_length;
+
+  for (int i = 0; i < count; i++) {
+    txc->allocated_index.insert(extents[i].offset, extents[i].length);
+  }
+  uint64_t offs = 0;
+  _pad_zeros(&bl, &offs, block_size);
+  // queue io
+  map_extents_bl(
+    extents,
+    offs,
+    bl,
+    [&](uint64_t offset, uint64_t length, bufferlist& t) {
+    bdev_index->aio_write(offset, t, &txc->ioc_index, false);
+  });
+}
+
 void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
 {
   dout(20) << __func__ << " txc " << txc
@@ -6480,26 +6551,56 @@ void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
   for (auto o : txc->onodes) {
     // finalize extent_map shards
     bool reshard = o->extent_map.needs_reshard;
-    std::map<std::string, bufferlist> db_data_candidate;
+    ExtentMap::UpdateResult to_store;
     if (!reshard) {
-      reshard = o->extent_map.update(o.get(), db_data_candidate, false);
+      reshard = o->extent_map.update(o.get(), false, to_store);
     }
     if (reshard) {
       dout(20) << __func__ << "  resharding extents for " << o->oid << dendl;
       for (auto &s : o->extent_map.shards) {
 	t->rmkey(PREFIX_OBJ, s.key);
       }
-      db_data_candidate.clear();
+      to_store.clear();
       o->extent_map.fault_range(db, 0, o->onode.size);
       o->extent_map.reshard(o.get(), min_alloc_size);
-      reshard = o->extent_map.update(o.get(), db_data_candidate, true);
-      if (reshard) {
+      bool reshard_again = o->extent_map.update(o.get(), true, to_store);
+      if (reshard_again) {
 	dout(20) << __func__ << " warning: still wants reshard, check options?"
-		 << dendl;
+	  << dendl;
       }
       logger->inc(l_bluestore_onode_reshard);
     }
-    t->set(PREFIX_OBJ, db_data_candidate);
+    if (g_conf->bluestore_minimize_db_use) {
+      if (reshard) {
+	for (auto allocs : o->extent_map.pextents) {
+	  for (auto e : allocs.get_allocations()) {
+  	    dout(20) << __func__ << "  release " << e << dendl;
+  	    txc->released_index.insert(e.offset, e.length);
+  	    //txc->statfs_delta.allocated() -= e.length;
+          }
+	}
+      }
+
+      for (auto &rec : to_store) {
+	AllocExtentVector extents;
+        bufferlist bl;
+        ::encode(rec.second.encoded_data, bl); //encapsulate since we need length-prefixd blob
+	do_index_write(txc, bl, extents);
+
+        rec.second.pextent->swap_allocations(extents);
+        if (!reshard) {	  //for reshard case old extents already released
+ 	  for (auto& e : extents) {
+	    dout(20) << __func__ << "  release " << e << dendl;
+	    txc->released_index.insert(e.offset, e.length);
+	    //txc->statfs_delta.allocated() -= e.length;
+	  }
+        }
+      }
+    } else {
+      for (auto rec : to_store) {
+        t->set(PREFIX_OBJ, rec.first, rec.second.encoded_data);
+      }
+    }
 
     // bound encode
     size_t bound = 0;
@@ -6531,36 +6632,9 @@ void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
 	     << dendl;
     if (g_conf->bluestore_minimize_db_use) {
 
-      int count = 0;
-      uint64_t final_length = ROUND_UP_TO(bl.length(), min_alloc_size);
-      AllocExtentVector extents = AllocExtentVector(final_length / min_alloc_size);
-
-      int r = alloc_index->reserve(final_length);
-      if (r < 0) {
-	derr << __func__ << " failed to reserve 0x" << std::hex << final_length << std::dec
-	  << dendl;
-	assert(false); //FIXME:
-      }
-      r = alloc_index->alloc_extents(final_length, min_alloc_size, max_alloc_size,
-	0, &extents, &count);
-      assert(r == 0);
-      assert(count > 0);
-      //txc->statfs_delta.allocated() += final_length;
-
-      for (int i = 0; i < count; i++) {
-	txc->allocated_index.insert(extents[i].offset, extents[i].length);
-      }
-      uint64_t offs = 0;
-      _pad_zeros(&bl, &offs, block_size);
-      // queue io
-      map_extents_bl(
-	extents,
-	offs,
-	bl,
-	[&](uint64_t offset, uint64_t length, bufferlist& t) {
-	  bdev_index->aio_write(offset, t, &txc->ioc_index, false);
-      });
-      o->onode.short_description.swap_allocations(extents); //extents will contain previous extents on return
+      AllocExtentVector extents;
+      do_index_write(txc, bl, extents);
+      o->onode.pextents.swap_allocations(extents); //extents will contain previous extents on return
       for (auto e : extents) {
 	dout(20) << __func__ << "  release " << e << dendl;
 	txc->released_index.insert(e.offset, e.length);
@@ -6568,10 +6642,12 @@ void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
       }
 
       bound = 0;
-      denc(o->onode.short_description, bound);
+      denc(o->onode.pextents, bound);
+      denc(o->extent_map.pextents, bound);
       bl.clear();
       auto p = bl.get_contiguous_appender(bound, true);
-      denc(o->onode.short_description, p);
+      denc(o->onode.pextents, p);
+      denc(o->extent_map.pextents, p);
       
     }
     t->set(PREFIX_OBJ, o->key, bl);
