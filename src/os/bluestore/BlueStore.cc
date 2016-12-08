@@ -1577,8 +1577,9 @@ BlueStore::ExtentMap::ExtentMap(Onode *o)
 }
 
 
-bool BlueStore::ExtentMap::update(Onode *o, KeyValueDB::Transaction t,
-				  bool force)
+bool BlueStore::ExtentMap::update(Onode *o,
+                                  std::map<std::string, bufferlist>& db_data_candidate,
+                                  bool force)
 {
   assert(!needs_reshard);
   if (o->onode.extent_map_shards.empty()) {
@@ -1625,7 +1626,7 @@ bool BlueStore::ExtentMap::update(Onode *o, KeyValueDB::Transaction t,
 	assert(p->shard_info->offset == p->offset);
 	p->shard_info->bytes = len;
 	p->shard_info->extents = n;
-	t->set(PREFIX_OBJ, p->key, bl);
+	db_data_candidate.emplace(p->key, bl);
 	p->dirty = false;
       }
       p = n;
@@ -6479,23 +6480,26 @@ void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
   for (auto o : txc->onodes) {
     // finalize extent_map shards
     bool reshard = o->extent_map.needs_reshard;
+    std::map<std::string, bufferlist> db_data_candidate;
     if (!reshard) {
-      reshard = o->extent_map.update(o.get(), t, false);
+      reshard = o->extent_map.update(o.get(), db_data_candidate, false);
     }
     if (reshard) {
       dout(20) << __func__ << "  resharding extents for " << o->oid << dendl;
       for (auto &s : o->extent_map.shards) {
 	t->rmkey(PREFIX_OBJ, s.key);
       }
+      db_data_candidate.clear();
       o->extent_map.fault_range(db, 0, o->onode.size);
       o->extent_map.reshard(o.get(), min_alloc_size);
-      reshard = o->extent_map.update(o.get(), t, true);
+      reshard = o->extent_map.update(o.get(), db_data_candidate, true);
       if (reshard) {
 	dout(20) << __func__ << " warning: still wants reshard, check options?"
 		 << dendl;
       }
       logger->inc(l_bluestore_onode_reshard);
     }
+    t->set(PREFIX_OBJ, db_data_candidate);
 
     // bound encode
     size_t bound = 0;

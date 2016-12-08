@@ -675,7 +675,7 @@ public:
       return p->second;
     }
 
-    bool update(Onode *on, KeyValueDB::Transaction t, bool force);
+    bool update(Onode *on, std::map<std::string, bufferlist>& db_data_candidate, bool force);
     void reshard(Onode *on, uint64_t min_alloc_size);
 
     /// initialize Shards from the onode
