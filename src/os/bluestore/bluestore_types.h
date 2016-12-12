@@ -803,7 +803,6 @@ struct bluestore_onode_t {
   enum {
     FLAG_OMAP = 1,
   };
-  bluestore_allocation_t pextents;
 
   struct shard_info {
     uint32_t offset = 0;  ///< logical offset for start of shard
@@ -821,6 +820,15 @@ struct bluestore_onode_t {
   uint32_t expected_object_size = 0;
   uint32_t expected_write_size = 0;
   uint32_t alloc_hint_flags = 0;
+
+  uint64_t pextent_offset = 0;
+  bluestore_allocation_t pextents;
+
+  //set new pextents information and return previous one
+  void swap_allocations(uint64_t& pext_offs, AllocExtentVector& new_pextents) {
+    std::swap(pextent_offset, pext_offs);
+    pextents.swap_allocations(new_pextents);
+  }
 
   string get_flags_string() const {
     string s;

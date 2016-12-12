@@ -1610,23 +1610,24 @@ bool BlueStore::ExtentMap::update(Onode *o,
 	  endoff = n->offset;
 	}
 	bufferlist bl;
-	unsigned n;
-	if (encode_some(p->offset, endoff - p->offset, bl, &n)) {
+	unsigned nn;
+	if (encode_some(p->offset, endoff - p->offset, bl, &nn)) {
 	  return true;
 	}
         size_t len = bl.length();
-	derr/*dout(20)*/ << __func__ << " shard 0x" << std::hex
+	dout(20) << __func__ << " shard 0x" << std::hex
 		 << p->offset << std::dec << " is " << len
-		 << " bytes (was " << p->shard_info->bytes << ") from " << n
+		 << " bytes (was " << p->shard_info->bytes << ") from " << nn
 		 << " extents" << dendl;
         if (!force &&
             (len > g_conf->bluestore_extent_map_shard_max_size ||
-             len < g_conf->bluestore_extent_map_shard_min_size)) {
+              (n != shards.end() && len < g_conf->bluestore_extent_map_shard_min_size) //do not apply shard_min_size to the last shard since this might trigger permanent resharding
+            )) {
           return true;
         }
 	assert(p->shard_info->offset == p->offset);
 	p->shard_info->bytes = len;
-	p->shard_info->extents = n;
+	p->shard_info->extents = nn;
 	to_store.emplace(p->key, UpdateResultRecord(&pextents.at(i), bl));
 	p->dirty = false;
       }
@@ -2435,6 +2436,7 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
     
     bufferptr::iterator p = v.front().begin();
     if (g_conf->bluestore_minimize_db_use){
+      denc(on->onode.pextent_offset, p);
       denc(on->onode.pextents, p);
       denc(on->extent_map.pextents, p);
 
@@ -2442,9 +2444,14 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
       IOContext ioc(NULL);  // FIXME?
       v.clear();
       auto& sd = on->onode.pextents;
+
+      uint64_t r_off = P2ALIGN(on->onode.pextent_offset, store->bdev_index->get_block_size());
+      uint64_t l = sd.get_ondisk_length();
+      assert(r_off < l);
       int r = map_extents(
 	sd.get_allocations(),
-	0, sd.get_ondisk_length(),
+	r_off,
+	l - r_off,
 	[&](uint64_t offset, uint64_t length) {
 	  bufferlist t;
 	  int r = store->bdev_index->read(offset, length, &t, &ioc, false);
@@ -2455,6 +2462,7 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
         });
       assert(r>=0);
       p = v.front().begin();
+      p.advance(on->onode.pextent_offset - r_off);
     }
     on->onode.decode(p);
 
@@ -2997,6 +3005,8 @@ int BlueStore::_open_bdev(bool create)
   block_mask = ~(block_size - 1);
   block_size_order = ctz(block_size);
   assert(block_size == 1u << block_size_order);
+
+  //FIXME: check if we need block_xxx staff as above for index device
 
   _set_alloc_sizes();
   return 0;
@@ -4212,6 +4222,14 @@ int BlueStore::umount()
 {
   assert(mounted);
   dout(1) << __func__ << dendl;
+
+  _update_cache_logger();
+  derr<<"logger:" << " m:"
+                  << logger->get(l_bluestore_onode_misses) << " h:"
+                  << logger->get(l_bluestore_onode_hits) << " r:"
+                  << logger->get(l_bluestore_onode_reshard) << " w:"
+                  << logger->get(l_bluestore_write_big_bytes) << " b:"
+                  << logger->get(l_bluestore_onodes) << dendl;
 
   _sync();
 
@@ -6513,6 +6531,7 @@ void BlueStore::do_index_write(
   uint64_t final_length = ROUND_UP_TO(bl.length(), min_alloc_size);
   extents.resize(final_length / min_alloc_size);
 
+
   int r = alloc_index->reserve(final_length);
   if (r < 0) {
     derr << __func__ << " failed to reserve 0x" << std::hex << final_length << std::dec
@@ -6570,38 +6589,8 @@ void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
       }
       logger->inc(l_bluestore_onode_reshard);
     }
-    if (g_conf->bluestore_minimize_db_use) {
-      if (reshard) {
-	for (auto allocs : o->extent_map.pextents) {
-	  for (auto e : allocs.get_allocations()) {
-  	    dout(20) << __func__ << "  release " << e << dendl;
-  	    txc->released_index.insert(e.offset, e.length);
-  	    //txc->statfs_delta.allocated() -= e.length;
-          }
-	}
-      }
 
-      for (auto &rec : to_store) {
-	AllocExtentVector extents;
-        bufferlist bl;
-        ::encode(rec.second.encoded_data, bl); //encapsulate since we need length-prefixd blob
-	do_index_write(txc, bl, extents);
-
-        rec.second.pextent->swap_allocations(extents);
-        if (!reshard) {	  //for reshard case old extents already released
- 	  for (auto& e : extents) {
-	    dout(20) << __func__ << "  release " << e << dendl;
-	    txc->released_index.insert(e.offset, e.length);
-	    //txc->statfs_delta.allocated() -= e.length;
-	  }
-        }
-      }
-    } else {
-      for (auto rec : to_store) {
-        t->set(PREFIX_OBJ, rec.first, rec.second.encoded_data);
-      }
-    }
-
+    //process onode main part - prepare for serialization
     // bound encode
     size_t bound = 0;
     denc(o->onode, bound);
@@ -6611,10 +6600,10 @@ void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
     }
 
     // encode
-    bufferlist bl;
+    bufferlist onode_bl;
     unsigned onode_part, blob_part, extent_part;
     {
-      auto p = bl.get_contiguous_appender(bound, true);
+      auto p = onode_bl.get_contiguous_appender(bound, true);
       denc(o->onode, p);
       onode_part = p.get_logical_offset();
       o->extent_map.encode_spanning_blobs(p);
@@ -6625,32 +6614,80 @@ void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
       extent_part = p.get_logical_offset() - onode_part - blob_part;
     }
 
-    dout(20) << "  onode " << o->oid << " is " << bl.length()
-	     << " (" << onode_part << " bytes onode + "
-	     << blob_part << " bytes spanning blobs + "
-	     << extent_part << " bytes inline extents)"
-	     << dendl;
+    dout(20) << "  onode " << o->oid << " is " << onode_bl.length()
+      << " (" << onode_part << " bytes onode + "
+      << blob_part << " bytes spanning blobs + "
+      << extent_part << " bytes inline extents)"
+      << dendl;
+
     if (g_conf->bluestore_minimize_db_use) {
-
-      AllocExtentVector extents;
-      do_index_write(txc, bl, extents);
-      o->onode.pextents.swap_allocations(extents); //extents will contain previous extents on return
-      for (auto e : extents) {
-	dout(20) << __func__ << "  release " << e << dendl;
-	txc->released_index.insert(e.offset, e.length);
-	//txc->statfs_delta.allocated() -= e.length;
+      // do release for all shards if reshard too place
+      if (reshard) {
+	for (auto allocs : o->extent_map.pextents) {
+	  for (auto e : allocs.get_allocations()) {
+  	    dout(20) << __func__ << "  release " << e << dendl;
+  	    txc->released_index.insert(e.offset, e.length);
+  	    //txc->statfs_delta.allocated() -= e.length;
+          }
+	}
       }
+      uint64_t onode_offs = 0;
+      AllocExtentVector onode_extents;
+      for (auto &rec : to_store) {
+	AllocExtentVector extents;
+        bufferlist bl;
+        ::encode(rec.second.encoded_data, bl); //encapsulate since we need length-prefixd blob
 
+	bool onode_processed = false;
+	if (onode_bl.length() &&  //onode not handled yet and can be co-located with a shard
+	  bl.length() + onode_bl.length() <= min_alloc_size) {
+	  onode_offs = bl.length();
+	  bl.claim_append(onode_bl);
+	  onode_processed = true;
+	}
+	do_index_write(txc, bl, extents);
+	if (onode_processed) {
+	  onode_extents.insert(onode_extents.begin(), extents.begin(), extents.end() ); //do pextents copy for onode
+	}
+
+        rec.second.pextent->swap_allocations(extents);
+        if (!reshard) {	  //release updated shards, skip if reshard took place - already released above
+ 	  for (auto& e : extents) {
+	    dout(20) << __func__ << "  release " << e << dendl;
+	    txc->released_index.insert(e.offset, e.length);
+	    //txc->statfs_delta.allocated() -= e.length;
+	  }
+        }
+      }
+      if (onode_bl.length()) {  //onode haven't been handled, no space in shard pextents - allocate standalone ones
+	do_index_write(txc, onode_bl, onode_extents);
+      }
+      o->onode.swap_allocations(onode_offs, onode_extents); //onode_offs/onode_extents will contain previous values on return
+      if (onode_offs == 0) {  //if previous onode_offs != 0 - it's co-located with a shard - do not release here
+	for (auto e : onode_extents) {
+	  dout(20) << __func__ << "  release " << e << dendl;
+	  txc->released_index.insert(e.offset, e.length);
+	  //txc->statfs_delta.allocated() -= e.length;
+	}
+      }
+      
+      //store onode pextents
       bound = 0;
+      denc(o->onode.pextent_offset, bound);
       denc(o->onode.pextents, bound);
       denc(o->extent_map.pextents, bound);
-      bl.clear();
-      auto p = bl.get_contiguous_appender(bound, true);
+      onode_bl.clear();
+      auto p = onode_bl.get_contiguous_appender(bound, true);
+      denc(o->onode.pextent_offset, p);
       denc(o->onode.pextents, p);
       denc(o->extent_map.pextents, p);
-      
+
+    } else {
+      for (auto rec : to_store) {
+        t->set(PREFIX_OBJ, rec.first, rec.second.encoded_data);
+      }
     }
-    t->set(PREFIX_OBJ, o->key, bl);
+    t->set(PREFIX_OBJ, o->key, onode_bl);
 
     std::lock_guard<std::mutex> l(o->flush_lock);
     o->flush_txns.insert(txc);
@@ -6926,7 +6963,7 @@ void BlueStore::_kv_sync_thread()
 
       // flush/barrier on block device
       bdev->flush();
-      bdev_index->flush();
+      bdev_index->flush(); //FIXME:  do this in parallel with bdev?
 
       // we will use one final transaction to force a sync
       KeyValueDB::Transaction synct = db->get_transaction();
