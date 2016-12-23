@@ -8788,7 +8788,6 @@ int BlueStore::_do_alloc_write(
     // counting machinery.
     assert(!b->is_referenced());
     b->get_ref(coll.get(), wi.b_off0, wi.length0); 
-                                               
 
     // queue io
     if (!g_conf->bluestore_debug_omit_block_device_write) {
