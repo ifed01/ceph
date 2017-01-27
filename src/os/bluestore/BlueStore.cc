@@ -2875,6 +2875,8 @@ void BlueStore::_init_logger()
     "Average finishing state latency");
   b.add_time_avg(l_bluestore_state_done_lat, "state_done_lat",
     "Average done state latency");
+  b.add_time_avg(l_bluestore_submit_lat, "submit_lat",
+    "Average submission latency");
   b.add_time_avg(l_bluestore_commit_lat, "commit_lat",
     "Average commit latency");
   b.add_time_avg(l_bluestore_compress_lat, "compress_lat",
@@ -2961,6 +2963,7 @@ void BlueStore::_init_logger()
             "Sum for blob splitting due to resharding");
   b.add_u64(l_bluestore_extent_compress, "bluestore_extent_compress",
             "Sum for extents that have been removed due to compression");
+  
   logger = b.create_perf_counters();
   cct->get_perfcounters_collection()->add(logger);
 }
@@ -4326,6 +4329,13 @@ int BlueStore::umount()
   _close_bdev();
   _close_fsid();
   _close_path();
+  
+  stringstream ostr;
+  Formatter *f = Formatter::create(format, "json-pretty", "json-pretty");
+  logger->dump_formatted(f, false);
+  f->flush(ostr);
+  delete f;
+  derr << __func_ << " perf_counters:" << ostr.str();
 
   if (cct->_conf->bluestore_fsck_on_umount) {
     int rc = fsck(cct->_conf->bluestore_fsck_on_umount_deep);
@@ -7142,6 +7152,7 @@ int BlueStore::queue_transactions(
     return 0;
   }
 
+  utime_t start = ceph_clock_now();
   // set up the sequencer
   OpSequencer *osr;
   assert(posr);
@@ -7157,6 +7168,7 @@ int BlueStore::queue_transactions(
 
   // prepare
   TransContext *txc = _txc_create(osr);
+  txc->start = ceph_clock_now();
   txc->onreadable = onreadable;
   txc->onreadable_sync = onreadable_sync;
   txc->oncommit = ondisk;
@@ -7197,6 +7209,7 @@ int BlueStore::queue_transactions(
 
   // execute (start)
   _txc_state_proc(txc);
+  logger->tinc(l_bluestore_transact_submit_lat, start - ceph_clock_now();
   return 0;
 }
 
