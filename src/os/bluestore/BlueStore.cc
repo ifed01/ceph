@@ -7134,8 +7134,10 @@ void BlueStore::_txc_state_proc(TransContext *txc)
 	} else {
 	  _txc_finalize_kv(txc, txc->t);
 	  txc->state = TransContext::STATE_KV_SUBMITTED;
-	  int r = db->submit_transaction(txc->t);
-	  assert(r == 0);
+          if (!cct->_conf->bluestore_debug_omit_kv_update) {
+  	    int r = db->submit_transaction(txc->t);
+	    assert(r == 0);
+          }
 	}
       }
       {
@@ -7554,8 +7556,10 @@ void BlueStore::_kv_sync_thread()
 	assert(txc->state == TransContext::STATE_KV_QUEUED);
 	_txc_finalize_kv(txc, txc->t);
 	txc->log_state_latency(logger, l_bluestore_state_kv_queued_lat);
-	int r = db->submit_transaction(txc->t);
-	assert(r == 0);
+        if (!cct->_conf->bluestore_debug_omit_kv_update) {
+	  int r = db->submit_transaction(txc->t);
+	  assert(r == 0);
+        }
 	--txc->osr->kv_committing_serially;
 	txc->state = TransContext::STATE_KV_SUBMITTED;
       }
@@ -7595,8 +7599,10 @@ void BlueStore::_kv_sync_thread()
       }
 
       // submit synct synchronously (block and wait for it to commit)
-      int r = db->submit_transaction_sync(synct);
-      assert(r == 0);
+      if (!cct->_conf->bluestore_debug_omit_kv_update) {
+        int r = db->submit_transaction_sync(synct);
+        assert(r == 0);
+      }
 
       if (new_nid_max) {
 	nid_max = new_nid_max;
