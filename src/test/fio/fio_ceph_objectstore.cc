@@ -87,6 +87,8 @@ struct Engine {
       ostringstream ostr;
       Formatter* f = Formatter::create("json-pretty", "json-pretty", "json-pretty");
       os->dump_perf_counters(f);
+      os->get_db_statistics(f);
+      os->generate_db_histogram(f);
       f->flush(ostr);
       delete f;
       os->umount();

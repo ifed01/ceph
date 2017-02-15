@@ -32,6 +32,7 @@
 
 void IOContext::aio_wait()
 {
+  utime_t start = ceph_clock_now();
   std::unique_lock<std::mutex> l(lock);
   // see _aio_thread for waker logic
   ++num_waiting;
@@ -43,6 +44,10 @@ void IOContext::aio_wait()
   }
   --num_waiting;
   dout(20) << __func__ << " " << this << " done" << dendl;
+  utime_t elapsed = ceph_clock_now() - start;
+  if (elapsed.to_msec() > 1000) {
+    derr<<"LONG AIO_WAIT!!!"<<dendl;
+  }
 }
 
 BlockDevice *BlockDevice::create(CephContext* cct, const string& path,
