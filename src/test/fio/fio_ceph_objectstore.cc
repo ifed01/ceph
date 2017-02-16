@@ -89,6 +89,9 @@ struct Engine {
       os->dump_perf_counters(f);
       os->get_db_statistics(f);
       os->generate_db_histogram(f);
+      f->open_object_section("mempool");
+      mempool::dump(f);
+      f->close_section();
       f->flush(ostr);
       delete f;
       os->umount();
