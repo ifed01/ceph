@@ -1368,7 +1368,7 @@ public:
   class OpSequencer;
   typedef boost::intrusive_ptr<OpSequencer> OpSequencerRef;
 
-  struct TransContext {
+  struct TransContext{
     typedef enum {
       STATE_PREPARE,
       STATE_AIO_WAIT,
@@ -1454,6 +1454,9 @@ public:
     list<CollectionRef> removed_collections; ///< colls we removed
 
     boost::intrusive::list_member_hook<> deferred_queue_item;
+    boost::intrusive::list_member_hook<> commit_item;
+    boost::intrusive::list_member_hook<> submit_item;
+
     bluestore_deferred_transaction_t *deferred_txn = nullptr; ///< if any
 
     interval_set<uint64_t> allocated, released;
@@ -1758,9 +1761,23 @@ private:
   std::mutex kv_lock;
   std::condition_variable kv_cond, kv_sync_cond;
   bool kv_stop = false;
-  deque<TransContext*> kv_queue;             ///< ready, already submitted
-  deque<TransContext*> kv_queue_unsubmitted; ///< ready, need submit by kv thread
-  deque<TransContext*> kv_committing;        ///< currently syncing
+
+  typedef boost::intrusive::list<
+    TransContext,
+    boost::intrusive::member_hook<
+    TransContext,
+    boost::intrusive::list_member_hook<>,
+    &TransContext::commit_item> > commit_queue_t;
+
+  typedef boost::intrusive::list<
+    TransContext,
+    boost::intrusive::member_hook<
+    TransContext,
+    boost::intrusive::list_member_hook<>,
+    &TransContext::submit_item> > submit_queue_t;
+
+  commit_queue_t kv_queue;			///< ready, already submitted
+  submit_queue_t kv_queue_unsubmitted;		///< ready, need submit by kv thread
   deque<TransContext*> deferred_done_queue;    ///< deferred ios done
   deque<TransContext*> deferred_stable_queue;  ///< deferred ios done + stable
 

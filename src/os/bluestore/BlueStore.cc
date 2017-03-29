@@ -7575,6 +7575,8 @@ void BlueStore::_osr_unregister_all()
 
 void BlueStore::_kv_sync_thread()
 {
+  commit_queue kv_committing;        ///< currently syncing
+
   dout(10) << __func__ << " start" << dendl;
   std::unique_lock<std::mutex> l(kv_lock);
   while (true) {
@@ -7589,7 +7591,7 @@ void BlueStore::_kv_sync_thread()
       kv_cond.wait(l);
       dout(20) << __func__ << " wake" << dendl;
     } else {
-      deque<TransContext*> kv_submitting;
+      submit_queue kv_submitting;
       deque<TransContext*> deferred_done, deferred_stable;
       dout(20) << __func__ << " committing " << kv_queue.size()
 	       << " submitting " << kv_queue_unsubmitted.size()
