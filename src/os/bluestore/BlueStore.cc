@@ -7247,6 +7247,13 @@ void BlueStore::_txc_state_proc(TransContext *txc)
       txc->log_state_latency(logger, l_bluestore_state_finishing_lat);
       _txc_finish(txc);
       return;
+    case TransContext::STATE_DONE:
+    {
+      std::lock_guard<std::mutex> l(kv_finalize_lock);
+      kv_completing.push_back(*txc);
+      kv_finalize_cond.notify_one();
+      return;
+    }
 
     default:
       derr << __func__ << " unexpected txc " << txc
@@ -7770,7 +7777,7 @@ void BlueStore::_kv_sync_thread()
 	assert(txc.state == TransContext::STATE_KV_QUEUED);
 	_txc_finalize_kv(&txc, txc.t);
 	txc.log_state_latency(logger, l_bluestore_state_kv_queued_lat);
-	int r = cct->_conf->bluestore_debug_omit_kv_commit ? 0 : db->submit_transaction(txc->t);
+	int r = cct->_conf->bluestore_debug_omit_kv_commit ? 0 : db->submit_transaction(txc.t);
 	assert(r == 0);
 	_txc_applied_kv(&txc);
 	--txc.osr->kv_committing_serially;
@@ -7900,13 +7907,13 @@ void BlueStore::_kv_finalize_thread()
 {
   deferred_queue_t deferred_stable;
   commit_queue_t kv_committed;
-  dout(10) << __func__ << " start" << dendl;
+  commit_queue_t kv_completed;
   std::unique_lock<std::mutex> l(kv_finalize_lock);
   while (true) {
     assert(kv_committed.empty());
     assert(deferred_stable.empty());
     if (kv_committing_to_finalize.empty() &&
-	deferred_stable_to_finalize.empty()) {
+	deferred_stable_to_finalize.empty() && kv_completing.empty()) {
       if (kv_stop)
 	break;
       dout(20) << __func__ << " sleep" << dendl;
@@ -7916,10 +7923,25 @@ void BlueStore::_kv_finalize_thread()
     } else {
       kv_committed.swap(kv_committing_to_finalize);
       deferred_stable.swap(deferred_stable_to_finalize);
+      kv_completed.swap(kv_completing);
       kv_finalize_cond.notify_one();
       l.unlock();
       dout(20) << __func__ << " kv_committed " << kv_committed << dendl;
       dout(20) << __func__ << " deferred_stable " << deferred_stable << dendl;
+      dout(20) << __func__ << " kv_completed " << kv_completed << dendl;
+
+      /* FIXME uint64_t ops = 0, bytes = 0;
+      while (!kv_completed.empty()) {
+	TransContext &txc = kv_completed.front();
+	kv_completed.pop_front();
+	ops += txc.ops;
+	bytes += txc.bytes;
+	_txc_committed_kv(&txc);
+        OpSequencerRef osr = txc.osr;
+        _osr_reap_done(osr.get());
+      }
+      throttle_ops.put(ops);
+      throttle_bytes.put(bytes);*/
 
       while (!kv_committed.empty()) {
 	TransContext &txc = kv_committed.front();
@@ -8171,6 +8193,10 @@ int BlueStore::queue_transactions(
     (*p).set_osr(osr);
     txc->ops += (*p).get_num_ops();
     txc->bytes += (*p).get_num_bytes();
+  }
+  throttle_ops.get(txc->ops);
+  throttle_bytes.get(txc->bytes);
+  for (vector<Transaction>::iterator p = tls.begin(); p != tls.end(); ++p) {
     _txc_add_transaction(txc, &(*p));
   }
 
@@ -8190,8 +8216,6 @@ int BlueStore::queue_transactions(
     handle->suspend_tp_timeout();
 
   utime_t tstart = ceph_clock_now();
-  throttle_ops.get(txc->ops);
-  throttle_bytes.get(txc->bytes);
   if (txc->deferred_txn) {
     // ensure we do not block here because of deferred writes
     if (!throttle_deferred_ops.get_or_fail(txc->ops)) {
@@ -9603,6 +9627,10 @@ int BlueStore::_write(TransContext *txc,
 		     bufferlist& bl,
 		     uint32_t fadvise_flags)
 {
+  if (cct->_conf->bluestore_debug_complete_immediately) {
+    txc->state = TransContext::STATE_IO_DONE;
+    return 0;
+  }
   dout(15) << __func__ << " " << c->cid << " " << o->oid
 	   << " 0x" << std::hex << offset << "~" << length << std::dec
 	   << dendl;

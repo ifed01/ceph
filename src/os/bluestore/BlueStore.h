@@ -1795,6 +1795,7 @@ private:
   std::mutex kv_finalize_lock;
   std::condition_variable kv_finalize_cond;
   commit_queue_t kv_committing_to_finalize;   	    ///< pending finalization
+  commit_queue_t kv_completing;
   deferred_queue_t deferred_stable_to_finalize;	    ///< pending finalization
 
   PerfCounters *logger = nullptr;
