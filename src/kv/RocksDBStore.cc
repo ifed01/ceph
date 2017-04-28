@@ -543,7 +543,9 @@ int RocksDBStore::submit_transaction_sync(KeyValueDB::Transaction t)
   return s.ok() ? 0 : -1;
 }
 
-RocksDBStore::RocksDBTransactionImpl::RocksDBTransactionImpl(RocksDBStore *_db)
+RocksDBStore::RocksDBTransactionImpl::RocksDBTransactionImpl(
+  RocksDBStore *_db, uint32_t _flags) :
+    flags(_flags)
 {
   db = _db;
 }

@@ -323,11 +323,12 @@ public:
   };
 
   class RocksDBTransactionImpl : public KeyValueDB::TransactionImpl {
+    uint32_t flags;
   public:
     rocksdb::WriteBatch bat;
     RocksDBStore *db;
 
-    explicit RocksDBTransactionImpl(RocksDBStore *_db);
+    explicit RocksDBTransactionImpl(RocksDBStore *_db, uint32_t _flags);
     void set(
       const string &prefix,
       const string &k,
@@ -358,10 +359,14 @@ public:
       const string& prefix,
       const string& k,
       const bufferlist &bl) override;
+    
+    uint32_t get_flags() const override {
+      return flags;
+    }
   };
 
-  KeyValueDB::Transaction get_transaction() override {
-    return std::make_shared<RocksDBTransactionImpl>(this);
+  KeyValueDB::Transaction get_transaction(uint32_t flags = 0) override {
+    return std::make_shared<RocksDBTransactionImpl>(this, flags);
   }
 
   int submit_transaction(KeyValueDB::Transaction t) override;

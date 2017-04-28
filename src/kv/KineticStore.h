@@ -98,7 +98,7 @@ public:
         const string &end);
   };
 
-  KeyValueDB::Transaction get_transaction() {
+  KeyValueDB::Transaction get_transaction(uint32_t /*flags*/ = 0) {
     return std::make_shared<KineticTransactionImpl>(this);
   }
 
