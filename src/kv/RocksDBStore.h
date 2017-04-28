@@ -105,12 +105,12 @@ public:
   bool compact_on_mount;
   bool disableWAL;
   bool enable_rmrange;
-  void compact() override;
 
   int tryInterpret(const string key, const string val, rocksdb::Options &opt);
   int ParseOptionsFromString(const string opt_str, rocksdb::Options &opt);
   static int _test_init(const string& dir);
   int init(string options_str) override;
+  void compact() override;
   /// compact rocksdb for all keys with a given prefix
   void compact_prefix(const string& prefix) override {
     compact_range(prefix, past_prefix(prefix));
@@ -248,7 +248,6 @@ public:
 
   };
 
-
   class TransactionContainer {
     enum EntryType {
       SET,
@@ -382,7 +381,6 @@ public:
     const char *key,
     size_t keylen,
     bufferlist *out) override;
-
 
   class RocksDBWholeSpaceIteratorImpl :
     public KeyValueDB::WholeSpaceIteratorImpl {
