@@ -149,7 +149,7 @@ public:
     }
   };
 
-  Transaction get_transaction() override {
+  Transaction get_transaction(uint32_t /*flags*/) override {
     return Transaction(new TransactionImpl_(this));
   }
 

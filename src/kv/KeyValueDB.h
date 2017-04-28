@@ -23,6 +23,9 @@ class KeyValueDB {
 public:
   class TransactionImpl {
   public:
+    enum Flags {
+      SUPPORTS_TRANSACTION_MERGE = 1
+    };
     /// Set Keys
     void set(
       const std::string &prefix,                 ///< [in] Prefix for keys
@@ -130,6 +133,9 @@ public:
       const bufferlist  &value     ///< [in] value to be merged into key
     ) { assert(0 == "Not implemented"); }
 
+    // most of implementations don't need that
+    virtual uint32_t get_flags() const { return 0; } 
+
     virtual ~TransactionImpl() {}
   };
   typedef ceph::shared_ptr< TransactionImpl > Transaction;
@@ -146,7 +152,7 @@ public:
   virtual int create_and_open(std::ostream &out) = 0;
   virtual void close() { }
 
-  virtual Transaction get_transaction() = 0;
+  virtual Transaction get_transaction(uint32_t flags = 0) = 0;
   virtual int submit_transaction(Transaction) = 0;
   virtual int submit_transaction_sync(Transaction t) {
     return submit_transaction(t);

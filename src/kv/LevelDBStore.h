@@ -205,7 +205,7 @@ public:
     using KeyValueDB::TransactionImpl::rmkey;
   };
 
-  KeyValueDB::Transaction get_transaction() override {
+  KeyValueDB::Transaction get_transaction(uint32_t /*flags*/ = 0) override{
     return std::make_shared<LevelDBTransactionImpl>(this);
   }
 
