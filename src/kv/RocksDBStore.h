@@ -319,12 +319,19 @@ public:
 	    break;
 	}
       }
+      m_entries.clear();
+    }
+    bool empty() const {
+      return m_entries.empty();
     }
   };
 
   class RocksDBTransactionImpl : public KeyValueDB::TransactionImpl {
     uint32_t flags;
     TransactionContainer interim_bat;
+
+    void _merge_from(RocksDBTransactionImpl* t);
+
   public:
     rocksdb::WriteBatch bat;
     RocksDBStore *db;
@@ -365,6 +372,12 @@ public:
     }
     void merge_from(
       KeyValueDB::Transaction) override;
+
+    void flush_batch() {
+      if (!interim_bat.empty()) {
+	_merge_from(this);
+      }
+    }
   };
 
   KeyValueDB::Transaction get_transaction(uint32_t flags = 0) override {
