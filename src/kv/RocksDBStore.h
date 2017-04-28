@@ -6,9 +6,11 @@
 #include "include/types.h"
 #include "include/buffer_fwd.h"
 #include "KeyValueDB.h"
+#include "include/buffer.h"
 #include <set>
 #include <map>
 #include <string>
+#include <vector>
 #include <memory>
 #include <boost/scoped_ptr.hpp>
 #include "rocksdb/write_batch.h"
@@ -246,6 +248,80 @@ public:
 
   };
 
+
+  class TransactionContainer {
+    enum EntryType {
+      SET,
+      RM_KEY,
+      RM_SINGLEKEY,
+      RM_RANGE_KEYS,
+      MERGE
+    };
+    struct Entry{
+      EntryType type;
+      string key;
+      string key2;
+      bufferlist value;
+      Entry(EntryType t,
+	    const string& k,
+	    const bufferlist& val)
+	: type(t), key(k), value(val) {
+      }
+      Entry(EntryType t, const string& k)
+	: type(t), key(k) {
+      }
+      Entry(EntryType t, const string& k, const string& k2)
+	: type(t), key(k), key2(k) {
+      }
+      string str_value() {
+	return value.length() ?
+	  string(value.c_str(), value.length()) :
+	  string();
+      }
+    };
+    typedef std::vector<Entry> EntryVector;
+    EntryVector m_entries;
+  public:
+    void set(const string &k, const bufferlist &bl) {
+      m_entries.emplace_back(Entry(SET, k, bl));
+    }
+    void rmkey(const string &k) {
+      m_entries.emplace_back(Entry(RM_KEY, k));
+    }
+    void rm_single_key(const string &k) {
+      m_entries.emplace_back(Entry(RM_SINGLEKEY, k));
+    }
+    void rm_range_keys(const string &k, const string& k2) {
+      m_entries.emplace_back(Entry(RM_RANGE_KEYS, k, k2));
+    }
+    void merge(const string& k, const bufferlist &bl) {
+      m_entries.emplace_back(Entry(MERGE, k, bl));
+    }
+    void toWriteBatch(rocksdb::WriteBatch* b) {
+      for (auto e : m_entries) {
+	switch (e.type) {
+	  case SET:
+	    b->Put(rocksdb::Slice(e.key), rocksdb::Slice(e.str_value()));
+	    break;
+	  case RM_KEY:
+	    b->Delete(rocksdb::Slice(e.key));
+	    break;
+	  case RM_SINGLEKEY:
+	    b->SingleDelete(rocksdb::Slice(e.key));
+	    break;
+	  case RM_RANGE_KEYS:
+	    b->DeleteRange(rocksdb::Slice(e.key), rocksdb::Slice(e.key2));
+	    break;
+	  case MERGE:
+	    b->Merge(rocksdb::Slice(e.key), rocksdb::Slice(e.str_value()));
+	    break;
+	  default:
+	    assert(false);
+	    break;
+	}
+      }
+    }
+  };
 
   class RocksDBTransactionImpl : public KeyValueDB::TransactionImpl {
   public:
