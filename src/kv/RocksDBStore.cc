@@ -443,6 +443,7 @@ int RocksDBStore::submit_transaction(KeyValueDB::Transaction t)
 
   RocksDBTransactionImpl * _t =
     static_cast<RocksDBTransactionImpl *>(t.get());
+  _t->flush_batch();
   rocksdb::WriteOptions woptions;
   woptions.disableWAL = disableWAL;
   lgeneric_subdout(cct, rocksdb, 30) << __func__;
@@ -496,6 +497,7 @@ int RocksDBStore::submit_transaction_sync(KeyValueDB::Transaction t)
 
   RocksDBTransactionImpl * _t =
     static_cast<RocksDBTransactionImpl *>(t.get());
+  _t->flush_batch();
   rocksdb::WriteOptions woptions;
   woptions.sync = true;
   woptions.disableWAL = disableWAL;
@@ -597,7 +599,7 @@ void RocksDBStore::RocksDBTransactionImpl::rmkey(const string &prefix,
 					         const string &k)
 {
   if (get_flags() & KeyValueDB::CAN_MERGE_TRANSACTION) {
-    interim_bat.Delete(combine_string(prefix, k));
+    interim_bat.rmkey(combine_strings(prefix, k));
   } else {
     bat.Delete(combine_strings(prefix, k));
   }
@@ -610,20 +612,20 @@ void RocksDBStore::RocksDBTransactionImpl::rmkey(const string &prefix,
   string key;
   combine_strings(prefix, k, keylen, &key);
   if (get_flags() & KeyValueDB::CAN_MERGE_TRANSACTION) {
-    interim_bat.Delete(key);
+    interim_bat.rmkey(key);
   } else {
     bat.Delete(key);
   }
-  bat.Delete(key);
 }
 
 void RocksDBStore::RocksDBTransactionImpl::rm_single_key(const string &prefix,
 					                 const string &k)
 {
   if (get_flags() & KeyValueDB::CAN_MERGE_TRANSACTION) {
-    interim_bat.SingleDelete(key, to_set_bl);
+    interim_bat.rm_single_key(combine_strings(prefix, k));
   } else {
     bat.SingleDelete(combine_strings(prefix, k));
+  }
 }
 
 void RocksDBStore::RocksDBTransactionImpl::rmkeys_by_prefix(const string &prefix)
@@ -633,7 +635,7 @@ void RocksDBStore::RocksDBTransactionImpl::rmkeys_by_prefix(const string &prefix
        it->valid();
        it->next()) {
     if (get_flags() & KeyValueDB::CAN_MERGE_TRANSACTION) {
-      interim_bat.Delete(combine_strings(prefix, it->key()));
+      interim_bat.rmkey(combine_strings(prefix, it->key()));
     }
     else {
       bat.Delete(combine_strings(prefix, it->key()));
@@ -648,10 +650,12 @@ void RocksDBStore::RocksDBTransactionImpl::rm_range_keys(const string &prefix,
  bool can_merge = get_flags() & KeyValueDB::CAN_MERGE_TRANSACTION;
   if (db->enable_rmrange) {
     if (can_merge) {
-      interim_bat.DeleteRange(combine_strings(prefix, start), combine_strings(prefix, end));
+      interim_bat.rm_range_keys(combine_strings(prefix, start),
+				combine_strings(prefix, end));
     } else {
       // bufferlist::c_str() is non-constant, so we can't call c_str()
-      bat.DeleteRange(combine_strings(prefix, start), combine_strings(prefix, end));
+      bat.DeleteRange(combine_strings(prefix, start),
+		      combine_strings(prefix, end));
     }
   } else {
     auto it = db->get_iterator(prefix);
@@ -661,7 +665,7 @@ void RocksDBStore::RocksDBTransactionImpl::rm_range_keys(const string &prefix,
         break;
       }
       if (can_merge) {
-        interim_bat.Delete(combine_strings(prefix, it->key()));
+        interim_bat.rmkey(combine_strings(prefix, it->key()));
       } else {
         bat.Delete(combine_strings(prefix, it->key()));
       }
@@ -677,7 +681,7 @@ void RocksDBStore::RocksDBTransactionImpl::merge(
 {
   string key = combine_strings(prefix, k);
   if (get_flags() & KeyValueDB::CAN_MERGE_TRANSACTION) {
-    interim_bat.Merge(key, to_set_bl);
+    interim_bat.merge(key, to_set_bl);
   } else {
     // bufferlist::c_str() is non-constant, so we can't call c_str()
     if (to_set_bl.is_contiguous() && to_set_bl.length() > 0) {
@@ -700,7 +704,15 @@ void RocksDBStore::RocksDBTransactionImpl::merge_from(
   assert(t->get_flags() & KeyValueDB::CAN_MERGE_TRANSACTION);
   RocksDBTransactionImpl * _t =
     static_cast<RocksDBTransactionImpl *>(t.get());
-  _t->interim_bat.toWriteBatch(&bat);
+  _merge_from(_t);
+}
+
+void RocksDBStore::RocksDBTransactionImpl::_merge_from(
+  RocksDBTransactionImpl* t)
+{
+  assert(get_flags() & KeyValueDB::CAN_MERGE_TRANSACTION);
+  assert(t->get_flags() & KeyValueDB::CAN_MERGE_TRANSACTION);
+  t->interim_bat.toWriteBatch(&bat);
 }
 
 //gets will bypass RocksDB row cache, since it uses iterator
