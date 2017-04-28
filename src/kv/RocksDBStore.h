@@ -324,6 +324,7 @@ public:
 
   class RocksDBTransactionImpl : public KeyValueDB::TransactionImpl {
     uint32_t flags;
+    TransactionContainer interim_bat;
   public:
     rocksdb::WriteBatch bat;
     RocksDBStore *db;
@@ -359,10 +360,11 @@ public:
       const string& prefix,
       const string& k,
       const bufferlist &bl) override;
-    
     uint32_t get_flags() const override {
       return flags;
     }
+    void merge_from(
+      KeyValueDB::Transaction) override;
   };
 
   KeyValueDB::Transaction get_transaction(uint32_t flags = 0) override {

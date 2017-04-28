@@ -21,11 +21,13 @@ using std::string;
  */
 class KeyValueDB {
 public:
+  enum Flags {
+    CAN_MERGE_TRANSACTION = 1
+  };
+  class TransactionImpl;
+  typedef ceph::shared_ptr< TransactionImpl > Transaction;
   class TransactionImpl {
   public:
-    enum Flags {
-      SUPPORTS_TRANSACTION_MERGE = 1
-    };
     /// Set Keys
     void set(
       const std::string &prefix,                 ///< [in] Prefix for keys
@@ -135,10 +137,13 @@ public:
 
     // most of implementations don't need that
     virtual uint32_t get_flags() const { return 0; } 
+    /// Merge ops from a different transaction
+    virtual void merge_from(Transaction) {
+      assert(0 == "Not supported"); 
+    }
 
     virtual ~TransactionImpl() {}
   };
-  typedef ceph::shared_ptr< TransactionImpl > Transaction;
 
   /// create a new instance
   static KeyValueDB *create(CephContext *cct, const std::string& type,
