@@ -4835,6 +4835,14 @@ int BlueStore::umount()
   flush_cache();
   dout(20) << __func__ << " closing" << dendl;
 
+  derr << " rocksdb dump:\n";
+  JSONFormatter f(true);
+  f.open_object_section("transaction");
+  get_db_statistics(&f);
+  f.close_section();
+  f.flush(*_dout);
+  *_dout << dendl;
+
   mounted = false;
   _close_alloc();
   _close_fm();
@@ -7663,6 +7671,8 @@ ostream& operator<<(ostream& out, const BlueStore::TransContext& tc) {
   return out;
 }
 
+#include "kv/RocksDBStore.h"
+
 void BlueStore::_kv_sync_thread()
 {
   commit_queue_t kv_committing; 	  // currently syncing
@@ -7766,11 +7776,54 @@ void BlueStore::_kv_sync_thread()
 	t->set(PREFIX_SUPER, "blobid_max", bl);
 	dout(10) << __func__ << " new_blobid_max " << new_blobid_max << dendl;
       }
-      for (auto& txc : kv_submitting) {
+      auto end = kv_submitting.end();
+      for (auto it = kv_submitting.begin(); it != end; ) {
+        auto iit = it;
+        auto& txc0 = *iit;
+        RocksDBStore::RocksDBTransactionImpl * t0 =
+          static_cast<RocksDBStore::RocksDBTransactionImpl *>(txc0.t.get());
+
+        string stransact;
+        int pos = 0;
+        const int max_bunch = 64;
+        stransact.reserve(max_bunch * 4096);
+        for( iit = it; pos < max_bunch && iit != end; iit++ ) {
+          auto& txc = *iit;
+
+	  assert(txc.state == TransContext::STATE_KV_QUEUED);
+	  _txc_finalize_kv(&txc, txc.t);
+	  txc.log_state_latency(logger, l_bluestore_state_kv_queued_lat);
+
+          RocksDBStore::RocksDBTransactionImpl * _t =
+            static_cast<RocksDBStore::RocksDBTransactionImpl *>(txc.t.get());
+          _t->merge_into_batch(stransact);     
+          ++pos;
+        }
+        t0->reset_batch(stransact);
+	int r = db->submit_transaction(txc0.t);
+	assert(r == 0);
+        for( auto iit2 = it; iit2 != iit; iit2++ ) {
+          auto& txc = *iit2;
+	  _txc_applied_kv(&txc);
+	  --txc.osr->kv_committing_serially;
+	  txc.state = TransContext::STATE_KV_SUBMITTED;
+	  if (txc.osr->kv_submitted_waiters) {
+	    std::lock_guard<std::mutex> l(txc.osr->qlock);
+	    if (txc.osr->_is_all_kv_submitted()) {
+	      txc.osr->qcond.notify_all();
+	    }
+          }
+	}
+	it = iit;
+      }
+      /*for (auto& txc : kv_submitting) {
 	assert(txc.state == TransContext::STATE_KV_QUEUED);
 	_txc_finalize_kv(&txc, txc.t);
 	txc.log_state_latency(logger, l_bluestore_state_kv_queued_lat);
+
+    
 	int r = db->submit_transaction(txc.t);
+
 	assert(r == 0);
 	_txc_applied_kv(&txc);
 	--txc.osr->kv_committing_serially;
@@ -7781,7 +7834,8 @@ void BlueStore::_kv_sync_thread()
 	    txc.osr->qcond.notify_all();
 	  }
 	}
-      }
+      }*/
+
       // Required for clean TransContext release triggered from txc_state_proc
       kv_submitting.clear(); 
       uint64_t ops = 0, bytes = 0;

@@ -53,6 +53,7 @@ namespace rocksdb{
   class Snapshot;
   class Slice;
   class WriteBatch;
+  class WriteBatchInternal;
   class Iterator;
   class Logger;
   struct Options;
@@ -283,12 +284,16 @@ public:
       const string& prefix,
       const string& k,
       const bufferlist &bl) override;
+
+    void merge_into_batch(string& target);
+    void reset_batch(const string& str);
   };
 
   KeyValueDB::Transaction get_transaction() override {
     return std::make_shared<RocksDBTransactionImpl>(this);
   }
 
+  int submit_transaction(const string& stransact);
   int submit_transaction(KeyValueDB::Transaction t) override;
   int submit_transaction_sync(KeyValueDB::Transaction t) override;
   int get(

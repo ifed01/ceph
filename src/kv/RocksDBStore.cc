@@ -16,6 +16,7 @@
 #include "rocksdb/slice.h"
 #include "rocksdb/cache.h"
 #include "rocksdb/filter_policy.h"
+//#include "rocksdb/write_batch_internal.h"
 #include "rocksdb/utilities/convenience.h"
 #include "rocksdb/merge_operator.h"
 using std::string;
@@ -652,6 +653,60 @@ void RocksDBStore::RocksDBTransactionImpl::merge(
     bat.Merge(rocksdb::Slice(key),
 	     rocksdb::Slice(val.c_str(), val.length()));
   }
+}
+
+inline uint32_t DecodeFixed32(const char* ptr)
+{
+//  if (port::kLittleEndian) {
+    // Load the raw bytes
+    uint32_t result;
+    memcpy(&result, ptr, sizeof(result));  // gcc optimizes this to a plain load
+    return result;
+/*  } else {
+    return ((static_cast<uint32_t>(static_cast<unsigned char>(ptr[0])))
+        | (static_cast<uint32_t>(static_cast<unsigned char>(ptr[1])) << 8)
+        | (static_cast<uint32_t>(static_cast<unsigned char>(ptr[2])) << 16)
+        | (static_cast<uint32_t>(static_cast<unsigned char>(ptr[3])) << 24));
+  }*/
+}
+
+inline void EncodeFixed32(char* buf, uint32_t value) {
+//#if __BYTE_ORDER == __LITTLE_ENDIAN
+  memcpy(buf, &value, sizeof(value));
+/*#else
+  buf[0] = value & 0xff;
+  buf[1] = (value >> 8) & 0xff;
+  buf[2] = (value >> 16) & 0xff;
+  buf[3] = (value >> 24) & 0xff;
+#endif*/
+}
+
+int Count(rocksdb::WriteBatch* b)
+{
+  return DecodeFixed32(b->Data().c_str() + 8);
+}
+
+void RocksDBStore::RocksDBTransactionImpl::merge_into_batch(string& target)
+{
+  const int kHeader = 12;
+  assert(target.size() == 0 || target.size() >= kHeader);
+  const string& s = bat.Data();
+  if (s.empty()) {
+    return;
+  }
+  if (target.empty()) {
+    target = s;
+  } else {
+    int cnt = DecodeFixed32(s.c_str() + 8);
+    cnt += DecodeFixed32(target.c_str() + 8);
+    EncodeFixed32(&target.at(8), cnt);
+    target.append(s.c_str() + kHeader, s.size() - kHeader );
+  }
+}
+
+void RocksDBStore::RocksDBTransactionImpl::reset_batch(const string& str)
+{
+  bat = rocksdb::WriteBatch(str);
 }
 
 //gets will bypass RocksDB row cache, since it uses iterator
