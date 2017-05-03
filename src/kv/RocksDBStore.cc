@@ -451,6 +451,7 @@ int RocksDBStore::submit_transaction(KeyValueDB::Transaction t)
   _t->bat.Iterate(&bat_txc);
   *_dout << " Rocksdb transaction: " << bat_txc.seen << dendl;
   
+  _t->flush_batch();
   rocksdb::Status s = db->Write(woptions, &_t->bat);
   if (!s.ok()) {
     RocksWBHandler rocks_txc;
@@ -505,6 +506,7 @@ int RocksDBStore::submit_transaction_sync(KeyValueDB::Transaction t)
   _t->bat.Iterate(&bat_txc);
   *_dout << " Rocksdb transaction: " << bat_txc.seen << dendl;
 
+  _t->flush_batch();
   rocksdb::Status s = db->Write(woptions, &_t->bat);
   if (!s.ok()) {
     RocksWBHandler rocks_txc;
@@ -585,6 +587,13 @@ void RocksDBStore::RocksDBTransactionImpl::set(
   }
 }
 
+inline uint32_t DecodeFixed32(const char* ptr)
+{
+  uint32_t result;
+  memcpy(&result, ptr, sizeof(result));  // gcc optimizes this to a plain load
+  return result;
+}
+
 void RocksDBStore::RocksDBTransactionImpl::rmkey(const string &prefix,
 					         const string &k)
 {
@@ -655,58 +664,40 @@ void RocksDBStore::RocksDBTransactionImpl::merge(
   }
 }
 
-inline uint32_t DecodeFixed32(const char* ptr)
-{
-//  if (port::kLittleEndian) {
-    // Load the raw bytes
-    uint32_t result;
-    memcpy(&result, ptr, sizeof(result));  // gcc optimizes this to a plain load
-    return result;
-/*  } else {
-    return ((static_cast<uint32_t>(static_cast<unsigned char>(ptr[0])))
-        | (static_cast<uint32_t>(static_cast<unsigned char>(ptr[1])) << 8)
-        | (static_cast<uint32_t>(static_cast<unsigned char>(ptr[2])) << 16)
-        | (static_cast<uint32_t>(static_cast<unsigned char>(ptr[3])) << 24));
-  }*/
-}
-
 inline void EncodeFixed32(char* buf, uint32_t value) {
-//#if __BYTE_ORDER == __LITTLE_ENDIAN
   memcpy(buf, &value, sizeof(value));
-/*#else
-  buf[0] = value & 0xff;
-  buf[1] = (value >> 8) & 0xff;
-  buf[2] = (value >> 16) & 0xff;
-  buf[3] = (value >> 24) & 0xff;
-#endif*/
 }
 
-int Count(rocksdb::WriteBatch* b)
+void RocksDBStore::RocksDBTransactionImpl::flush_batch()
 {
-  return DecodeFixed32(b->Data().c_str() + 8);
+  if (!strBat.empty()) {
+    bat = rocksdb::WriteBatch(strBat);
+    strBat.clear();
+  }
 }
 
-void RocksDBStore::RocksDBTransactionImpl::merge_into_batch(string& target)
+void RocksDBStore::RocksDBTransactionImpl::merge_from(
+  KeyValueDB::Transaction t)
 {
   const int kHeader = 12;
-  assert(target.size() == 0 || target.size() >= kHeader);
-  const string& s = bat.Data();
+  const int kCountPos = 8;
+  const int preallocateSize = 1024 * 1024;
+  RocksDBTransactionImpl * _t =
+    static_cast<RocksDBTransactionImpl *>(t.get());
+
+  assert(strBat.size() == 0 || strBat.size() >= kHeader);
+  const string& s = _t->bat.Data();
   if (s.empty()) {
     return;
   }
-  if (target.empty()) {
-    target = s;
-  } else {
-    int cnt = DecodeFixed32(s.c_str() + 8);
-    cnt += DecodeFixed32(target.c_str() + 8);
-    EncodeFixed32(&target.at(8), cnt);
-    target.append(s.c_str() + kHeader, s.size() - kHeader );
+  if (strBat.empty()) {
+    strBat.reserve(preallocateSize);
+    strBat = bat.Data();
   }
-}
-
-void RocksDBStore::RocksDBTransactionImpl::reset_batch(const string& str)
-{
-  bat = rocksdb::WriteBatch(str);
+  int cnt = DecodeFixed32(s.c_str() + kCountPos);
+  cnt += DecodeFixed32(strBat.c_str() + kCountPos);
+  EncodeFixed32(&strBat.at(kCountPos), cnt);
+  strBat.append(s.c_str() + kHeader, s.size() - kHeader );
 }
 
 //gets will bypass RocksDB row cache, since it uses iterator

@@ -7777,29 +7777,29 @@ void BlueStore::_kv_sync_thread()
 	dout(10) << __func__ << " new_blobid_max " << new_blobid_max << dendl;
       }
       auto end = kv_submitting.end();
+      int max_batch = cct->_conf->bluestore_max_contexts_per_kv_batch;
       for (auto it = kv_submitting.begin(); it != end; ) {
         auto iit = it;
         auto& txc0 = *iit;
-        RocksDBStore::RocksDBTransactionImpl * t0 =
-          static_cast<RocksDBStore::RocksDBTransactionImpl *>(txc0.t.get());
 
-        string stransact;
-        int pos = 0;
-        const int max_bunch = 64;
-        stransact.reserve(max_bunch * 4096);
-        for( iit = it; pos < max_bunch && iit != end; iit++ ) {
+	// handle txc0 out of the loop to prevent from merge_from() call
+        assert(txc0.state == TransContext::STATE_KV_QUEUED);
+        _txc_finalize_kv(&txc0, txc0.t);
+        txc0.log_state_latency(logger, l_bluestore_state_kv_queued_lat);
+        iit = it;
+        ++iit;
+
+        int pos = 1;
+	for(; pos < max_batch && iit != end; iit++ ) {
           auto& txc = *iit;
 
 	  assert(txc.state == TransContext::STATE_KV_QUEUED);
 	  _txc_finalize_kv(&txc, txc.t);
 	  txc.log_state_latency(logger, l_bluestore_state_kv_queued_lat);
 
-          RocksDBStore::RocksDBTransactionImpl * _t =
-            static_cast<RocksDBStore::RocksDBTransactionImpl *>(txc.t.get());
-          _t->merge_into_batch(stransact);     
+	  txc0.t->merge_from(txc.t);
           ++pos;
         }
-        t0->reset_batch(stransact);
 	int r = db->submit_transaction(txc0.t);
 	assert(r == 0);
         for( auto iit2 = it; iit2 != iit; iit2++ ) {

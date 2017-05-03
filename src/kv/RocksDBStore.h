@@ -251,6 +251,7 @@ public:
   class RocksDBTransactionImpl : public KeyValueDB::TransactionImpl {
   public:
     rocksdb::WriteBatch bat;
+    string strBat;
     RocksDBStore *db;
 
     explicit RocksDBTransactionImpl(RocksDBStore *_db);
@@ -285,8 +286,8 @@ public:
       const string& k,
       const bufferlist &bl) override;
 
-    void merge_into_batch(string& target);
-    void reset_batch(const string& str);
+    void merge_from(KeyValueDB::Transaction) override;
+    void flush_batch();
   };
 
   KeyValueDB::Transaction get_transaction() override {
