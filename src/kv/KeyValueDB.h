@@ -68,6 +68,13 @@ public:
       const bufferlist& bl) {
       set(prefix, string(k, keylen), bl);
     }
+    virtual void claim_and_set(
+      const std::string &prefix,   ///< [in] Prefix for the key
+      const std::string &k,	   ///< [in] Key to set
+      bufferlist &bl               ///< [in/out] Value to set, might be destroyed on return
+      ) {
+      set(prefix, k, bl); // default implementation uses regular set()
+    }
 
     /// Removes Keys (via encoded bufferlist)
     void rmkeys(

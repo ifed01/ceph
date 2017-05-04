@@ -40,6 +40,7 @@
 #include "bluestore_types.h"
 #include "BlockDevice.h"
 #include "common/EventTrace.h"
+#include "BlueFS.h"
 
 class Allocator;
 class FreelistManager;
@@ -2066,6 +2067,7 @@ public:
     f->open_object_section("perf_counters");
     logger->dump_formatted(f, false);
     f->close_section();
+    bluefs->dump_perf_counters(f);
   }
 
   void register_osr(OpSequencer *osr) {
