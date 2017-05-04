@@ -456,6 +456,7 @@ int RocksDBStore::submit_transaction(KeyValueDB::Transaction t)
   _t->bat.Iterate(&bat_txc);
   *_dout << " Rocksdb transaction: " << bat_txc.seen << dendl;
   
+  derr<<_t->bat.GetDataSize()<<dendl;
   rocksdb::Status s = db->Write(woptions, &_t->bat);
   if (!s.ok()) {
     RocksWBHandler rocks_txc;
@@ -510,7 +511,6 @@ int RocksDBStore::submit_transaction_sync(KeyValueDB::Transaction t)
   RocksWBHandler bat_txc;
   _t->bat.Iterate(&bat_txc);
   *_dout << " Rocksdb transaction: " << bat_txc.seen << dendl;
-
   rocksdb::Status s = db->Write(woptions, &_t->bat);
   if (!s.ok()) {
     RocksWBHandler rocks_txc;
@@ -597,6 +597,21 @@ void RocksDBStore::RocksDBTransactionImpl::set(
       bat.Put(rocksdb::Slice(key),
 	       rocksdb::Slice(val.c_str(), val.length()));
     }
+  }
+}
+
+void RocksDBStore::RocksDBTransactionImpl::claim_and_set(
+  const string &prefix,
+  const string &k,
+  bufferlist &to_set_bl)
+{
+  string key = combine_strings(prefix, k);
+  if (get_flags() & KeyValueDB::CAN_MERGE_TRANSACTION) {
+    interim_bat.claim_and_set(key, to_set_bl);
+  } else {
+    bat.Put(rocksdb::Slice(key),
+            rocksdb::Slice(to_set_bl.c_str(),
+			   to_set_bl.length()));
   }
 }
 
@@ -702,6 +717,13 @@ void RocksDBStore::RocksDBTransactionImpl::merge(
     }
 }
 
+/*
+void RocksDBStore::RocksDBTransactionImpl::flush_batch() {
+  if (!interim_bat.empty()) {
+    _merge_from(this);
+  }
+}
+
 void RocksDBStore::RocksDBTransactionImpl::merge_from(
   KeyValueDB::Transaction t) 
 {
@@ -710,15 +732,64 @@ void RocksDBStore::RocksDBTransactionImpl::merge_from(
   RocksDBTransactionImpl * _t =
     static_cast<RocksDBTransactionImpl *>(t.get());
   _merge_from(_t);
-}
+}*/
 
 void RocksDBStore::RocksDBTransactionImpl::_merge_from(
   RocksDBTransactionImpl* t)
 {
   assert(get_flags() & KeyValueDB::CAN_MERGE_TRANSACTION);
   assert(t->get_flags() & KeyValueDB::CAN_MERGE_TRANSACTION);
+  if (bat.GetDataSize() == 12) { //FIXME!!!
+    bat = rocksdb::WriteBatch(1024*1024*4);
+  }
   t->interim_bat.toWriteBatch(&bat);
 }
+
+inline uint32_t DecodeFixed32(const char* ptr)
+{
+  uint32_t result;
+  memcpy(&result, ptr, sizeof(result));  // gcc optimizes this to a plain load
+  return result;
+}
+
+inline void EncodeFixed32(char* buf, uint32_t value) {
+  memcpy(buf, &value, sizeof(value));
+}
+
+void RocksDBStore::RocksDBTransactionImpl::merge_from(
+  KeyValueDB::Transaction t) 
+{
+  RocksDBTransactionImpl * _t =
+    static_cast<RocksDBTransactionImpl *>(t.get());
+
+  const int kHeader = 12;
+  assert(stransact.size() == 0 || stransact.size() >= kHeader);
+  const string& s = _t->bat.Data();
+  if (s.empty()) {
+    return;
+  }
+  if (stransact.empty()) {
+    stransact.reserve(1024 * 1024);
+    stransact = bat.Data();
+  }
+  int cnt = DecodeFixed32(s.c_str() + 8);
+  cnt += DecodeFixed32(stransact.c_str() + 8);
+  EncodeFixed32(&stransact.at(8), cnt);
+  stransact.append(s.c_str() + kHeader, s.size() - kHeader );
+}
+
+
+void RocksDBStore::RocksDBTransactionImpl::flush_batch() {
+  if (!stransact.empty()) {
+    bat = rocksdb::WriteBatch(stransact);
+    stransact.clear();
+  }
+}
+
+/*void RocksDBStore::RocksDBTransactionImpl::reset_batch(const string& str)
+{
+  bat = rocksdb::WriteBatch(str);
+}*/
 
 //gets will bypass RocksDB row cache, since it uses iterator
 int RocksDBStore::get(

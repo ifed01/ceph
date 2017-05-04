@@ -3893,7 +3893,7 @@ int BlueStore::_open_fm(bool create)
     {
       bufferlist bl;
       bl.append(freelist_type);
-      t->set(PREFIX_SUPER, "freelist_type", bl);
+      t->claim_and_set(PREFIX_SUPER, "freelist_type", bl);
     }
     fm->create(bdev->get_size(), t);
 
@@ -3911,7 +3911,7 @@ int BlueStore::_open_fm(bool create)
 	       << " for bluefs" << dendl;
       bufferlist bl;
       ::encode(bluefs_extents, bl);
-      t->set(PREFIX_SUPER, "bluefs_extents", bl);
+      t->claim_and_set(PREFIX_SUPER, "bluefs_extents", bl);
       dout(20) << __func__ << " bluefs_extents 0x" << std::hex << bluefs_extents
 	       << std::dec << dendl;
     } else {
@@ -4846,7 +4846,7 @@ int BlueStore::mkfs()
     {
       bufferlist bl;
       ::encode((uint64_t)min_alloc_size, bl);
-      t->set(PREFIX_SUPER, "min_alloc_size", bl);
+      t->claim_and_set(PREFIX_SUPER, "min_alloc_size", bl);
     }
 
     ondisk_format = latest_ondisk_format;
@@ -5043,6 +5043,13 @@ int BlueStore::umount()
 {
   assert(mounted);
   dout(1) << __func__ << dendl;
+  derr << " rocksdb dump:\n";
+  JSONFormatter f(true);
+  f.open_object_section("transaction");
+  get_db_statistics(&f);
+  f.close_section();
+  f.flush(*_dout);
+  *_dout << dendl;
 
   _osr_drain_all();
   _osr_unregister_all();
@@ -7179,12 +7186,12 @@ void BlueStore::_prepare_ondisk_format_super(KeyValueDB::Transaction& t)
   {
     bufferlist bl;
     ::encode(ondisk_format, bl);
-    t->set(PREFIX_SUPER, "ondisk_format", bl);
+    t->claim_and_set(PREFIX_SUPER, "ondisk_format", bl);
   }
   {
     bufferlist bl;
     ::encode(min_compat_ondisk_format, bl);
-    t->set(PREFIX_SUPER, "min_compat_ondisk_format", bl);
+    t->claim_and_set(PREFIX_SUPER, "min_compat_ondisk_format", bl);
   }
 }
 
@@ -7357,7 +7364,7 @@ int BlueStore::_upgrade_super()
 	derr << __func__ << " failed to read min_min_alloc_size" << dendl;
 	return -EIO;
       }
-      t->set(PREFIX_SUPER, "min_alloc_size", bl);
+      t->claim_and_set(PREFIX_SUPER, "min_alloc_size", bl);
       t->rmkey(PREFIX_SUPER, "min_min_alloc_size");
     }
     ondisk_format = 2;
@@ -7397,7 +7404,8 @@ void BlueStore::get_db_statistics(Formatter *f)
 BlueStore::TransContext *BlueStore::_txc_create(OpSequencer *osr)
 {
   TransContext *txc = new TransContext(cct, osr);
-  txc->t = db->get_transaction(KeyValueDB::CAN_MERGE_TRANSACTION);
+  //txc->t = db->get_transaction(KeyValueDB::CAN_MERGE_TRANSACTION);
+  txc->t = db->get_transaction();
   osr->queue_new(txc);
   dout(20) << __func__ << " osr " << osr << " = " << txc
 	   << " seq " << txc->seq << dendl;
@@ -7629,7 +7637,7 @@ void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
 	     << blob_part << " bytes spanning blobs + "
 	     << extent_part << " bytes inline extents)"
 	     << dendl;
-    t->set(PREFIX_OBJ, o->key.c_str(), o->key.size(), bl);
+    t->claim_and_set(PREFIX_OBJ, string(o->key.c_str(), o->key.size()), bl);
     o->flushing_count++;
   }
 
@@ -7659,7 +7667,7 @@ void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
       ::encode(*(sb->persistent), bl);
       dout(20) << "  shared_blob 0x" << std::hex << sbid << std::dec
 	       << " is " << bl.length() << dendl;
-      t->set(PREFIX_SHARED_BLOB, key, bl);
+      t->claim_and_set(PREFIX_SHARED_BLOB, key, bl);
     }
   }
 }
@@ -8017,7 +8025,7 @@ void BlueStore::_kv_sync_thread()
 	new_nid_max = nid_last + cct->_conf->bluestore_nid_prealloc;
 	bufferlist bl;
 	::encode(new_nid_max, bl);
-	t->set(PREFIX_SUPER, "nid_max", bl);
+	t->claim_and_set(PREFIX_SUPER, "nid_max", bl);
 	dout(10) << __func__ << " new_nid_max " << new_nid_max << dendl;
       }
       if (blobid_last + cct->_conf->bluestore_blobid_prealloc/2 > blobid_max) {
@@ -8026,7 +8034,7 @@ void BlueStore::_kv_sync_thread()
 	new_blobid_max = blobid_last + cct->_conf->bluestore_blobid_prealloc;
 	bufferlist bl;
 	::encode(new_blobid_max, bl);
-	t->set(PREFIX_SUPER, "blobid_max", bl);
+	t->claim_and_set(PREFIX_SUPER, "blobid_max", bl);
 	dout(10) << __func__ << " new_blobid_max " << new_blobid_max << dendl;
       }
       auto end = kv_submitting.end();
@@ -8036,13 +8044,15 @@ void BlueStore::_kv_sync_thread()
         auto iit = it;
         auto txc0 = *iit;
 
-/*        RocksDBStore::RocksDBTransactionImpl * t0 =
-          static_cast<RocksDBStore::RocksDBTransactionImpl *>(txc0.t.get());
+        // handle txc0 out of the loop to prevent from merge_from() call
+        assert(txc0->state == TransContext::STATE_KV_QUEUED);
+        _txc_finalize_kv(txc0, txc0->t);
+        txc0->log_state_latency(logger, l_bluestore_state_kv_queued_lat);
+        iit = it;
+        ++iit;
 
-        string stransact;
-        stransact.reserve(max_bunch * 4096);*/
-        int pos = 0;
-        for( iit = it; pos < max_batch && iit != end; iit++ ) {
+        int pos = 1;
+        for(; pos < max_batch && iit != end; iit++ ) {
           auto txc = *iit;
 
           assert(txc->state == TransContext::STATE_KV_QUEUED);
@@ -8096,7 +8106,7 @@ void BlueStore::_kv_sync_thread()
 	  ::encode(bluefs_extents, bl);
 	  dout(10) << __func__ << " bluefs_extents now 0x" << std::hex
 		   << bluefs_extents << std::dec << dendl;
-	  synct->set(PREFIX_SUPER, "bluefs_extents", bl);
+	  synct->claim_and_set(PREFIX_SUPER, "bluefs_extents", bl);
 	}
       }
 
@@ -8432,7 +8442,7 @@ int BlueStore::queue_transactions(
     ::encode(*txc->deferred_txn, bl);
     string key;
     get_deferred_key(txc->deferred_txn->seq, &key);
-    txc->t->set(PREFIX_DEFERRED, key, bl);
+    txc->t->claim_and_set(PREFIX_DEFERRED, key, bl);
   }
 
   if (handle)
@@ -10205,7 +10215,7 @@ int BlueStore::_omap_setkeys(TransContext *txc,
     final_key += key;
     dout(30) << __func__ << "  " << pretty_binary_string(final_key)
 	     << " <- " << key << dendl;
-    txc->t->set(PREFIX_OMAP, final_key, value);
+    txc->t->claim_and_set(PREFIX_OMAP, final_key, value);
   }
   r = 0;
   dout(10) << __func__ << " " << c->cid << " " << o->oid << " = " << r << dendl;
@@ -10632,7 +10642,7 @@ int BlueStore::_create_collection(
     coll_map[cid] = *c;
   }
   ::encode((*c)->cnode, bl);
-  txc->t->set(PREFIX_COLL, stringify(cid), bl);
+  txc->t->claim_and_set(PREFIX_COLL, stringify(cid), bl);
   r = 0;
 
  out:
@@ -10750,7 +10760,7 @@ int BlueStore::_split_collection(TransContext *txc,
 
   bufferlist bl;
   ::encode(c->cnode, bl);
-  txc->t->set(PREFIX_COLL, stringify(c->cid), bl);
+  txc->t->claim_and_set(PREFIX_COLL, stringify(c->cid), bl);
 
   dout(10) << __func__ << " " << c->cid << " to " << d->cid << " "
 	   << " bits " << bits << " = " << r << dendl;

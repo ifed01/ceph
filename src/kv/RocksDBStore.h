@@ -281,8 +281,15 @@ public:
     typedef std::vector<Entry> EntryVector;
     EntryVector m_entries;
   public:
+    TransactionContainer() {
+      m_entries.reserve(16);
+    }
     void set(const string &k, const bufferlist &bl) {
       m_entries.emplace_back(Entry(SET, k, bl));
+    }
+    void claim_and_set(const string &k, bufferlist &bl) {
+      m_entries.emplace_back(Entry(SET, k));
+      m_entries.rbegin()->value.claim(bl);
     }
     void rmkey(const string &k) {
       m_entries.emplace_back(Entry(RM_KEY, k));
@@ -329,6 +336,7 @@ public:
   class RocksDBTransactionImpl : public KeyValueDB::TransactionImpl {
     uint32_t flags;
     TransactionContainer interim_bat;
+    string stransact;
 
     void _merge_from(RocksDBTransactionImpl* t);
 
@@ -346,6 +354,10 @@ public:
       const char *k,
       size_t keylen,
       const bufferlist &bl) override;
+    void claim_and_set(
+      const string &prefix,
+      const string &k,
+      bufferlist &bl) override;
     void rmkey(
       const string &prefix,
       const string &k) override;
@@ -372,12 +384,8 @@ public:
     }
     void merge_from(
       KeyValueDB::Transaction) override;
+    void flush_batch();
 
-    void flush_batch() {
-      if (!interim_bat.empty()) {
-	_merge_from(this);
-      }
-    }
   };
 
   KeyValueDB::Transaction get_transaction(uint32_t flags = 0) override {
