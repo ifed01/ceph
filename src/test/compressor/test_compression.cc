@@ -493,10 +493,10 @@ TEST(ZlibCompressor, isal_compress_zlib_decompress_walk)
 #include <atomic>
 #include "common/Cond.h"
 
-static Mutex _mutex("compress_perf_comp");
-static Cond ready_cond;
-static Cond start_cond;
-static Cond stop_cond;
+Mutex _mutex("compress_perf_comp");
+Cond ready_cond;
+Cond start_cond;
+Cond stop_cond;
 
 std::atomic<uint64_t> ready_thread_count = {0};
 
