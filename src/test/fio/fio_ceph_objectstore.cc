@@ -87,6 +87,8 @@ struct Engine {
       ostringstream ostr;
       Formatter* f = Formatter::create("json-pretty", "json-pretty", "json-pretty");
       os->dump_perf_counters(f);
+      os->get_db_statistics(f);
+      //os->generate_db_histogram(f);
       f->flush(ostr);
       delete f;
       os->umount();
@@ -215,6 +217,10 @@ Job::Job(Engine* engine, const thread_data* td)
     auto& coll = collections[i % collections.size()];
 
     objects.emplace_back(f->file_name, coll);
+/*    char buf[100];
+    sprintf(buf, "%x", i);
+    objects.emplace_back(buf, coll);*/
+
     auto& oid = objects.back().oid;
 
     t.touch(coll.cid, oid);

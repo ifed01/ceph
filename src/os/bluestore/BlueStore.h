@@ -989,6 +989,8 @@ public:
 
     /// key under PREFIX_OBJ where we are stored
     mempool::bluestore_meta_other::string key;
+    mempool::bluestore_meta_other::string shard_key;
+
 
     boost::intrusive::list_member_hook<> lru_item;
 
@@ -1014,6 +1016,7 @@ public:
     }
 
     void flush();
+    void recalc_shard_key();
     void get() {
       ++nref;
     }

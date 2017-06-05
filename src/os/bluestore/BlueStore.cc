@@ -2002,7 +2002,7 @@ void BlueStore::ExtentMap::update(KeyValueDB::Transaction t,
       it.shard->dirty = false;
       it.shard->shard_info->bytes = it.bl.length();
       generate_extent_shard_key_and_apply(
-	onode->key,
+	onode->shard_key,
 	it.shard->shard_info->offset,
 	&key,
         [&](const string& final_key) {
@@ -2061,7 +2061,7 @@ void BlueStore::ExtentMap::reshard(
   string key;
   for (unsigned i = si_begin; i < si_end; ++i) {
     generate_extent_shard_key_and_apply(
-      onode->key, shards[i].shard_info->offset, &key,
+      onode->shard_key, shards[i].shard_info->offset, &key,
       [&](const string& final_key) {
 	t->rmkey(PREFIX_OBJ, final_key);
       }
@@ -2554,12 +2554,15 @@ void BlueStore::ExtentMap::fault_range(
 	       << p->shard_info->offset << std::dec << dendl;
       bufferlist v;
       generate_extent_shard_key_and_apply(
-	onode->key, p->shard_info->offset, &key,
+	onode->shard_key, p->shard_info->offset, &key,
         [&](const string& final_key) {
           int r = db->get(PREFIX_OBJ, final_key, &v);
           if (r < 0) {
 	    derr << __func__ << " missing shard 0x" << std::hex
 		 << p->shard_info->offset << std::dec << " for " << onode->oid
+                 << " onode key " << onode->key
+                 << " shard key " << onode->shard_key
+                 << " key " << key
 		 << dendl;
 	    assert(r >= 0);
           }
@@ -2873,6 +2876,14 @@ void BlueStore::Onode::flush()
   ldout(c->store->cct, 20) << __func__ << " done" << dendl;
 }
 
+void BlueStore::Onode::recalc_shard_key()
+{
+  assert(!key.empty());
+  shard_key = key;
+/*  shard_key.reserve(8);
+  _key_encode_u64(onode.nid, &shard_key);*/
+}
+
 // =======================================================
 // WriteContext
  
@@ -3133,7 +3144,6 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
     on->exists = true;
     bufferptr::iterator p = v.front().begin_deep();
     on->onode.decode(p);
-
     // initialize extent_map
     on->extent_map.decode_spanning_blobs(p);
     if (on->onode.extent_map_shards.empty()) {
@@ -3142,6 +3152,7 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
     } else {
       on->extent_map.init_shards(false, false);
     }
+    on->recalc_shard_key();
   }
   o.reset(on);
   return onode_map.add(oid, o);
@@ -5377,7 +5388,7 @@ int BlueStore::fsck(bool deep)
       for (auto& s : o->extent_map.shards) {
 	dout(20) << __func__ << "    shard " << *s.shard_info << dendl;
 	expecting_shards.push_back(string());
-	get_extent_shard_key(o->key, s.shard_info->offset,
+	get_extent_shard_key(o->shard_key, s.shard_info->offset,
 			     &expecting_shards.back());
 	if (s.shard_info->offset >= o->onode.size) {
 	  derr << __func__ << " error: " << oid << " shard 0x" << std::hex
@@ -7396,6 +7407,7 @@ void BlueStore::_assign_nid(TransContext *txc, OnodeRef o)
   uint64_t nid = ++nid_last;
   dout(20) << __func__ << " " << nid << dendl;
   o->onode.nid = nid;
+  o->recalc_shard_key();
   txc->last_nid = nid;
 }
 
@@ -10145,7 +10157,7 @@ int BlueStore::_do_remove(
   for (auto &s : o->extent_map.shards) {
     dout(20) << __func__ << "  removing shard 0x" << std::hex
 	     << s.shard_info->offset << std::dec << dendl;
-    generate_extent_shard_key_and_apply(o->key, s.shard_info->offset, &key,
+    generate_extent_shard_key_and_apply(o->shard_key, s.shard_info->offset, &key,
       [&](const string& final_key) {
         txc->t->rmkey(PREFIX_OBJ, final_key);
       }
@@ -10687,14 +10699,14 @@ int BlueStore::_rename(TransContext *txc,
   }
 
   txc->t->rmkey(PREFIX_OBJ, oldo->key.c_str(), oldo->key.size());
+  get_object_key(cct, new_oid, &new_okey);
 
   // rewrite shards
   {
     oldo->extent_map.fault_range(db, 0, oldo->onode.size);
-    get_object_key(cct, new_oid, &new_okey);
     string key;
     for (auto &s : oldo->extent_map.shards) {
-      generate_extent_shard_key_and_apply(oldo->key, s.shard_info->offset, &key,
+      generate_extent_shard_key_and_apply(oldo->shard_key, s.shard_info->offset, &key,
         [&](const string& final_key) {
           txc->t->rmkey(PREFIX_OBJ, final_key);
         }
