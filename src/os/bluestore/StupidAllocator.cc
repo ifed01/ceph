@@ -13,8 +13,7 @@
 StupidAllocator::StupidAllocator(CephContext* cct)
   : cct(cct), num_free(0),
     num_reserved(0),
-    free(10),
-    last_alloc(0)
+    free(10)
 {
 }
 
@@ -98,9 +97,6 @@ int64_t StupidAllocator::allocate_int(
   int orig_bin = bin;
 
   auto p = free[0].begin();
-
-  if (!hint)
-    hint = last_alloc;
 
   // search up (from hint)
   if (hint) {
@@ -199,7 +195,6 @@ int64_t StupidAllocator::allocate_int(
   num_reserved -= *length;
   assert(num_free >= 0);
   assert(num_reserved >= 0);
-  last_alloc = *offset + *length;
   return 0;
 }
 

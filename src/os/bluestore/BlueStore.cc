@@ -5486,7 +5486,6 @@ int BlueStore::_mount(bool kv_only, bool open_db)
 
   mempool_thread.init();
 
-
   mounted = true;
   return 0;
 

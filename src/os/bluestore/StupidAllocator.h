@@ -22,8 +22,6 @@ class StupidAllocator : public Allocator {
     pair<const uint64_t,uint64_t>> allocator;
   std::vector<btree_interval_set<uint64_t,allocator>> free;  ///< leading-edge copy
 
-  uint64_t last_alloc;
-
   unsigned _choose_bin(uint64_t len);
   void _insert_free(uint64_t offset, uint64_t len);
 
