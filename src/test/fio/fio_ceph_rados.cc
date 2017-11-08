@@ -203,11 +203,12 @@ struct Job {
   */
   std::vector<std::string> objects; //< track create objects
   std::vector<io_u*> events; //< completions for fio_ceph_os_event()
+  std::mutex lock;
   const bool unlink; //< unlink objects on destruction
 
   librados::Rados rados;
   librados::IoCtx io_ctx;
-//  std::vector<UnitComplete*> free_completions;
+  std::vector<UnitComplete*> free_completions;
 
   UnitComplete* rados_op_started(io_u* u);
   void rados_op_completed(UnitComplete* uc);
@@ -231,7 +232,7 @@ class UnitComplete {
     job = j;
     rados_completion = c;
   }
-  void start(io_u* _u) { 
+  void start(io_u* _u) {
     assert(!u);
     u = _u;
   }
@@ -250,6 +251,7 @@ class UnitComplete {
     }
 
     // mark the pointer to indicate completion for fio_ceph_os_getevents()
+    assert(!u->engine_data);
     u->engine_data = reinterpret_cast<void*>(1ull);
     u = nullptr;
     bl.clear();
@@ -369,25 +371,36 @@ Job::~Job()
 /*  for (auto& obj : objects) {
     io_ctx.remove(obj);
   }*/
-/*  for( auto& c :free_completions) {
+  for( auto& c :free_completions) {
     c->get_rados_completion()->release();
     delete c;
   }
-  free_completions.clear();*/
+  free_completions.clear();
   engine->deref();
 }
 
 UnitComplete* Job::rados_op_started(io_u* u)
 {
   UnitComplete* uc;
-  /*if (free_completions.empty())*/ {
-    uc = new UnitComplete(this);
-    auto c = rados.aio_create_completion((void *) uc, 0,
-      UnitComplete::on_complete_cb);
-    uc->init(this, c);
-/*  } else {
-    uc = free_completions.back();
-    free_completions.pop_back();*/
+   std::lock_guard<std::mutex> l(lock);
+  {
+      uc = new UnitComplete(this);
+      auto c = rados.aio_create_completion((void *) uc, 0,
+        UnitComplete::on_complete_cb);
+      uc->init(this, c);
+/*
+  if (free_completions.empty()) {
+      uc = new UnitComplete(this);
+      auto c = rados.aio_create_completion((void *) uc, 0,
+        UnitComplete::on_complete_cb);
+      uc->init(this, c);
+    } else {
+      //cout<<"op started reused"<<std::endl;
+      uc = free_completions.back();
+      free_completions.pop_back();
+      uc->get_rados_completion()->
+        set_safe_callback((void *)uc, UnitComplete::on_complete_cb);
+    }*/
   }
   assert(uc);
   uc->start(u);
@@ -396,10 +409,12 @@ UnitComplete* Job::rados_op_started(io_u* u)
 
 void Job::rados_op_completed(UnitComplete* uc)
 {
-  uc->get_rados_completion()->release();
-  delete uc;
-  
-  /*free_completions.push_back(uc);*/
+  /*uc->get_rados_completion()->release();
+  delete uc;*/
+  //cout<<"op completed"<<std::endl;
+  uc->get_rados_completion()->reset();
+  std::lock_guard<std::mutex> l(lock);
+  free_completions.push_back(uc);
 }
 
 int fio_ceph_os_setup(thread_data* td)
@@ -460,7 +475,6 @@ int fio_ceph_os_getevents(thread_data* td, unsigned int min,
       break;
     usleep(100);
   } while (1);
-
   return events;
 }
 

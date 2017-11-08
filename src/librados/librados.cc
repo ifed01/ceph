@@ -1054,6 +1054,12 @@ void librados::AioCompletion::AioCompletion::release()
   delete this;
 }
 
+void librados::AioCompletion::AioCompletion::reset()
+{
+  AioCompletionImpl *c = (AioCompletionImpl *)pc;
+  c->reset();
+}
+
 ///////////////////////////// IoCtx //////////////////////////////
 librados::IoCtx::IoCtx() : io_ctx_impl(NULL)
 {

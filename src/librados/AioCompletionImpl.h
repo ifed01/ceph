@@ -141,6 +141,24 @@ struct librados::AioCompletionImpl {
     released = true;
     put_unlock();
   }
+  void reset() {
+    lock.Lock();
+    assert(!released);
+    
+    rval = 0;
+    complete = false;
+	  objver = 0;
+    tid = 0;
+	  is_read = false;
+    bl.clear();
+    blp = nullptr;
+    out_buf = nullptr;
+	  io = NULL;
+    aio_write_seq = 0;
+    assert(!aio_write_list_item.is_on_list());
+    
+    lock.Unlock();
+  }
   void put() {
     lock.Lock();
     put_unlock();
@@ -170,9 +188,11 @@ struct C_AioComplete : public Context {
 
     rados_callback_t cb_safe = c->callback_safe;
     void *cb_safe_arg = c->callback_safe_arg;
+
     if (cb_safe)
       cb_safe(c, cb_safe_arg);
 
+    //FIXME: to avoid races in case of reuse this has to be before cb_safe call
     c->lock.Lock();
     c->callback_complete = NULL;
     c->callback_safe = NULL;

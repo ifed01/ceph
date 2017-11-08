@@ -200,6 +200,7 @@ namespace librados
     int get_version() __attribute__ ((deprecated));
     uint64_t get_version64();
     void release();
+    void reset();
     AioCompletionImpl *pc;
   };
 
