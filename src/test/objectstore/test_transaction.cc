@@ -42,7 +42,7 @@ TEST(Transaction, MoveAssign)
   ASSERT_FALSE(b.empty());
 }
 
-TEST(Transaction, CopyConstruct)
+/*TEST(Transaction, CopyConstruct)
 {
   auto a = ObjectStore::Transaction{};
   a.nop();
@@ -63,7 +63,7 @@ TEST(Transaction, CopyAssign)
   b = a; // copy-assign to b
   ASSERT_FALSE(a.empty());
   ASSERT_FALSE(b.empty());
-}
+}*/
 
 TEST(Transaction, Swap)
 {

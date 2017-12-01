@@ -190,7 +190,7 @@ int ObjectStore::queue_transactions(
   vector<Transaction>& tls,
   Context *onreadable,
   Context *oncommit,
-  Context *onreadable_sync,
+  SyncCompletionContext *onreadable_sync,
   Context *oncomplete,
   TrackedOpRef op = TrackedOpRef())
 {

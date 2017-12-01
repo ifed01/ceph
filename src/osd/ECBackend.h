@@ -71,7 +71,7 @@ public:
     OpRequestRef msg,
     ECSubWrite &op,
     const ZTracer::Trace &trace,
-    Context *on_local_applied_sync = 0
+    ObjectStore::SyncCompletionContext *on_local_applied_sync = 0
     );
   void handle_sub_read(
     pg_shard_t from,
@@ -112,7 +112,7 @@ public:
     const eversion_t &roll_forward_to,
     const vector<pg_log_entry_t> &log_entries,
     boost::optional<pg_hit_set_history_t> &hset_history,
-    Context *on_local_applied_sync,
+    ObjectStore::SyncCompletionContext *on_local_applied_sync,
     Context *on_all_applied,
     Context *on_all_commit,
     ceph_tid_t tid,
@@ -506,7 +506,7 @@ public:
     ExtentCache::write_pin pin;
 
     /// Callbacks
-    Context *on_local_applied_sync = nullptr;
+    ObjectStore::SyncCompletionContext *on_local_applied_sync = nullptr;
     Context *on_all_applied = nullptr;
     Context *on_all_commit = nullptr;
     ~Op() {

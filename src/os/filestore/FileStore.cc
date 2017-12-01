@@ -2017,7 +2017,7 @@ int FileStore::umount()
 
 FileStore::Op *FileStore::build_op(vector<Transaction>& tls,
 				   Context *onreadable,
-				   Context *onreadable_sync,
+				   ObjectStore::SyncCompletionContext *onreadable_sync,
 				   TrackedOpRef osd_op)
 {
   uint64_t bytes = 0, ops = 0;
@@ -2126,7 +2126,7 @@ void FileStore::_finish_op(OpSequencer *osr)
   logger->tinc(l_filestore_apply_latency, lat);
 
   if (o->onreadable_sync) {
-    o->onreadable_sync->complete(0);
+    o->onreadable_sync->complete(0, ObjectStore::object_state_t());
   }
   if (o->onreadable) {
     apply_finishers[osr->id % m_apply_finisher_num]->queue(o->onreadable);
@@ -2158,7 +2158,7 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
 {
   Context *onreadable;
   Context *ondisk;
-  Context *onreadable_sync;
+  ObjectStore::SyncCompletionContext *onreadable_sync;
   ObjectStore::Transaction::collect_contexts(
     tls, &onreadable, &ondisk, &onreadable_sync);
 
@@ -2314,7 +2314,7 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
   // start on_readable finisher after we queue journal item, as on_readable callback
   // is allowed to delete the Transaction
   if (onreadable_sync) {
-    onreadable_sync->complete(r);
+    onreadable_sync->complete(r, ObjectStore::object_state_t());
   }
   apply_finishers[osr->id % m_apply_finisher_num]->queue(onreadable, r);
 

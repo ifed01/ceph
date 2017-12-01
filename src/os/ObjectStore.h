@@ -213,6 +213,36 @@ public:
     }
   };
 
+  struct object_state_t{
+    uint64_t allocated_size = 0; //< amount of bytes allocated for the object
+    uint64_t logical_size = 0;   //< logical space size used by the client
+  };
+  /**
+  * More robust transaction context for synchronous completions
+  */
+  class SyncCompletionContext
+  {
+  public:
+
+    boost::intrusive::list_member_hook<> list_item;
+    
+    virtual ~SyncCompletionContext() {}
+    virtual void complete(int r, const object_state_t& st) {
+      finish(r, st);
+      delete this;
+    }
+  protected:
+    virtual void finish(int r, const object_state_t& st) = 0;
+  };
+
+  typedef boost::intrusive::list<
+    SyncCompletionContext,
+    boost::intrusive::member_hook<
+      SyncCompletionContext,
+      boost::intrusive::list_member_hook<>,
+        &SyncCompletionContext::list_item> > sync_context_list_t;
+
+
   /*********************************
    *
    * Object Contents and semantics
@@ -504,7 +534,7 @@ public:
 
     list<Context *> on_applied;
     list<Context *> on_commit;
-    list<Context *> on_applied_sync;
+    sync_context_list_t on_applied_sync;
 
   public:
     Transaction() = default;
@@ -567,9 +597,9 @@ public:
       if (!c) return;
       on_commit.push_back(c);
     }
-    void register_on_applied_sync(Context *c) {
+    void register_on_applied_sync(SyncCompletionContext *c) {
       if (!c) return;
-      on_applied_sync.push_back(c);
+      on_applied_sync.push_back(*c);
     }
     void register_on_complete(Context *c) {
       if (!c) return;
@@ -582,7 +612,7 @@ public:
       vector<Transaction>& t,
       Context **out_on_applied,
       Context **out_on_commit,
-      Context **out_on_applied_sync) {
+      SyncCompletionContext **out_on_applied_sync) {
       assert(out_on_applied);
       assert(out_on_commit);
       assert(out_on_applied_sync);
@@ -592,14 +622,16 @@ public:
 	   ++i) {
 	on_applied.splice(on_applied.end(), (*i).on_applied);
 	on_commit.splice(on_commit.end(), (*i).on_commit);
-	on_applied_sync.splice(on_applied_sync.end(), (*i).on_applied_sync);
+	//FIXME!!!
+	//on_applied_sync.splice(on_applied_sync.end(), i.on_applied_sync);
       }
       *out_on_applied = C_Contexts::list_to_context(on_applied);
       *out_on_commit = C_Contexts::list_to_context(on_commit);
-      *out_on_applied_sync = C_Contexts::list_to_context(on_applied_sync);
+      //FIXME
+      //*out_on_applied_sync = C_SyncContexts::list_to_context(on_applied_sync);
     }
 
-    Context *get_on_applied() {
+    /*Context *get_on_applied() {
       return C_Contexts::list_to_context(on_applied);
     }
     Context *get_on_commit() {
@@ -607,7 +639,7 @@ public:
     }
     Context *get_on_applied_sync() {
       return C_Contexts::list_to_context(on_applied_sync);
-    }
+    }*/
 
     void set_fadvise_flags(uint32_t flags) {
       data.fadvise_flags = flags;
@@ -1462,7 +1494,7 @@ public:
   unsigned apply_transactions(Sequencer *osr, vector<Transaction>& tls, Context *ondisk=0);
 
   int queue_transaction(Sequencer *osr, Transaction&& t, Context *onreadable, Context *ondisk=0,
-				Context *onreadable_sync=0,
+				SyncCompletionContext *onreadable_sync=0,
 				TrackedOpRef op = TrackedOpRef(),
 				ThreadPool::TPHandle *handle = NULL) {
     vector<Transaction> tls;
@@ -1473,7 +1505,7 @@ public:
 
   int queue_transactions(Sequencer *osr, vector<Transaction>& tls,
 			 Context *onreadable, Context *ondisk=0,
-			 Context *onreadable_sync=0,
+			 SyncCompletionContext *onreadable_sync=0,
 			 TrackedOpRef op = TrackedOpRef(),
 			 ThreadPool::TPHandle *handle = NULL) {
     assert(!tls.empty());
@@ -1494,7 +1526,7 @@ public:
     vector<Transaction>& tls,
     Context *onreadable,
     Context *oncommit,
-    Context *onreadable_sync,
+    SyncCompletionContext*onreadable_sync,
     Context *oncomplete,
     TrackedOpRef op);
 
@@ -1503,7 +1535,7 @@ public:
     Transaction&& t,
     Context *onreadable,
     Context *oncommit,
-    Context *onreadable_sync,
+    SyncCompletionContext *onreadable_sync,
     Context *oncomplete,
     TrackedOpRef op) {
 

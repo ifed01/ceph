@@ -217,7 +217,8 @@ private:
     utime_t start;
     uint64_t op;
     vector<Transaction> tls;
-    Context *onreadable, *onreadable_sync;
+    Context *onreadable;
+    ObjectStore::SyncCompletionContext *onreadable_sync;
     uint64_t ops, bytes;
     TrackedOpRef osd_op;
     ZTracer::Trace trace;
@@ -413,7 +414,8 @@ private:
   void _do_op(OpSequencer *o, ThreadPool::TPHandle &handle);
   void _finish_op(OpSequencer *o);
   Op *build_op(vector<Transaction>& tls,
-	       Context *onreadable, Context *onreadable_sync,
+	       Context *onreadable,
+	       ObjectStore::SyncCompletionContext *onreadable_sync,
 	       TrackedOpRef osd_op);
   void queue_op(OpSequencer *osr, Op *o);
   void op_queue_reserve_throttle(Op *o);

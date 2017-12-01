@@ -1838,7 +1838,9 @@ TEST_P(StoreTest, MultiSmallWriteSameBlock) {
     t.write(cid, a, 9000, 5, bl, 0);
     u.write(cid, a, 10, 5, bl, 0);
     u.write(cid, a, 7000, 5, bl, 0);
-    vector<ObjectStore::Transaction> v = {t, u};
+    vector<ObjectStore::Transaction> v;
+    v.emplace_back(std::move(t));
+    v.emplace_back(std::move(u));
     store->queue_transactions(&osr, v, nullptr, &c);
   }
   {
@@ -1849,7 +1851,9 @@ TEST_P(StoreTest, MultiSmallWriteSameBlock) {
     t.write(cid, a, 6000, 5, bl, 0);
     u.write(cid, a, 610, 5, bl, 0);
     u.write(cid, a, 11000, 5, bl, 0);
-    vector<ObjectStore::Transaction> v = {t, u};
+    vector<ObjectStore::Transaction> v;
+    v.emplace_back(std::move(t));
+    v.emplace_back(std::move(u));
     store->queue_transactions(&osr, v, nullptr, &d);
   }
   c.wait();

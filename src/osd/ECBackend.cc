@@ -923,7 +923,7 @@ void ECBackend::handle_sub_write(
   OpRequestRef msg,
   ECSubWrite &op,
   const ZTracer::Trace &trace,
-  Context *on_local_applied_sync)
+  ObjectStore::SyncCompletionContext *on_local_applied_sync)
 {
   if (msg)
     msg->mark_started();
@@ -1469,7 +1469,7 @@ void ECBackend::submit_transaction(
   const eversion_t &roll_forward_to,
   const vector<pg_log_entry_t> &log_entries,
   boost::optional<pg_hit_set_history_t> &hset_history,
-  Context *on_local_applied_sync,
+  ObjectStore::SyncCompletionContext *on_local_applied_sync,
   Context *on_all_applied,
   Context *on_all_commit,
   ceph_tid_t tid,
@@ -1994,7 +1994,7 @@ bool ECBackend::try_reads_to_commit()
       op->reqid,
       op->hoid,
       stats,
-      should_send ? iter->second : empty,
+      should_send ? iter->second : empty, // this moves passed transaction
       op->version,
       op->trim_to,
       op->roll_forward_to,

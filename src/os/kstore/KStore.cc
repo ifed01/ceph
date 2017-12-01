@@ -2142,7 +2142,7 @@ int KStore::queue_transactions(
   Context *ondisk;
   Context *onreadable_sync;
   ObjectStore::Transaction::collect_contexts(
-    tls, &onreadable, &ondisk, &onreadable_sync);
+    tls, &onreadable, &ondisk, nullptr /* &onreadable_sync*/);
 
   // set up the sequencer
   OpSequencer *osr;

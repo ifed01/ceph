@@ -182,14 +182,15 @@ class PrimaryLogPG::C_PG_ObjectContext : public Context {
   }
 };
 
-class PrimaryLogPG::C_OSD_OndiskWriteUnlock : public Context {
+class PrimaryLogPG::C_OSD_OndiskWriteUnlock 
+  : public ObjectStore::SyncCompletionContext {
   ObjectContextRef obc, obc2, obc3;
   public:
   C_OSD_OndiskWriteUnlock(
     ObjectContextRef o,
     ObjectContextRef o2 = ObjectContextRef(),
     ObjectContextRef o3 = ObjectContextRef()) : obc(o), obc2(o2), obc3(o3) {}
-  void finish(int r) override {
+  void finish(int r, const ObjectStore::object_state_t& st) override {
     obc->ondisk_write_unlock();
     if (obc2)
       obc2->ondisk_write_unlock();
@@ -9839,10 +9840,11 @@ void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
 
   Context *on_all_commit = new C_OSD_RepopCommit(this, repop);
   Context *on_all_applied = new C_OSD_RepopApplied(this, repop);
-  Context *onapplied_sync = new C_OSD_OndiskWriteUnlock(
-    ctx->obc,
-    ctx->clone_obc,
-    ctx->head_obc);
+  C_OSD_OndiskWriteUnlock *onapplied_sync =
+    new C_OSD_OndiskWriteUnlock(
+      ctx->obc,
+      ctx->clone_obc,
+      ctx->head_obc);
   if (!(ctx->log.empty())) {
     assert(ctx->at_version >= projected_last_update);
     projected_last_update = ctx->at_version;

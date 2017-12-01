@@ -8219,7 +8219,7 @@ void BlueStore::_txc_committed_kv(TransContext *txc)
 
   // warning: we're calling onreadable_sync inside the sequencer lock
   if (txc->onreadable_sync) {
-    txc->onreadable_sync->complete(0);
+    txc->onreadable_sync->complete(0, ObjectStore::object_state_t());
     txc->onreadable_sync = NULL;
   }
   unsigned n = txc->osr->parent->shard_hint.hash_to_shard(m_finisher_num);
@@ -9003,15 +9003,16 @@ int BlueStore::queue_transactions(
   FUNCTRACE();
   Context *onreadable;
   Context *ondisk;
-  Context *onreadable_sync;
+  ObjectStore::SyncCompletionContext* onreadable_sync;
+
   ObjectStore::Transaction::collect_contexts(
     tls, &onreadable, &ondisk, &onreadable_sync);
 
   if (cct->_conf->objectstore_blackhole) {
     dout(0) << __func__ << " objectstore_blackhole = TRUE, dropping transaction"
 	    << dendl;
-    delete ondisk;
     delete onreadable;
+    delete ondisk;
     delete onreadable_sync;
     return 0;
   }
