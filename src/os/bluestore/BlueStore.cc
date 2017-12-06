@@ -6449,6 +6449,35 @@ int BlueStore::statfs(struct store_statfs_t *buf)
   return 0;
 }
 
+int BlueStore::pool_statfs(uint64_t pool_id, struct store_statfs_t *buf)
+{
+  dout(20) << __func__ << " pool " << pool_id<< dendl;
+  if (!per_pool_stat_collection) {
+    dout(20) << __func__ << " not supported in a legacy mode " << dendl;
+    return -ENOTSUP;
+  }
+  buf->reset();
+  buf->total = bdev->get_size();
+  buf->available = alloc->get_free();
+
+  if (bluefs) {
+    // part of our shared device is "free" according to BlueFS
+    // Don't include bluestore_bluefs_min because that space can't
+    // be used for any other purpose.
+    buf->available += bluefs->get_free(bluefs_shared_bdev) - cct->_conf->bluestore_bluefs_min;
+  }
+
+  std::lock_guard<std::mutex> l(vstatfs_lock);
+  auto& pool_stat = osd_pools[pool_id];
+  buf->allocated = pool_stat.allocated();
+  buf->stored = pool_stat.stored();
+  buf->compressed = pool_stat.compressed();
+  buf->compressed_original = pool_stat.compressed_original();
+  buf->compressed_allocated = pool_stat.compressed_allocated();
+  dout(10) << __func__ << *buf << dendl;
+  return 0;
+}
+
 // ---------------
 // cache
 
@@ -9286,7 +9315,6 @@ void BlueStore::_txc_add_transaction(TransContext *txc, Transaction *t)
   for (vector<coll_t>::iterator p = i.colls.begin(); p != i.colls.end();
        ++p, ++j) {
     cvec[j] = _get_collection(*p);
-    
   }
   
   vector<OnodeRef> ovec(i.objects.size());
@@ -9302,14 +9330,16 @@ void BlueStore::_txc_add_transaction(TransContext *txc, Transaction *t)
 
     // collection operations
     CollectionRef &c = cvec[op->cid];
+
     // initialize osd_pool_id and do a smoke test that all collections belong
     // to the same pool
     spg_t pgid;
     if (!!c ? c->cid.is_pg(&pgid) : false) {
       assert(txc->osd_pool_id == 0 ||
-            txc->osd_pool_id == pgid.pool());
+	     txc->osd_pool_id == pgid.pool());
       txc->osd_pool_id = pgid.pool();
     }
+
     switch (op->op) {
     case Transaction::OP_RMCOLL:
       {

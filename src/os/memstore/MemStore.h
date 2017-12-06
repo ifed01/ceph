@@ -286,6 +286,7 @@ public:
   }
 
   int statfs(struct store_statfs_t *buf) override;
+  int pool_statfs(uint64_t pool_id, struct store_statfs_t *buf) override;
 
   bool exists(const coll_t& cid, const ghobject_t& oid) override;
   bool exists(CollectionHandle &c, const ghobject_t& oid) override;

@@ -1071,6 +1071,11 @@ int KStore::statfs(struct store_statfs_t* buf)
   return db->get_statfs(buf);
 }
 
+int KStore::pool_statfs(uint64_t pool_id, struct store_statfs_t *buf)
+{
+  return -ENOTSUP; //FIXME: to implement
+}
+
 // ---------------
 // cache
 
