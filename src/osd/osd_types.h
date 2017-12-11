@@ -2059,12 +2059,26 @@ struct pool_stat_t {
       acting = f;
   }
 
+  void add(const pool_stat_t& o) {
+    stats.add(o.stats);
+    log_size += o.log_size;
+    ondisk_log_size += o.ondisk_log_size;
+    up += o.up;
+    acting += o.acting;
+  }
   void add(const pg_stat_t& o) {
     stats.add(o.stats);
     log_size += o.log_size;
     ondisk_log_size += o.ondisk_log_size;
     up += o.up.size();
     acting += o.acting.size();
+  }
+  void sub(const pool_stat_t& o) {
+    stats.sub(o.stats);
+    log_size -= o.log_size;
+    ondisk_log_size -= o.ondisk_log_size;
+    up -= o.up;
+    acting -= o.acting;
   }
   void sub(const pg_stat_t& o) {
     stats.sub(o.stats);
@@ -5242,7 +5256,20 @@ struct store_statfs_t
   }
   bool operator ==(const store_statfs_t& other) const;
   void dump(Formatter *f) const;
+  DENC(store_statfs_t, v, p) {
+    DENC_START(1, 1, p);
+    denc(v.total, p);
+    denc(v.available, p);
+    denc(v.allocated, p);
+    denc(v.stored, p);
+    denc(v.compressed, p);
+    denc(v.compressed_allocated, p);
+    denc(v.compressed_original, p);
+    DENC_FINISH(p);
+  }
 };
+WRITE_CLASS_DENC(store_statfs_t)
+
 ostream &operator<<(ostream &lhs, const store_statfs_t &rhs);
 
 #endif

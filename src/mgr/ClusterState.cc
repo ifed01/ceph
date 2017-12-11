@@ -67,9 +67,7 @@ void ClusterState::load_digest(MMgrDigest *m)
 void ClusterState::ingest_pgstats(MPGStats *stats)
 {
   Mutex::Locker l(lock);
-
   const int from = stats->get_orig_source().num();
-
   pending_inc.update_stat(from, std::move(stats->osd_stat));
 
   for (auto p : stats->pg_stat) {
@@ -99,6 +97,23 @@ void ClusterState::ingest_pgstats(MPGStats *stats)
     }
 
     pending_inc.pg_stat_updates[pgid] = pg_stats;
+    pending_inc.pool_stat_updates[std::make_pair(pgid.pool(), from)]
+      .add(pg_stats);
+  }
+  // Depending on the backend version pool stat might be missing
+  // hence we're using original pool stat built from pg stats only
+  for (auto p : stats->pool_stat) {
+    const auto &pool_stats = p.second;
+    auto pool_iter =
+      pending_inc.pool_stat_updates.find(std::make_pair(p.first, from));
+    
+    // bypass pool stats already filtered out when enumerating pg stats
+    if (pool_iter == pending_inc.pool_stat_updates.end()) {
+      dout(20) << " bypass pool " << p.first << " from osd " << from << dendl;
+      continue;
+    }
+    // use 'allocated' as num_bytes for the pool, ignore others for now 
+    pool_iter->second.stats.sum.num_bytes = pool_stats.allocated;
   }
 }
 
@@ -118,7 +133,6 @@ void ClusterState::update_delta_stats()
   jf.dump_object("pending_inc", pending_inc);
   jf.flush(*_dout);
   *_dout << dendl;
-
   pg_map.apply_incremental(g_ceph_context, pending_inc);
   pending_inc = PGMap::Incremental();
 }

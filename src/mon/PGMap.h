@@ -48,7 +48,7 @@ public:
   int64_t num_pg = 0, num_osd = 0;
   int64_t num_pg_active = 0;
   int64_t num_pg_unknown = 0;
-  mempool::pgmap::unordered_map<int32_t,pool_stat_t> pg_pool_sum;
+  mempool::pgmap::unordered_map<int64_t,pool_stat_t> pg_pool_sum;
   mempool::pgmap::map<int64_t,int64_t> num_pg_by_pool;
   pool_stat_t pg_sum;
   osd_stat_t osd_sum;
@@ -223,6 +223,12 @@ public:
   mempool::pgmap::unordered_map<int32_t,osd_stat_t> osd_stat;
   mempool::pgmap::unordered_map<pg_t,pg_stat_t> pg_stat;
 
+  typedef mempool::pgmap::map<
+    std::pair<int64_t, int>,  // <pool, osd
+    pool_stat_t>
+      per_osd_pool_stat_t;
+  per_osd_pool_stat_t pool_stat;
+
   class Incremental {
   public:
     MEMPOOL_CLASS_HELPERS();
@@ -232,6 +238,7 @@ public:
     epoch_t pg_scan;  // osdmap epoch
     mempool::pgmap::set<pg_t> pg_remove;
     utime_t stamp;
+    per_osd_pool_stat_t pool_stat_updates;
 
   private:
     mempool::pgmap::map<int32_t,osd_stat_t> osd_stat_updates;
@@ -285,10 +292,16 @@ public:
   void update_pool_deltas(
     CephContext *cct,
     const utime_t ts,
-    const mempool::pgmap::unordered_map<uint64_t, pool_stat_t>& pg_pool_sum_old);
+    const mempool::pgmap::unordered_map<int64_t, pool_stat_t>& pg_pool_sum_old);
   void clear_delta();
 
   void deleted_pool(int64_t pool) {
+    for (auto i = pool_stat.begin();  i != pool_stat.end(); ++i) {
+      if (i->first.first == pool) {
+	pool_stat.erase(i);
+      }
+    }
+
     pg_pool_sum.erase(pool);
     num_pg_by_pool.erase(pool);
     per_pool_sum_deltas.erase(pool);
@@ -378,7 +391,7 @@ public:
   void calc_stats();
   void stat_pg_add(const pg_t &pgid, const pg_stat_t &s,
 		   bool sameosds=false);
-  void stat_pg_sub(const pg_t &pgid, const pg_stat_t &s,
+  bool stat_pg_sub(const pg_t &pgid, const pg_stat_t &s,
 		   bool sameosds=false);
   void calc_purged_snaps();
   void stat_osd_add(int osd, const osd_stat_t &s);

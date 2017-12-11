@@ -754,6 +754,7 @@ void PGMapDigest::dump_pool_stats_full(
     int64_t pool_id = p->first;
     if ((pool_id < 0) || (pg_pool_sum.count(pool_id) == 0))
       continue;
+
     const string& pool_name = osd_map.get_pool_name(pool_id);
     const pool_stat_t &stat = pg_pool_sum.at(pool_id);
 
@@ -1003,6 +1004,14 @@ void PGMap::Incremental::dump(Formatter *f) const
     f->close_section();
   }
   f->close_section();
+  f->open_array_section("pool_stat_updates");
+  for (auto p = pool_stat_updates.begin(); p != pool_stat_updates.end(); ++p) {
+    f->open_object_section("pool_stat");
+    f->dump_stream("poolid/osd") << p->first;
+    p->second.dump(f);
+    f->close_section();
+  }
+  f->close_section();
 
   f->open_array_section("osd_stat_removals");
   for (auto p = osd_stat_rm.begin(); p != osd_stat_rm.end(); ++p)
@@ -1033,8 +1042,8 @@ void PGMap::Incremental::generate_test_instances(list<PGMap::Incremental*>& o)
   o.back()->osd_stat_updates[6] = osd_stat_t();
   o.back()->pg_remove.insert(pg_t(1,2,3));
   o.back()->osd_stat_rm.insert(5);
+  o.back()->pool_stat_updates[std::make_pair(1234,4)] = pool_stat_t();
 }
-
 
 // --
 
@@ -1044,16 +1053,31 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
   version++;
 
   pool_stat_t pg_sum_old = pg_sum;
-  mempool::pgmap::unordered_map<uint64_t, pool_stat_t> pg_pool_sum_old;
+  mempool::pgmap::unordered_map<int64_t, pool_stat_t> pg_pool_sum_old;
+
+  pg_pool_sum_old = pg_pool_sum;
+  for (auto p = inc.pool_stat_updates.begin();
+       p != inc.pool_stat_updates.end();
+       ++p) {
+    auto pool = p->first.first;
+    auto osd =  p->first.second;
+    auto& stat_inc = p->second;
+    auto pool_stat_iter = pool_stat.find(std::make_pair(pool, osd));
+
+    if (pool_stat_iter == pool_stat.end()) {
+      pool_stat.emplace(std::make_pair(pool, osd), stat_inc);
+    } else {
+      pg_pool_sum[pool].sub(pool_stat_iter->second);
+      pool_stat_iter->second = stat_inc;
+    }
+    pg_pool_sum[pool].add(stat_inc);
+  }
 
   for (auto p = inc.pg_stat_updates.begin();
        p != inc.pg_stat_updates.end();
        ++p) {
     const pg_t &update_pg(p->first);
     const pg_stat_t &update_stat(p->second);
-
-    if (pg_pool_sum_old.count(update_pg.pool()) == 0)
-      pg_pool_sum_old[update_pg.pool()] = pg_pool_sum[update_pg.pool()];
 
     auto t = pg_stat.find(update_pg);
     if (t == pg_stat.end()) {
@@ -1079,6 +1103,7 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
     }
     stat_osd_add(osd, new_stats);
   }
+  
   set<int64_t> deleted_pools;
   for (auto p = inc.pg_remove.begin();
        p != inc.pg_remove.end();
@@ -1086,10 +1111,12 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
     const pg_t &removed_pg(*p);
     auto s = pg_stat.find(removed_pg);
     if (s != pg_stat.end()) {
-      stat_pg_sub(removed_pg, s->second);
+      bool pool_erased = stat_pg_sub(removed_pg, s->second);
       pg_stat.erase(s);
+      if (pool_erased) {
+        deleted_pools.insert(removed_pg.pool());
+      }
     }
-    deleted_pools.insert(removed_pg.pool());
   }
 
   for (auto p = inc.get_osd_stat_rm().begin();
@@ -1099,6 +1126,12 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
     if (t != osd_stat.end()) {
       stat_osd_sub(t->first, t->second);
       osd_stat.erase(t);
+    }
+    for (auto i = pool_stat.begin();  i != pool_stat.end(); ++i) {
+      if (i->first.second == *p) {
+	pg_pool_sum[i->first.first].sub(i->second);
+	pool_stat.erase(i);
+      }
     }
   }
 
@@ -1156,6 +1189,12 @@ void PGMap::calc_stats()
        ++p) {
     stat_pg_add(p->first, p->second);
   }
+  for (auto p = pool_stat.begin();
+       p != pool_stat.end();
+       ++p) {
+    auto pool = p->first.first;
+    pg_pool_sum[pool].add(p->second);
+  }
   for (auto p = osd_stat.begin();
        p != osd_stat.end();
        ++p)
@@ -1165,12 +1204,13 @@ void PGMap::calc_stats()
 void PGMap::stat_pg_add(const pg_t &pgid, const pg_stat_t &s,
                         bool sameosds)
 {
-  pg_pool_sum[pgid.pool()].add(s);
+  auto pool = pgid.pool();
+  //pg_pool_sum[pool].add(s);
   pg_sum.add(s);
 
   num_pg++;
   num_pg_by_state[s.state]++;
-  num_pg_by_pool[pgid.pool()]++;
+  num_pg_by_pool[pool]++;
 
   if ((s.state & PG_STATE_CREATING) &&
       s.parent_split_bits == 0) {
@@ -1210,11 +1250,10 @@ void PGMap::stat_pg_add(const pg_t &pgid, const pg_stat_t &s,
   }
 }
 
-void PGMap::stat_pg_sub(const pg_t &pgid, const pg_stat_t &s,
+bool PGMap::stat_pg_sub(const pg_t &pgid, const pg_stat_t &s,
                         bool sameosds)
 {
-  pool_stat_t& ps = pg_pool_sum[pgid.pool()];
-  ps.sub(s);
+  bool pool_erased = false;
   pg_sum.sub(s);
 
   num_pg--;
@@ -1224,8 +1263,7 @@ void PGMap::stat_pg_sub(const pg_t &pgid, const pg_stat_t &s,
     num_pg_by_state.erase(s.state);
   end = --num_pg_by_pool[pgid.pool()];
   if (end == 0) {
-    num_pg_by_pool.erase(pgid.pool());
-    pg_pool_sum.erase(pgid.pool());
+    pool_erased = true;
   }
 
   if ((s.state & PG_STATE_CREATING) &&
@@ -1249,7 +1287,7 @@ void PGMap::stat_pg_sub(const pg_t &pgid, const pg_stat_t &s,
   }
 
   if (sameosds)
-    return;
+    return pool_erased;
 
   for (auto p = s.blocked_by.begin();
        p != s.blocked_by.end();
@@ -1285,6 +1323,7 @@ void PGMap::stat_pg_sub(const pg_t &pgid, const pg_stat_t &s,
     if (it != num_pg_by_osd.end() && it->second.primary > 0)
       it->second.primary--;
   }
+  return pool_erased;
 }
 
 void PGMap::calc_purged_snaps()
@@ -1337,25 +1376,27 @@ void PGMap::encode_digest(const OSDMap& osdmap,
 
 void PGMap::encode(bufferlist &bl, uint64_t features) const
 {
-  ENCODE_START(7, 7, bl);
+  ENCODE_START(9, 9, bl);
   ::encode(version, bl);
   ::encode(pg_stat, bl);
   ::encode(osd_stat, bl);
   ::encode(last_osdmap_epoch, bl);
   ::encode(last_pg_scan, bl);
   ::encode(stamp, bl);
+  ::encode(pool_stat, bl, features);
   ENCODE_FINISH(bl);
 }
 
 void PGMap::decode(bufferlist::iterator &bl)
 {
-  DECODE_START(7, bl);
+  DECODE_START(9, bl);
   ::decode(version, bl);
   ::decode(pg_stat, bl);
   ::decode(osd_stat, bl);
   ::decode(last_osdmap_epoch, bl);
   ::decode(last_pg_scan, bl);
   ::decode(stamp, bl);
+  ::decode(pool_stat, bl);
   DECODE_FINISH(bl);
 
   calc_stats();
@@ -1996,11 +2037,11 @@ void PGMap::update_one_pool_delta(
  */
 void PGMap::update_pool_deltas(
   CephContext *cct, const utime_t ts,
-  const mempool::pgmap::unordered_map<uint64_t,pool_stat_t>& pg_pool_sum_old)
+  const mempool::pgmap::unordered_map<int64_t,pool_stat_t>& pg_pool_sum_old)
 {
   for (auto it = pg_pool_sum_old.begin();
        it != pg_pool_sum_old.end(); ++it) {
-    update_one_pool_delta(cct, ts, it->first, it->second);
+    update_one_pool_delta(cct, ts, (uint64_t)it->first, it->second); //FIXME: make pool type consistent!!!
   }
 }
 
