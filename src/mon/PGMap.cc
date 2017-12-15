@@ -2013,7 +2013,7 @@ void PGMap::update_delta(
 void PGMap::update_one_pool_delta(
   CephContext *cct,
   const utime_t ts,
-  const uint64_t pool,
+  const int64_t pool,
   const pool_stat_t& old_pool_sum)
 {
   if (per_pool_sum_deltas.count(pool) == 0) {
@@ -2041,7 +2041,7 @@ void PGMap::update_pool_deltas(
 {
   for (auto it = pg_pool_sum_old.begin();
        it != pg_pool_sum_old.end(); ++it) {
-    update_one_pool_delta(cct, ts, (uint64_t)it->first, it->second); //FIXME: make pool type consistent!!!
+    update_one_pool_delta(cct, ts, it->first, it->second);
   }
 }
 
