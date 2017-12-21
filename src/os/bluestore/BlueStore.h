@@ -45,6 +45,7 @@
 class Allocator;
 class FreelistManager;
 class BlueFS;
+class BlueStoreRepairer;
 
 //#define DEBUG_CACHE
 //#define DEBUG_DEFERRED
@@ -1458,6 +1459,14 @@ public:
     int64_t& compressed_allocated() {
       return values[STATFS_COMPRESSED_ALLOCATED];
     }
+    volatile_statfs& operator=(const store_statfs_t& st) {
+      values[STATFS_ALLOCATED] = st.allocated;
+      values[STATFS_STORED] = st.stored;
+      values[STATFS_COMPRESSED_ORIGINAL] = st.compressed_original;
+      values[STATFS_COMPRESSED] = st.compressed;
+      values[STATFS_COMPRESSED_ALLOCATED] = st.compressed_allocated;
+      return *this;
+    }
     bool is_empty() {
       return values[STATFS_ALLOCATED] == 0 &&
 	values[STATFS_STORED] == 0 &&
@@ -2070,11 +2079,13 @@ public:
 
 private:
   int _fsck_check_extents(
+    const coll_t& cid,
     const ghobject_t& oid,
     const PExtentVector& extents,
     bool compressed,
     mempool_dynamic_bitset &used_blocks,
     uint64_t granularity,
+    BlueStoreRepairer* repairer,
     store_statfs_t& expected_statfs);
 
   void _buffer_cache_write(
@@ -2105,6 +2116,8 @@ private:
   void _apply_padding(uint64_t head_pad,
 		      uint64_t tail_pad,
 		      bufferlist& padded);
+
+  void _record_onode( OnodeRef o, KeyValueDB::Transaction txn);
 
   // -- ondisk version ---
 public:
@@ -2423,6 +2436,17 @@ public:
     RWLock::WLocker l(debug_read_error_lock);
     debug_mdata_error_objects.insert(o);
   }
+
+  /// methods to inject various errors fsck can repair
+  void inject_broken_shared_blob_key(const string& key,
+			 const bufferlist& bl);
+  void inject_leaked(uint64_t len);
+  void inject_false_free(coll_t cid, ghobject_t oid);
+  void inject_statfs(const store_statfs_t& new_statfs);
+  void inject_misreference(coll_t cid1, ghobject_t oid1,
+			   coll_t cid2, ghobject_t oid2,
+			   uint64_t offset);
+
   void compact() override {
     assert(db);
     db->compact();
@@ -2729,5 +2753,150 @@ static inline void intrusive_ptr_add_ref(BlueStore::OpSequencer *o) {
 static inline void intrusive_ptr_release(BlueStore::OpSequencer *o) {
   o->put();
 }
+
+class BlueStoreRepairer
+{
+public:
+  // to simplify future potential migration to mempools
+  using fsck_interval = interval_set<uint64_t>;
+
+  // Structure to track cid/oid -> pextent mapping.
+  // Similar to Bloom filter positive and false-positive matches are 
+  // possible only.
+  // Differs from the BF as matches are verified on CID or OID only.
+  // Allows to filter out 'uninteresting' pextents prior to match verification.
+  struct StoreSpaceUsageBitmap {
+    
+    const uint64_t SHARDS = 256;
+    static const uint64_t DEF_MEM_CAP = 128 * 1024 * 1024;
+
+
+    BlueStore::mempool_dynamic_bitset collections_bmap;
+    BlueStore::mempool_dynamic_bitset objects_bmap;
+
+    BlueStore::mempool_dynamic_bitset collections_bmap_reduced;
+    BlueStore::mempool_dynamic_bitset objects_bmap_reduced;
+
+    uint64_t granularity;
+
+    StoreSpaceUsageBitmap() :
+      granularity(0) {
+    }
+    StoreSpaceUsageBitmap(const StoreSpaceUsageBitmap& from) :
+      collections_bmap(from.collections_bmap),
+      objects_bmap(from.objects_bmap),
+      collections_bmap_reduced(from.collections_bmap_reduced),
+      objects_bmap_reduced(from.objects_bmap_reduced),
+      granularity(from.granularity) {
+    }
+
+    void init(uint64_t total,
+	      uint64_t min_alloc_size,
+	      uint64_t mem_cap = DEF_MEM_CAP) {
+      assert(!granularity); // not initialized yet
+      assert(min_alloc_size);
+      assert(mem_cap);
+      
+      total = ROUND_UP_TO(total, min_alloc_size);
+      granularity = total * SHARDS * 2 / mem_cap / 8;
+
+      if (!granularity) {
+	granularity = min_alloc_size;
+      } else {
+	granularity = ROUND_UP_TO(granularity, min_alloc_size);
+      }
+
+      uint64_t entries = P2ROUNDUP(total, granularity) / granularity;
+      collections_bmap.resize(entries * SHARDS);
+      objects_bmap.resize(entries * SHARDS);
+    }
+    inline void set_used(uint64_t offset, uint64_t len,
+			 const coll_t& cid, const ghobject_t& hoid) {
+      assert(granularity); // initialized
+      if (!len) {
+	return;
+      }
+      auto col_bit_pos = cid.hash_to_shard(SHARDS);
+      auto obj_bit_pos = hoid.hobj.get_hash() % SHARDS;
+      auto pos = offset / granularity * SHARDS;
+      auto end_pos = (offset + len - 1) / granularity * SHARDS;
+      while (pos <= end_pos) {
+	collections_bmap.set(pos + col_bit_pos);
+	objects_bmap.set(pos + obj_bit_pos);
+	pos += SHARDS;
+      }
+    }
+    // filter-out entries unrelated to the specified(broken) extents.
+    bool calc_reduced(const fsck_interval& extents);
+
+    // determines if collection's been marked in the reduced bitmap
+    inline bool is_used(const coll_t& cid) const {
+      assert(collections_bmap_reduced.size()); // calc_reduced was called
+
+      auto bit_pos = cid.hash_to_shard(SHARDS);
+      assert(bit_pos < collections_bmap_reduced.size());
+      return collections_bmap_reduced[bit_pos];
+    }
+    // determines if object's been marked in the reduced bitmap
+    inline bool is_used(const ghobject_t& hoid) const {
+      assert(objects_bmap_reduced.size()); // calc_reduced was called
+      auto bit_pos = hoid.hobj.get_hash() % SHARDS;
+      assert(bit_pos < objects_bmap_reduced.size());
+      return objects_bmap_reduced[bit_pos];
+    }
+
+  };
+public:
+
+  bool remove_key(KeyValueDB *db, const string& prefix, const string& key);
+  bool fix_shared_blob(KeyValueDB *db,
+		         uint64_t sbid,
+		       const bufferlist* bl);
+  bool fix_statfs(KeyValueDB *db, const store_statfs_t& new_statfs);
+
+  bool fix_leaked(KeyValueDB *db,
+		  FreelistManager* fm,
+		  uint64_t offset, uint64_t len);
+  bool fix_false_free(KeyValueDB *db,
+		      FreelistManager* fm,
+		      uint64_t offset, uint64_t len);
+
+  void init(uint64_t total_space, uint64_t lres_tracking_unit_size);
+
+  bool preprocess_misreference(KeyValueDB *db);
+
+  int apply(KeyValueDB* db);
+
+  void note_misreference(uint64_t offs, uint64_t len ) {
+    misreferenced_extents.insert(offs, len);
+ }
+
+  StoreSpaceUsageBitmap& get_space_usage_tracker() {
+    return space_usage_tracker;
+  }
+  const fsck_interval& get_misreferences() const {
+    return misreferenced_extents;
+  }
+  KeyValueDB::Transaction get_fix_misreferences_txn() {
+    return fix_misreferences_txn;
+  }
+
+private:
+  int to_repair_cnt = 0;
+  KeyValueDB::Transaction fix_fm_leaked_txn;
+  KeyValueDB::Transaction fix_fm_false_free_txn;
+  KeyValueDB::Transaction remove_key_txn;
+  KeyValueDB::Transaction fix_statfs_txn;
+  KeyValueDB::Transaction fix_shared_blob_txn;
+
+  KeyValueDB::Transaction fix_misreferences_txn;
+
+
+  StoreSpaceUsageBitmap space_usage_tracker;
+
+  // non-shared extents with multiple references
+  fsck_interval misreferenced_extents;
+
+};
 
 #endif

@@ -1441,7 +1441,87 @@ TEST(GarbageCollector, BasicTest)
     em.clear();
     old_extents.clear();
   }
- }
+}
+
+TEST(BlueStoreRepairer, UsageBitmapTest)
+{
+  BlueStoreRepairer::StoreSpaceUsageBitmap bmap0;
+  bmap0.init((uint64_t)4096 * 1024 * 1024 * 1024, 0x1000);
+  ASSERT_EQ(bmap0.granularity, 2 * 1024 * 1024);
+  ASSERT_EQ(bmap0.collections_bmap.size(), 256 * 2048 * 1024);
+  ASSERT_EQ(bmap0.objects_bmap.size(), 256 * 2048 * 1024);
+
+  BlueStoreRepairer::StoreSpaceUsageBitmap bmap;
+  bmap.init(0x2000 * 0x1000 - 1, 0x1000, 512 * 1024);
+  ASSERT_EQ(bmap.granularity, 0x1000);
+  ASSERT_EQ(bmap.collections_bmap.size(), 0x2000 * 256);
+  ASSERT_EQ(bmap.objects_bmap.size(), 0x2000 * 256);
+
+  coll_t cid;
+  uint64_t bitpos_cid = cid.hash_to_shard(256);
+  ghobject_t hoid;
+  uint64_t bitpos_hoid = hoid.hobj.get_hash() % 256;
+
+  bmap.set_used(0, 1, cid, hoid);
+  ASSERT_EQ(bmap.collections_bmap.count(), 1);
+  ASSERT_EQ(bmap.objects_bmap.count(), 1);
+  ASSERT_EQ(bmap.collections_bmap[bitpos_cid], 1);
+  ASSERT_EQ(bmap.objects_bmap[bitpos_hoid], 1);
+
+
+  bmap.set_used(0x1023, 0x3000, cid, hoid);
+  ASSERT_EQ(bmap.collections_bmap.count(), 5);
+  ASSERT_EQ(bmap.objects_bmap.count(), 5);
+  ASSERT_EQ(bmap.collections_bmap[bitpos_cid], 1);
+  ASSERT_EQ(bmap.collections_bmap[1 * 256 + bitpos_cid], 1);
+  ASSERT_EQ(bmap.collections_bmap[2 * 256 + bitpos_cid], 1);
+  ASSERT_EQ(bmap.collections_bmap[3 * 256 + bitpos_cid], 1);
+  ASSERT_EQ(bmap.collections_bmap[4 * 256 + bitpos_cid], 1);
+  ASSERT_EQ(bmap.objects_bmap[bitpos_hoid], 1);
+  ASSERT_EQ(bmap.objects_bmap[1 * 256 + bitpos_hoid], 1);
+  ASSERT_EQ(bmap.objects_bmap[2 * 256 + bitpos_hoid], 1);
+  ASSERT_EQ(bmap.objects_bmap[3 * 256 + bitpos_hoid], 1);
+  ASSERT_EQ(bmap.objects_bmap[4 * 256 + bitpos_hoid], 1);
+
+  bmap.set_used(0x9001, 0x2fff, cid, hoid);
+  ASSERT_EQ(bmap.collections_bmap.count(), 8);
+  ASSERT_EQ(bmap.objects_bmap.count(), 8);
+  ASSERT_EQ(bmap.collections_bmap[9 * 256 + bitpos_cid], 1);
+  ASSERT_EQ(bmap.collections_bmap[10 * 256 + bitpos_cid], 1);
+  ASSERT_EQ(bmap.collections_bmap[11 * 256 + bitpos_cid], 1);
+  ASSERT_EQ(bmap.objects_bmap[9 * 256 + bitpos_hoid], 1);
+  ASSERT_EQ(bmap.objects_bmap[10 * 256 + bitpos_hoid], 1);
+  ASSERT_EQ(bmap.objects_bmap[11 * 256 + bitpos_hoid], 1);
+
+  bmap.set_used(0xa001, 0x2, cid, hoid);
+  ASSERT_EQ(bmap.collections_bmap.count(), 8);
+  ASSERT_EQ(bmap.objects_bmap.count(), 8);
+
+  bmap.set_used(0xc0000, 0x2000, cid, hoid);
+
+  ASSERT_EQ(bmap.collections_bmap.count(), 10);
+  ASSERT_EQ(bmap.objects_bmap.count(), 10);
+  ASSERT_EQ(bmap.collections_bmap[0xc0 * 256 + bitpos_cid], 1);
+  ASSERT_EQ(bmap.collections_bmap[0xc1 * 256 + bitpos_cid], 1);
+  ASSERT_EQ(bmap.objects_bmap[0xc0 * 256 + bitpos_hoid], 1);
+  ASSERT_EQ(bmap.objects_bmap[0xc1 * 256 + bitpos_hoid], 1);
+
+  interval_set<uint64_t> extents;
+  extents.insert(0,0x500);	  // enables 0th bit in lres bmap
+  extents.insert(0x800,0x100); // enables 0th bit in lres bmap
+  extents.insert(0x1000,0x1000); // enables 1th bit in lres bmap
+  extents.insert(0xa001,1);	    // enables 10th bit in lres bmap
+  extents.insert(0xa0000,0xff8); // enables nothing
+
+  ASSERT_TRUE(bmap.calc_reduced(extents));
+  ASSERT_TRUE(bmap.is_used(cid));
+  ASSERT_TRUE(bmap.is_used(hoid));
+  ASSERT_EQ(bmap.collections_bmap_reduced.count(), 1);
+  ASSERT_EQ(bmap.collections_bmap_reduced[bitpos_cid], 1);
+
+  ASSERT_EQ(bmap.objects_bmap_reduced.count(), 1);
+  ASSERT_EQ(bmap.objects_bmap_reduced[bitpos_hoid], 1);
+}
 
 int main(int argc, char **argv) {
   vector<const char*> args;
