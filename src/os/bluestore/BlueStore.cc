@@ -1691,14 +1691,11 @@ void BlueStore::SharedBlob::get_ref(uint64_t offset, uint32_t length)
 
 void BlueStore::SharedBlob::put_ref(uint64_t offset, uint32_t length,
 				    PExtentVector *r,
-				    set<SharedBlob*> *maybe_unshared)
+				    SharedBlob** maybe_unshared)
 {
   assert(persistent);
   bool maybe = false;
-  persistent->ref_map.put(offset, length, r, maybe_unshared ? &maybe : nullptr);
-  if (maybe_unshared && maybe) {
-    maybe_unshared->insert(this);
-  }
+  persistent->ref_map.put(offset, length, r, maybe_unshared && !*maybe_unshared? &maybe : nullptr);
 }
 
 // SharedBlobSet
@@ -10400,10 +10397,14 @@ void BlueStore::_wctx_finish(
       if (blob.is_shared()) {
 	PExtentVector final;
         c->load_shared_blob(b->shared_blob);
+	SharedBlob* to_unshare = nullptr;
 	for (auto e : r) {
 	  b->shared_blob->put_ref(
 	    e.offset, e.length, &final,
-	    b->is_referenced() ? nullptr : maybe_unshared_blobs);
+	    b->is_referenced() ? nullptr : &to_unshare);
+	}
+	if (to_unshare) {
+	  maybe_unshared_blobs->insert(to_unshare);
 	}
 	dout(20) << __func__ << "  shared_blob release " << final
 		 << " from " << *b->shared_blob << dendl;
