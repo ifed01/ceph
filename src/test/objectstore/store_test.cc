@@ -6885,6 +6885,42 @@ TEST_P(StoreTest, BluestoreRepairTest) {
 
   ASSERT_EQ(bstore->fsck(true), 0);
 
+  // reproducing issues #21040 & 20983
+  g_ceph_context->_conf->set_val(
+    "bluestore_debug_inject_bug21040", "true");
+  g_ceph_context->_conf->apply_changes(NULL);
+  bstore->mount();
+
+  cerr << "repro bug #21040" << std::endl;
+  {
+    {
+      ObjectStore::Transaction t;
+      bl.append("0123456789012345");
+      t.write(cid, hoid3, offs_base, bl.length(), bl);
+      bl.clear();
+      bl.append('!');
+      t.write(cid, hoid3, 0, bl.length(), bl);
+
+      r = apply_transaction(store, &osr, std::move(t));
+      ASSERT_EQ(r, 0);
+    }
+    {
+      ObjectStore::Transaction t;
+      t.clone(cid, hoid3, hoid3_cloned);
+      r = apply_transaction(store, &osr, std::move(t));
+      ASSERT_EQ(r, 0);
+    }
+
+    bstore->umount();
+    ASSERT_EQ(bstore->fsck(false), 3);
+    ASSERT_LE(bstore->repair(false), 1); //FIXME: can't count repaired misreferences for now
+    ASSERT_EQ(bstore->fsck(false), 0);
+    g_ceph_context->_conf->set_val(
+      "bluestore_debug_inject_bug21040", "true");
+    g_ceph_context->_conf->apply_changes(NULL);
+  }
+
+
   cerr << "Completing" << std::endl;
   bstore->mount();
   g_ceph_context->_conf->set_val("bluestore_fsck_on_mount", "true");
