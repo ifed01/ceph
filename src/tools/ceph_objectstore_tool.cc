@@ -2163,6 +2163,8 @@ int do_get_omap(ObjectStore *store, coll_t coll, ghobject_t &ghobj, string key)
   return 0;
 }
 
+#include "osd/SnapMapper.h"
+
 int do_set_omap(ObjectStore *store, coll_t coll,
 		ghobject_t &ghobj, string key, int fd,
 		ObjectStore::Sequencer &osr)
@@ -2178,7 +2180,15 @@ int do_set_omap(ObjectStore *store, coll_t coll,
   int ret = get_fd_data(fd, valbl);
   if (ret < 0)
     return ret;
-
+  //******************** HACKING snapmapper **************
+  if (dry_run && key.find("aaaaa") != string::npos && key.find("OBJ_") != string::npos) {
+    SnapMapper::object_snaps snaps;
+    bufferlist::iterator bp = valbl.begin();
+    ::decode(snaps, bp);
+    snaps.snaps.clear();
+    valbl.clear();
+    ::encode(snaps, valbl);
+  }
   attrset.insert(pair<string, bufferlist>(key, valbl));
 
   if (dry_run)

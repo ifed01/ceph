@@ -658,3 +658,23 @@ TEST_F(SnapMapperTest, MultiPG) {
   init(50);
   run();
 }
+
+TEST_F(SnapMapperTest, AssertedSnapMaper) {
+  bufferlist bl, bl2;
+  bl.append("AQFbAAAABANJAAAAAAAAACgAAAByYmRfZGF0YS41ZjI2MjM2YjhiNDU2Ny4wMDAwMDAwMDAwMDAxNTFkNFwGAAAAAACTkqkhAAAAAAACAAAAAAAAAAEAAAA0XAYAAAAAAA==");
+  bl2.decode_base64(bl);
+  
+  SnapMapper::object_snaps snaps;
+  bufferlist::iterator bp = bl2.begin();
+  ::decode(snaps, bp);
+  std::cout<<snaps.oid<<" "<<*snaps.snaps.begin()<<std::endl;
+
+  bl.clear();
+  bl2.clear();
+  bl.append("AQFTAAAABANJAAAAAAAAACgAAAByYmRfZGF0YS41OTYyY2Y2YjhiNDU2Ny4wMDAwMDAwMDAwMDAxMDM0v/4AAAAAAACTUje7AAAAAAACAAAAAAAAAAAAAAA=");
+  bl2.decode_base64(bl);
+  
+  bp = bl2.begin();
+  ::decode(snaps, bp);
+  std::cout<<snaps.oid<<" "<<snaps.snaps.size()<<std::endl;
+}
