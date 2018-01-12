@@ -1972,9 +1972,25 @@ int do_list_omap(ObjectStore *store, coll_t coll, ghobject_t &ghobj)
 
     for (map<string,bufferlist>::iterator i = oset.begin();i != oset.end(); ++i) {
       string key(i->first);
+      string addendum;
+      if (dry_run && key.find("OBJ_") == 0) {
+
+	set<string> keys;
+	map<string, bufferlist> out;
+	keys.insert(key);
+	int r = store->omap_get_values(coll, ghobj, keys, &out);
+
+	SnapMapper::object_snaps snaps;
+	bufferlist::iterator bp = out.begin()->second.begin();
+	::decode(snaps, bp);
+	if (snaps.snaps.empty()) {
+	  addendum = "<<BROKEN>>";
+	}
+      }
       if (outistty)
-        key = cleanbin(key);
-      cout << key << std::endl;
+	key = cleanbin(key);
+      cout << key << " " << addendum << std::endl;
+
     }
   }
   return 0;
@@ -2131,7 +2147,26 @@ int do_rm_attr(ObjectStore *store, coll_t coll,
   store->apply_transaction(&osr, std::move(*t));
   return 0;
 }
-
+struct Mapping {
+  snapid_t snap;
+  hobject_t hoid;
+  explicit Mapping(const pair<snapid_t, hobject_t> &in)
+    : snap(in.first), hoid(in.second) {}
+  Mapping() : snap(0) {}
+  void encode(bufferlist &bl) const {
+    ENCODE_START(1, 1, bl);
+    ::encode(snap, bl);
+    ::encode(hoid, bl);
+    ENCODE_FINISH(bl);
+  }
+  void decode(bufferlist::iterator &bl) {
+    DECODE_START(1, bl);
+    ::decode(snap, bl);
+    ::decode(hoid, bl);
+    DECODE_FINISH(bl);
+  }
+};
+WRITE_CLASS_ENCODER(Mapping)
 int do_get_omap(ObjectStore *store, coll_t coll, ghobject_t &ghobj, string key)
 {
   set<string> keys;
@@ -2148,6 +2183,20 @@ int do_get_omap(ObjectStore *store, coll_t coll, ghobject_t &ghobj, string key)
   if (out.empty()) {
     cerr << "Key not found" << std::endl;
     return -ENOENT;
+  }
+  if (dry_run && key.find("OBJ_") != string::npos) {
+    SnapMapper::object_snaps snaps;
+    bufferlist::iterator bp = out.begin()->second.begin();
+    ::decode(snaps, bp);
+    cout<<"snaps="<<snaps.oid<<"{len="<<snaps.snaps.size()<< " "; 
+    for(auto i : snaps.snaps) 
+      cout<<i<<",";
+    cout <<"}"<<std::endl;
+  } else if (dry_run && key.find("MAP_") != string::npos) {
+    Mapping m;
+    bufferlist::iterator bp = out.begin()->second.begin();
+    ::decode(m, bp);
+    cout<<"mapping="<<m.snap<< " " <<m.hoid<<std::endl;
   }
 
   assert(out.size() == 1);
@@ -2188,11 +2237,10 @@ int do_set_omap(ObjectStore *store, coll_t coll,
     snaps.snaps.clear();
     valbl.clear();
     ::encode(snaps, valbl);
+  } else if (dry_run) {
+    return 0;
   }
   attrset.insert(pair<string, bufferlist>(key, valbl));
-
-  if (dry_run)
-    return 0;
 
   t->touch(coll, ghobj);
 
