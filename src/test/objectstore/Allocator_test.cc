@@ -314,6 +314,111 @@ TEST_P(AllocTest, test_alloc_bug_24598)
   EXPECT_EQ(tmp.size(), 1);
 }
 
+// some tool to replay allocator ops to reproduce its issues if any.
+#include <stdio.h>
+TEST_P(AllocTest, test_alloc_bug_24598_replay)
+{
+  uint64_t capacity = 0x2625a0000ull;
+  uint64_t alloc_unit = 0x4000;
+  uint64_t want_size = 0x200000;
+  PExtentVector allocated;
+  size_t apos = 0;
+  interval_set<uint64_t> release_set;
+
+  init_alloc(capacity, alloc_unit);
+  FILE* f = fopen("./alloc.out", "r");
+  ASSERT_NE(f, nullptr);
+  char buf[4096];
+  while(!feof(f)) {
+    fgets(buf, sizeof(buf), f);
+    //std::cout<<buf<<std::endl;
+    strtok(buf, " ");
+    strtok(nullptr, " ");
+    strtok(nullptr, " ");
+    strtok(nullptr, " ");
+    strtok(nullptr, " ");
+    strtok(nullptr, " ");
+    char* tmp = strtok(nullptr, " ");
+    string cmd = tmp ? tmp : "";
+    tmp = strtok(nullptr, " ");
+    string params = tmp ? tmp : "";
+    //std::cout<<cmd.c_str()<<" "<<params.c_str()<<std::endl;
+    if (cmd == "init_add_free") {
+      if (params.find("done") != 0) {
+	uint64_t offs = strtoull(params.c_str() + 2,  nullptr, 16);
+	uint64_t len = strtoull(params.c_str() + params.find_first_of('~') + 1,  nullptr, 16);
+	//std::cout<<cmd.c_str()<<" "<<offs<<"~~"<<len<<std::endl;
+	alloc->init_add_free(offs, len);
+      }
+
+    } else if (cmd == "init_rm_free") {
+      if (params.find("done") != 0) {
+	uint64_t offs = strtoull(params.c_str() + 2,  nullptr, 16);
+	uint64_t len = strtoull(params.c_str() + params.find_first_of('~') + 1,  nullptr, 16);
+	//std::cout<<cmd.c_str()<<" "<<offs<<"~~"<<len<<std::endl;
+	alloc->init_rm_free(offs, len);
+      }
+    } else if (cmd == "allocate") {
+      if (params.find_first_of("~") == std::string::npos) {
+	char* end = nullptr;
+	uint64_t want = strtoull(params.c_str() + 2, &end, 16);
+	ASSERT_EQ(*end, '/');
+	++end;
+	uint64_t au = strtoull(end, &end, 16);
+	ASSERT_EQ(*end, ',');
+	++end;
+	uint64_t max_alloc = strtoull(end, &end, 16);
+	ASSERT_EQ(*end, ',');
+	++end;
+	uint64_t hint = strtoull(end, nullptr, 16);
+
+	ASSERT_EQ(allocated.size(), apos);
+	allocated.clear();
+	apos = 0;
+	if (want == 0x200000) {
+	  std::cout<<"allocated???" << std::endl;
+	}
+	auto res = alloc->allocate(want, au, max_alloc, hint, &allocated);
+	ASSERT_EQ(res, want);
+	if (want == 0x200000) {
+	  std::cout<<"allocated:"<<std::hex<<res<<" "<<allocated.size()<<std::endl;
+	  for (auto i = 0; i < allocated.size(); ++i) {
+	    std::cout<<std::hex<<" "<<allocated[i].offset << "~"<<allocated[i].length<<std::endl;
+	  }
+	}
+	//std::cout<<"allocated:"<<std::hex<<res<<" "<<allocated.size()<<std::endl;
+      } else {
+	char* end = nullptr;
+	uint64_t offs = strtoull(params.c_str() + 2,  &end, 16);
+	ASSERT_EQ(*end, '~');
+	++end;
+	uint64_t len = strtoull(end,  &end, 16);
+	ASSERT_EQ(*end, '/');
+	ASSERT_EQ(offs, allocated[apos].offset);
+	ASSERT_EQ(len, allocated[apos].length);
+	apos++;
+      }
+    } else if (cmd == "release") {
+      if (params.find("done") == 0) {
+	alloc->release(release_set);
+	release_set.clear();
+      } else {
+	//std::cout<<params.c_str()<<std::endl;
+	char* end = nullptr;
+	uint64_t offs = strtoull(params.c_str() + 2,  &end, 16);
+	ASSERT_EQ(*end, '~');
+	++end;
+	uint64_t len = strtoull(end, nullptr, 16);
+	release_set.insert(offs, len);
+      }
+    }
+  }
+  ASSERT_EQ(allocated.size(), apos);
+  ASSERT_EQ(release_set.size(), 0);
+  std::cout<<std::hex << "Allocated = "<<capacity - alloc->get_free() << std::endl;
+  fclose(f);
+}
+
 INSTANTIATE_TEST_CASE_P(
   Allocator,
   AllocTest,
