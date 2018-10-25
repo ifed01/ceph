@@ -1147,9 +1147,8 @@ void BlueFS::_compact_log_sync()
   uint64_t need = bl.length() + cct->_conf->bluefs_max_log_runway;
   dout(20) << __func__ << " need " << need << dendl;
 
-  mempool::bluefs::vector<bluefs_extent_t> old_extents;
-  uint64_t old_allocated = 0;
-  log_file->fnode.swap_extents(old_extents, old_allocated);
+  bluefs_fnode_t old_fnode;
+  log_file->fnode.swap_extents(old_fnode);
   while (log_file->fnode.get_allocated() < need) {
     int r = _allocate(log_file->fnode.prefer_bdev,
 		      need - log_file->fnode.get_allocated(),
@@ -1177,8 +1176,8 @@ void BlueFS::_compact_log_sync()
   _write_super();
   flush_bdev();
 
-  dout(10) << __func__ << " release old log extents " << old_extents << dendl;
-  for (auto& r : old_extents) {
+  dout(10) << __func__ << " release old log extents " << old_fnode.extents << dendl;
+  for (auto& r : old_fnode.extents) {
     pending_release[r.bdev].insert(r.offset, r.length);
   }
 
