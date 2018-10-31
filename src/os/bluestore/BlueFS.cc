@@ -980,7 +980,7 @@ int BlueFS::_read(
       uint64_t x_off = 0;
       auto p = h->file->fnode.seek(buf->bl_off, &x_off);
       uint64_t want = ROUND_UP_TO(len + (off & ~super.block_mask()),
-				  super.block_size);
+				  super.block_size - buf->bl_off);
       want = MAX(want, buf->max_prefetch);
       uint64_t l = MIN(p->length - x_off, want);
       uint64_t eof_offset = ROUND_UP_TO(h->file->fnode.size, super.block_size);
