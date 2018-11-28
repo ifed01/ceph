@@ -527,52 +527,13 @@ int main(int argc, char **argv)
     delete fs;
   }
   else if (action == "bluefs-bdev-expand") {
-    BlueFS *fs = open_bluefs(cct.get(), path, devs);
-    fs->dump_block_extents(cout);
-    cout << "Expanding..." << std::endl;
-    for (int devid : { BlueFS::BDEV_WAL, BlueFS::BDEV_DB }) {
-      if (!fs->is_device_expandable(devid)) {
-	cout << devid
-	     << " : can't be expanded as it's shared with main device. Bypassed."
-	     << std::endl;
-	continue;
-      }
-      interval_set<uint64_t> before;
-      fs->get_block_extents(devid, &before);
-      ceph_assert(!before.empty());
-      uint64_t end = before.range_end();
-      uint64_t size = fs->get_block_device_size(devid);
-      if (end < size) {
-	cout << devid
-	     <<" : expanding " << " from 0x" << std::hex
-	     << end << " to 0x" << size << std::dec << std::endl;
-	fs->add_block_extent(devid, end, size-end);
-	const char* path = find_device_path(devid, cct.get(), devs);
-	if (path == nullptr) {
-	  cerr << devid
-	       <<": can't find device path " << std::endl;
-	  continue;
-	}
-	bluestore_bdev_label_t label;
-	int r = BlueStore::_read_bdev_label(cct.get(), path, &label);
-	if (r < 0) {
-	  cerr << "unable to read label for " << path << ": "
-		<< cpp_strerror(r) << std::endl;
-	  continue;
-	}
-        label.size = size;
-	r = BlueStore::_write_bdev_label(cct.get(), path, label);
-	if (r < 0) {
-	  cerr << "unable to write label for " << path << ": "
-		<< cpp_strerror(r) << std::endl;
-	  continue;
-	}
-	cout << devid
-	     <<" : size label updated to " << size
-	     << std::endl;
-      }
+    BlueStore bluestore(cct.get(), path);
+    auto r = bluestore.expand_devices(cout);
+    if (r <0) {
+      cerr << "failed to expand bluestore devices: "
+	   << cpp_strerror(r) << std::endl;
+      exit(EXIT_FAILURE);
     }
-    delete fs;
   }
   else if (action == "bluefs-export") {
     BlueFS *fs = open_bluefs(cct.get(), path, devs);
