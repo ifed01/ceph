@@ -6796,12 +6796,6 @@ int BlueStore::_fsck(bool deep, bool repair)
   actual_statfs.internal_metadata = 0;
   actual_statfs.omap_allocated = 0;
 
-  // switch to per-pool stats if not explicitly prohibited
-  if (!per_pool_stat_collection &&
-        !cct->_conf->bluestore_debug_no_per_pool_stats) {
-    per_pool_stat_collection = true;
-  }
-
   // walk PREFIX_OBJ
   dout(1) << __func__ << " walking object keyspace" << dendl;
   it = db->get_iterator(PREFIX_OBJ);
