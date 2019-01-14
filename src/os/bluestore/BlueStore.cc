@@ -3831,7 +3831,14 @@ void *BlueStore::MempoolThread::entry()
     double resize_interval = store->osd_memory_cache_resize_interval;
     double max_defer_interval = store->max_defer_interval;
 
-    if (autotune_interval > 0 && next_balance < ceph_clock_now()) {
+    if (resize_interval > 0 && next_resize <= ceph_clock_now()) {
+      if (ceph_using_tcmalloc() && pcm != nullptr) {
+        pcm->tune_memory();
+      }
+      next_resize = ceph_clock_now();
+      next_resize += resize_interval;
+    }
+    if (autotune_interval > 0 && next_balance <= ceph_clock_now()) {
       _adjust_cache_settings();
 
       // Log events at 5 instead of 20 when balance happens.
@@ -3843,13 +3850,6 @@ void *BlueStore::MempoolThread::entry()
 
       next_balance = ceph_clock_now();
       next_balance += autotune_interval;
-    }
-    if (resize_interval > 0 && next_resize < ceph_clock_now()) {
-      if (ceph_using_tcmalloc() && pcm != nullptr) {
-        pcm->tune_memory();
-      }
-      next_resize = ceph_clock_now();
-      next_resize += resize_interval;
     }
 
     if (max_defer_interval > 0 &&
@@ -3930,7 +3930,7 @@ void BlueStore::MempoolThread::_resize_shards(bool interval_stats)
       (meta_alloc / (double) onode_shards) / meta_cache->get_bytes_per_onode());
   uint64_t max_shard_buffer = static_cast<uint64_t>(data_alloc / buffer_shards);
 
-  ldout(cct, 30) << __func__ << " max_shard_onodes: " << max_shard_onodes
+  ldout(cct, 20) << __func__ << " max_shard_onodes: " << max_shard_onodes
                  << " max_shard_buffer: " << max_shard_buffer << dendl;
 
   for (auto i : store->onode_cache_shards) {
