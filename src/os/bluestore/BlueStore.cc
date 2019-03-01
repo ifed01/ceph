@@ -10203,6 +10203,8 @@ void BlueStore::_kv_sync_thread()
   deque<DeferredBatch*> deferred_stable_queue; ///< deferred ios done + stable
   std::unique_lock l(kv_lock);
   ceph_assert(!kv_sync_started);
+  auto allocator_last_defrag = mono_clock::now();
+
   kv_sync_started = true;
   kv_cond.notify_all();
   while (true) {
@@ -10340,6 +10342,14 @@ void BlueStore::_kv_sync_thread()
 	bluefs_last_balance = after_flush;
 	int r = _balance_bluefs_freespace();
 	ceph_assert(r >= 0);
+      }
+      auto alloc_defrag_interval = cct->_conf->bluestore_allocator_defrag_interval;
+
+      if (alloc_defrag_interval &&
+	  after_flush - allocator_last_defrag >
+	  ceph::make_timespan(alloc_defrag_interval)) {
+	allocator_last_defrag = after_flush;
+	alloc->defragment(min_alloc_size);
       }
 
       // cleanup sync deferred keys

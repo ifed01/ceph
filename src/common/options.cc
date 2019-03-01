@@ -4199,6 +4199,10 @@ std::vector<Option> get_global_options() {
     .set_default(1)
     .set_description("How frequently (in seconds) to balance free space between BlueFS and BlueStore"),
 
+    Option("bluestore_allocator_defrag_interval", Option::TYPE_FLOAT, Option::LEVEL_ADVANCED)
+    .set_default(43200)
+    .set_description("How frequently (in seconds) to defragment BlueStore allocator"),
+
     Option("bluestore_bluefs_alloc_failure_dump_interval", Option::TYPE_FLOAT, Option::LEVEL_ADVANCED)
     .set_default(0)
     .set_description("How frequently (in seconds) to dump allocator on"

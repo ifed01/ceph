@@ -344,3 +344,35 @@ void StupidAllocator::shutdown()
   ldout(cct, 1) << __func__ << dendl;
 }
 
+void StupidAllocator::defragment(uint64_t alloc_unit)
+{
+  ldout(cct, 0) << __func__ << " frag = " << get_fragmentation(alloc_unit)
+                << " starting..." << dendl;
+
+  {
+    std::lock_guard l(lock);
+    interval_set<uint64_t> all_free;
+
+    for (auto& f : free) {
+      auto p = f.begin();
+      while (p != f.end()) {
+	all_free.insert(p.get_start(), p.get_len());
+	++p;
+      }
+    }
+    num_free = 0;
+    last_alloc = 0;
+    free.clear();
+    free.resize(10);
+  
+    auto p = all_free.begin();
+    while (p != all_free.end()) {
+      _insert_free(p.get_start(), p.get_len());
+      num_free += p.get_len();
+      ++p;
+    }
+  }
+
+  ldout(cct, 0) << __func__ << "frag = " << get_fragmentation(alloc_unit)
+                << " completed" << dendl;
+}

@@ -1,4 +1,3 @@
-// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
 #ifndef CEPH_OS_BLUESTORE_STUPIDALLOCATOR_H
@@ -51,6 +50,8 @@ public:
 
   uint64_t get_free() override;
   double get_fragmentation(uint64_t alloc_unit) override;
+
+  void defragment(uint64_t alloc_unit) override;
 
   void dump() override;
 
