@@ -1416,6 +1416,10 @@ public:
     int next(bool validate=true) override;
     string key() override;
     bufferlist value() override;
+    std::string tail_key() {
+      return tail;
+    }
+
     int status() override {
       return 0;
     }

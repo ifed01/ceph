@@ -190,6 +190,9 @@ public:
     virtual int next(bool validate=true) = 0;
     virtual std::string key() = 0;
     virtual bufferlist value() = 0;
+    virtual std::string tail_key() {
+      return "";
+    }
     virtual int status() = 0;
     virtual ~GenericIteratorImpl() {}
   };
