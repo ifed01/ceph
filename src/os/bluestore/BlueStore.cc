@@ -561,8 +561,9 @@ void _dump_extent_map(CephContext *cct, const BlueStore::ExtentMap &em)
       dout(LogLevelV) << __func__ << "      csum: " << std::hex << v << std::dec
 		      << dendl;
     }
-    std::lock_guard l(e.blob->shared_blob->get_cache()->lock);
-    for (auto& i : e.blob->shared_blob->bc.buffer_map) {
+    auto bc = e.blob->buffer_space();
+    std::lock_guard l(bc->get_cache()->lock);
+    for (auto& i : bc->bc.buffer_map) {
       dout(LogLevelV) << __func__ << "       0x" << std::hex << i.first
 		      << "~" << i.second->length << std::dec
 		      << " " << *i.second << dendl;
@@ -865,7 +866,7 @@ struct LruOnodeCacheShard : public BlueStore::OnodeCacheShard {
   {
     if (max >= lru.size()) {
       return; // don't even try
-    } 
+    }
     uint64_t n = lru.size() - max;
 
     auto p = lru.end();
@@ -1358,16 +1359,96 @@ BlueStore::BufferCacheShard *BlueStore::BufferCacheShard::create(
 // BufferSpace
 
 #undef dout_prefix
+#define dout_prefix *_dout << "bluestore.BufferSpace(" << &this->bc << " in " << cache << ") "
+
+BlueStore::BufferSpaceBase::~BufferSpaceBase()
+{
+  if (coll) {
+    bc._clear(coll->cache);
+  }
+
+}
+
+void BlueStore::BufferSpaceBase::finish_write(uint64_t seq)
+{
+  while (true) {
+    BufferCacheShard* cache = coll->cache;
+    std::lock_guard l(cache->lock);
+    if (coll->cache != cache) {
+      ldout(coll->store->cct, 20) << __func__
+        << " raced with sb cache update, was " << cache
+        << ", now " << coll->cache << ", retrying"
+        << dendl;
+      continue;
+    }
+    bc._finish_write(cache, seq);
+    break;
+  }
+}
+
+#undef dout_prefix
 #define dout_prefix *_dout << "bluestore.BufferSpace(" << this << " in " << cache << ") "
+
+void BlueStore::BufferSpace::_add_writing(BlueStore::Buffer* b)
+{
+  if (writing.empty() || writing.rbegin()->seq <= b->seq) {
+    writing.push_back(*b);
+  }
+  else {
+    auto it = writing.begin();
+    while (it->seq < b->seq) {
+      ++it;
+    }
+
+    ceph_assert(it->seq >= b->seq);
+    // note that this will insert b before it
+    // hence the order is maintained
+    writing.insert(it, *b);
+  }
+}
+
+void BlueStore::BufferSpace::claim(BlueStore::BufferSpace& from)
+{
+  while (!from.writing.empty()) {
+    auto &b = from.writing.front();
+    from.writing.pop_front();
+    _add_writing(&b);
+  }
+  for (auto it = from.buffer_map.begin(); it != from.buffer_map.end(); ++it) {
+    it->second->space = this;
+    buffer_map[it->first].swap(it->second);
+  }
+  from.buffer_map.clear();
+}
 
 void BlueStore::BufferSpace::_clear(BufferCacheShard* cache)
 {
   // note: we already hold cache->lock
-  ldout(cache->cct, 20) << __func__ << dendl;
+  ldout(cache->cct, 20) << __func__<< " " << buffer_map.empty() << dendl;
   while (!buffer_map.empty()) {
+    auto it = buffer_map.begin();
+    ldout(cache->cct, 20) << __func__ << " " << it->first <<" " << it->second.get() << dendl;
     _rm_buffer(cache, buffer_map.begin());
   }
 }
+
+void BlueStore::BufferSpace::_rm_buffer(BufferCacheShard* cache,
+  map<uint32_t, std::unique_ptr<Buffer>>::iterator p) {
+  ceph_assert(p != buffer_map.end());
+  cache->_audit("_rm_buffer start");
+  ldout(cache->cct, 20) << __func__ << " " << p->second->is_writing() << dendl;
+
+  if (p->second->is_writing()) {
+    writing.erase(writing.iterator_to(*p->second));
+  }
+  else {
+    cache->_rm(p->second.get());
+  }
+  ldout(cache->cct, 20) << __func__ << " erasing" << dendl;
+  buffer_map.erase(p);
+  cache->_audit("_rm_buffer end");
+}
+
 
 int BlueStore::BufferSpace::_discard(BufferCacheShard* cache, uint32_t offset, uint32_t length)
 {
@@ -1722,7 +1803,19 @@ void BlueStore::OnodeSpace::dump(CephContext *cct)
 // SharedBlob
 
 #undef dout_prefix
-#define dout_prefix *_dout << "bluestore.sharedblob(" << this << ") "
+#define dout_prefix *_dout << "bluestore.sharedblob(" << std::hex << (unsigned long)this << std::dec << ") "
+
+ostream& operator<<(ostream& out, const BlueStore::BufferSpaceBase* b)
+{
+  b->dump(out);
+  return out;
+}
+
+ostream& operator<<(ostream& out, const BlueStore::SharedBlob& sb)
+{
+  sb.dump(out);
+  return out;
+}
 
 void BlueStore::SharedBlob::dump(Formatter* f) const
 {
@@ -1734,25 +1827,26 @@ void BlueStore::SharedBlob::dump(Formatter* f) const
   }
 }
 
-ostream& operator<<(ostream& out, const BlueStore::SharedBlob& sb)
+void BlueStore::SharedBlob::dump(ostream& out) const
 {
-  out << "SharedBlob(" << &sb;
-  
-  if (sb.loaded) {
-    out << " loaded " << *sb.persistent;
+  out << "SharedBlob(" << std::hex << (unsigned long)this << std::dec;
+  if (loaded) {
+    out << " loaded " << *persistent;
   } else {
-    out << " sbid 0x" << std::hex << sb.sbid_unloaded << std::dec;
+    out << " sbid 0x" << std::hex << sbid_unloaded << std::dec;
   }
-  return out << ")";
+  out << ")";
+}
+
+BlueStore::SharedBlob::SharedBlob(Collection* _coll)
+  : BufferSpaceBase(_coll), sbid_unloaded(0)
+{
 }
 
 BlueStore::SharedBlob::SharedBlob(uint64_t i, Collection *_coll)
-  : coll(_coll), sbid_unloaded(i)
+  : BufferSpaceBase(_coll), sbid_unloaded(i)
 {
   ceph_assert(sbid_unloaded > 0);
-  if (get_cache()) {
-    get_cache()->add_blob();
-  }
 }
 
 BlueStore::SharedBlob::~SharedBlob()
@@ -1765,22 +1859,20 @@ BlueStore::SharedBlob::~SharedBlob()
 void BlueStore::SharedBlob::put()
 {
   if (--nref == 0) {
-    ldout(coll->store->cct, 20) << __func__ << " " << this
+    ldout(get_collection()->store->cct, 20) << __func__ << " " << this
 			     << " removing self from set " << get_parent()
 			     << dendl;
   again:
-    auto coll_snap = coll;
+    auto coll_snap = get_collection();
     if (coll_snap) {
       std::lock_guard l(coll_snap->cache->lock);
-      if (coll_snap != coll) {
+      if (coll_snap != get_collection()) {
 	goto again;
       }
       if (!coll_snap->shared_blob_set.remove(this, true)) {
 	// race with lookup
 	return;
       }
-      bc._clear(coll_snap->cache);
-      coll_snap->cache->rm_blob();
     }
     delete this;
   }
@@ -1799,23 +1891,6 @@ void BlueStore::SharedBlob::put_ref(uint64_t offset, uint32_t length,
   ceph_assert(persistent);
   persistent->ref_map.put(offset, length, r,
     unshare && !*unshare ? unshare : nullptr);
-}
-
-void BlueStore::SharedBlob::finish_write(uint64_t seq)
-{
-  while (true) {
-    BufferCacheShard *cache = coll->cache;
-    std::lock_guard l(cache->lock);
-    if (coll->cache != cache) {
-      ldout(coll->store->cct, 20) << __func__
-				  << " raced with sb cache update, was " << cache
-				  << ", now " << coll->cache << ", retrying"
-				  << dendl;
-      continue;
-    }
-    bc._finish_write(cache, seq);
-    break;
-  }
 }
 
 // SharedBlobSet
@@ -1843,9 +1918,7 @@ void BlueStore::Blob::dump(Formatter* f) const
     f->dump_unsigned("spanning_id ", id);
   }
   blob.dump(f);
-  if (shared_blob) {
-    f->dump_object("shared", *shared_blob);
-  }
+  f->dump_object("bspace", *buffer_space());
 }
 
 ostream& operator<<(ostream& out, const BlueStore::Blob& b)
@@ -1855,20 +1928,82 @@ ostream& operator<<(ostream& out, const BlueStore::Blob& b)
     out << " spanning " << b.id;
   }
   out << " " << b.get_blob() << " " << b.get_blob_use_tracker();
-  if (b.shared_blob) {
-    out << " " << *b.shared_blob;
-  } else {
-    out << " (shared_blob=NULL)";
-  }
+  out << " " << b.buffer_space();
   out << ")";
   return out;
 }
 
-void BlueStore::Blob::discard_unallocated(Collection *coll)
+void BlueStore::Blob::open_shared_blob(Collection* coll, uint64_t sbid)
 {
-  if (get_blob().is_shared()) {
+  ceph_assert(!buffer_space());
+  if (!is_shared()) {
+    _shared_bspace = new BufferSpaceBase(coll);
     return;
   }
+
+  SharedBlobRef sb = coll->shared_blob_set.lookup(sbid);
+  if (sb) {
+    _shared_blob = sb;
+    ldout(coll->store->cct, 10) << __func__ << " sbid 0x" << std::hex << sbid
+      << std::dec << " had " << _shared_blob << dendl;
+  } else {
+    _shared_blob = new SharedBlob(sbid, coll);
+    coll->shared_blob_set.add(_shared_blob.get());
+    ldout(coll->store->cct, 10) << __func__ << " sbid 0x" << std::hex << sbid
+      << std::dec << " opened " << _shared_blob
+      << dendl;
+  }
+}
+
+void BlueStore::Blob::make_blob_shared(Collection* coll, uint64_t sbid)
+{
+  ldout(coll->store->cct, 10) << __func__ << " " << *this << dendl;
+  ceph_assert(!is_shared());
+  auto old_bc = _shared_bspace;
+  _shared_bspace.reset();
+
+  // update blob
+  bluestore_blob_t& blob = dirty_blob();
+  blob.set_flag(bluestore_blob_t::FLAG_SHARED);
+
+  // update shared blob
+  _shared_blob = new SharedBlob(sbid, coll);
+  _shared_blob->bc.claim(old_bc->bc);
+  _shared_blob->loaded = true;
+  _shared_blob->persistent = new bluestore_shared_blob_t(sbid);   //FIXME minor: embed persistent?
+  coll->shared_blob_set.add(_shared_blob.get());
+  for (auto p : blob.get_extents()) {
+    if (p.is_valid()) {
+      _shared_blob->get_ref(
+        p.offset,
+        p.length);
+    }
+  }
+  ldout(coll->store->cct, 20) << __func__ << " now " << *this << dendl;
+}
+
+void BlueStore::Blob::make_blob_unshared(Collection* coll)
+{
+  ldout(coll->store->cct, 10) << __func__ << " " << *this << dendl;
+  ceph_assert(is_shared());
+  auto old_sb = _shared_blob;
+  _shared_blob.reset();
+
+  // update blob
+  bluestore_blob_t& blob = dirty_blob();
+  blob.clear_flag(bluestore_blob_t::FLAG_SHARED);
+  _shared_bspace = new BufferSpaceBase(coll);
+  _shared_bspace->bc.claim(old_sb->bc); 
+
+  ldout(coll->store->cct, 20) << __func__ << " now " << *this << dendl;
+}
+
+void BlueStore::Blob::discard_unallocated(Collection *coll)
+{
+  if (is_shared()) {
+    return;
+  }
+  auto bc = shared_buffer_space();
   if (get_blob().is_compressed()) {
     bool discard = false;
     bool all_invalid = true;
@@ -1882,8 +2017,8 @@ void BlueStore::Blob::discard_unallocated(Collection *coll)
     ceph_assert(discard == all_invalid); // in case of compressed blob all
 				    // or none pextents are invalid.
     if (discard) {
-      shared_blob->bc.discard(shared_blob->get_cache(), 0,
-                              get_blob().get_logical_length());
+      bc->bc.discard(bc->get_cache(), 0,
+                     get_blob().get_logical_length());
     }
   } else {
     size_t pos = 0;
@@ -1892,7 +2027,7 @@ void BlueStore::Blob::discard_unallocated(Collection *coll)
 	ldout(coll->store->cct, 20) << __func__ << " 0x" << std::hex << pos
 				    << "~" << e.length
 				    << std::dec << dendl;
-	shared_blob->bc.discard(shared_blob->get_cache(), pos, e.length);
+	bc->bc.discard(bc->get_cache(), pos, e.length);
       }
       pos += e.length;
     }
@@ -2041,13 +2176,23 @@ void BlueStore::Blob::split(Collection *coll, uint32_t blob_offset, Blob *r)
   ceph_assert(used_in_blob.can_split());
   bluestore_blob_t &lb = dirty_blob();
   bluestore_blob_t &rb = r->dirty_blob();
+  ceph_assert(!r->is_shared()); // FIXME: is this valid
 
   used_in_blob.split(
     blob_offset,
     &(r->used_in_blob));
 
   lb.split(blob_offset, rb);
-  shared_blob->bc.split(shared_blob->get_cache(), blob_offset, r->shared_blob->bc);
+  if (is_shared()) {
+    shared_blob()->bc.split(shared_blob()->get_cache(), blob_offset, r->shared_buffer_space()->bc);
+  } else {
+    //FIXME: do we really need split, is r always non-shared?
+    ceph_assert(!r->is_shared());
+    shared_buffer_space()->bc.split(
+      shared_buffer_space()->get_cache(),
+      blob_offset,
+      r->shared_buffer_space()->bc);
+  }
 
   dout(10) << __func__ << " 0x" << std::hex << blob_offset << std::dec
 	   << " finish " << *this << dendl;
@@ -2167,10 +2312,9 @@ void BlueStore::ExtentMap::dup(BlueStore* b, TransContext* txc,
       blob_duped = false;
     } else { 
       // dup the blob
-      const bluestore_blob_t& blob = e.blob->get_blob();
       // make sure it is shared
-      if (!blob.is_shared()) {
-        c->make_blob_shared(b->_assign_blobid(txc), e.blob);
+      if (!e.blob->is_shared()) {
+        e.blob->make_blob_shared(c.get(), b->_assign_blobid(txc));
 	if (!inject_21040 && !src_dirty) {
           src_dirty = true;
           dirty_range_begin = e.logical_offset;
@@ -2182,19 +2326,19 @@ void BlueStore::ExtentMap::dup(BlueStore* b, TransContext* txc,
         // -1 to exclude next potential shard
         dirty_range_end = e.logical_end() - 1;
       } else {
-        c->load_shared_blob(e.blob->shared_blob);
+        c->load_shared_blob(e.blob->shared_blob());
       }
-      cb = new Blob();
+      cb = new Blob(false, c.get());
       e.blob->last_encoded_id = n;
       id_to_blob[n] = cb;
       e.blob->dup(*cb);
       // bump the extent refs on the copied blob's extents
-      for (auto p : blob.get_extents()) {
+      for (auto p : e.blob->get_blob().get_extents()) {
         if (p.is_valid()) {
-          e.blob->shared_blob->get_ref(p.offset, p.length);
+          e.blob->shared_blob()->get_ref(p.offset, p.length);
         }
       }
-      txc->write_shared_blob(e.blob->shared_blob);
+      txc->write_shared_blob(e.blob->shared_blob());
       dout(20) << __func__ << "    new " << *cb << dendl;
     }
 
@@ -2720,7 +2864,7 @@ bool BlueStore::ExtentMap::encode_some(
       p->blob->bound_encode(
         bound,
         struct_v,
-        p->blob->shared_blob->get_sbid(),
+        p->blob->is_shared() ? p->blob->shared_blob()->get_sbid() : 0, // FIXME minor: get rid off passing sbid via param and resolve inside the func?
         false);
     }
   }
@@ -2780,7 +2924,10 @@ bool BlueStore::ExtentMap::encode_some(
       }
       pos = p->logical_end();
       if (include_blob) {
-	p->blob->encode(app, struct_v, p->blob->shared_blob->get_sbid(), false);
+	p->blob->encode(app,
+          struct_v,
+          p->blob->is_shared() ? p->blob->shared_blob()->get_sbid() : 0, // FIXME minor: get rid off passing sbid via param and resolve inside the func?
+          false);
       }
     }
   }
@@ -2847,11 +2994,11 @@ unsigned BlueStore::ExtentMap::decode_some(bufferlist& bl)
 	le->assign_blob(blobs[blobid - 1]);
 	ceph_assert(le->blob);
       } else {
-	Blob *b = new Blob();
+	Blob *b = new Blob(false, onode->c);
         uint64_t sbid = 0;
         b->decode(onode->c, p, struct_v, &sbid, false);
 	blobs[n] = b;
-	onode->c->open_shared_blob(sbid, b);
+        b->open_shared_blob(onode->c, sbid);
 	le->assign_blob(b);
       }
       // we build ref_map dynamically for non-spanning blobs
@@ -2882,7 +3029,8 @@ void BlueStore::ExtentMap::bound_encode_spanning_blobs(size_t& p)
   denc_varint((uint32_t)0, key_size);
   p += spanning_blob_map.size() * key_size;
   for (const auto& i : spanning_blob_map) {
-    i.second->bound_encode(p, struct_v, i.second->shared_blob->get_sbid(), true);
+    uint64_t sbid = i.second->is_shared() ? i.second->shared_blob()->get_sbid() : 0;
+    i.second->bound_encode(p, struct_v, sbid, true);
   }
 }
 
@@ -2898,7 +3046,8 @@ void BlueStore::ExtentMap::encode_spanning_blobs(
   denc_varint(spanning_blob_map.size(), p);
   for (auto& i : spanning_blob_map) {
     denc_varint(i.second->id, p);
-    i.second->encode(p, struct_v, i.second->shared_blob->get_sbid(), true);
+    uint64_t sbid = i.second->is_shared() ? i.second->shared_blob()->get_sbid() : 0;
+    i.second->encode(p, struct_v, sbid, true);
   }
 }
 
@@ -2915,12 +3064,12 @@ void BlueStore::ExtentMap::decode_spanning_blobs(
   unsigned n;
   denc_varint(n, p);
   while (n--) {
-    BlobRef b(new Blob());
+    BlobRef b = new Blob(false, onode->c);
     denc_varint(b->id, p);
     spanning_blob_map[b->id] = b;
     uint64_t sbid = 0;
     b->decode(onode->c, p, struct_v, &sbid, true);
-    onode->c->open_shared_blob(sbid, b);
+    b->open_shared_blob(onode->c, sbid);
   }
 }
 
@@ -3228,7 +3377,7 @@ BlueStore::BlobRef BlueStore::ExtentMap::split_blob(
   dout(20) << __func__ << " 0x" << std::hex << pos << " end 0x" << end_pos
 	   << " blob_offset 0x" << blob_offset << std::dec << " " << *lb
 	   << dendl;
-  BlobRef rb = onode->c->new_blob();
+  BlobRef rb = new Blob(true, onode->c);
   lb->split(onode->c, blob_offset, rb.get());
 
   for (auto ep = seek_lextent(pos);
@@ -3536,28 +3685,6 @@ void BlueStore::Collection::flush_all_but_last()
   osr->flush_all_but_last();
 }
 
-void BlueStore::Collection::open_shared_blob(uint64_t sbid, BlobRef b)
-{
-  ceph_assert(!b->shared_blob);
-  const bluestore_blob_t& blob = b->get_blob();
-  if (!blob.is_shared()) {
-    b->shared_blob = new SharedBlob(this);
-    return;
-  }
-
-  b->shared_blob = shared_blob_set.lookup(sbid);
-  if (b->shared_blob) {
-    ldout(store->cct, 10) << __func__ << " sbid 0x" << std::hex << sbid
-			  << std::dec << " had " << *b->shared_blob << dendl;
-  } else {
-    b->shared_blob = new SharedBlob(sbid, this);
-    shared_blob_set.add(this, b->shared_blob.get());
-    ldout(store->cct, 10) << __func__ << " sbid 0x" << std::hex << sbid
-			  << std::dec << " opened " << *b->shared_blob
-			  << dendl;
-  }
-}
-
 void BlueStore::Collection::load_shared_blob(SharedBlobRef sb)
 {
   if (!sb->is_loaded()) {
@@ -3579,45 +3706,8 @@ void BlueStore::Collection::load_shared_blob(SharedBlobRef sb)
     auto p = v.cbegin();
     decode(*(sb->persistent), p);
     ldout(store->cct, 10) << __func__ << " sbid 0x" << std::hex << sbid
-			  << std::dec << " loaded shared_blob " << *sb << dendl;
+			  << std::dec << " loaded shared_blob " << *sb.get() << dendl;
   }
-}
-
-void BlueStore::Collection::make_blob_shared(uint64_t sbid, BlobRef b)
-{
-  ldout(store->cct, 10) << __func__ << " " << *b << dendl;
-  ceph_assert(!b->shared_blob->is_loaded());
-
-  // update blob
-  bluestore_blob_t& blob = b->dirty_blob();
-  blob.set_flag(bluestore_blob_t::FLAG_SHARED);
-
-  // update shared blob
-  b->shared_blob->loaded = true;
-  b->shared_blob->persistent = new bluestore_shared_blob_t(sbid);
-  shared_blob_set.add(this, b->shared_blob.get());
-  for (auto p : blob.get_extents()) {
-    if (p.is_valid()) {
-      b->shared_blob->get_ref(
-	p.offset,
-	p.length);
-    }
-  }
-  ldout(store->cct, 20) << __func__ << " now " << *b << dendl;
-}
-
-uint64_t BlueStore::Collection::make_blob_unshared(SharedBlob *sb)
-{
-  ldout(store->cct, 10) << __func__ << " " << *sb << dendl;
-  ceph_assert(sb->is_loaded());
-
-  uint64_t sbid = sb->get_sbid();
-  shared_blob_set.remove(sb);
-  sb->loaded = false;
-  delete sb->persistent;
-  sb->sbid_unloaded = 0;
-  ldout(store->cct, 20) << __func__ << " now " << *sb << dendl;
-  return sbid;
 }
 
 BlueStore::OnodeRef BlueStore::Collection::get_onode(
@@ -3709,26 +3799,34 @@ void BlueStore::Collection::split_cache(
       // both extent map and spanning blob map (the full extent map
       // may not be faulted in)
       vector<SharedBlob*> sbvec;
+      vector<BufferSpaceBase*> bcvec;
       for (auto& e : o->extent_map.extent_map) {
-	sbvec.push_back(e.blob->shared_blob.get());
+        if (e.blob->is_shared()) {
+          sbvec.push_back(e.blob->shared_blob().get());
+        } else {
+          bcvec.push_back(e.blob->shared_buffer_space().get());
+        }
       }
       for (auto& b : o->extent_map.spanning_blob_map) {
-	sbvec.push_back(b.second->shared_blob.get());
+        if (b.second->is_shared()) {
+          sbvec.push_back(b.second->shared_blob().get());
+        } else {
+          bcvec.push_back(b.second->shared_buffer_space().get());
+        }
       }
       for (auto sb : sbvec) {
-	if (sb->coll == dest) {
+	if (sb->get_collection() == dest) {
 	  ldout(store->cct, 20) << __func__ << "  already moved " << *sb
 				<< dendl;
 	  continue;
 	}
 	ldout(store->cct, 20) << __func__ << "  moving " << *sb << dendl;
-	if (sb->get_sbid()) {
-	  ldout(store->cct, 20) << __func__
-				<< "   moving registration " << *sb << dendl;
-	  shared_blob_set.remove(sb);
-	  dest->shared_blob_set.add(dest, sb);
-	}
-	sb->coll = dest;
+        ceph_assert(sb->get_sbid());
+	ldout(store->cct, 20) << __func__
+			      << "   moving registration " << *sb << dendl;
+	shared_blob_set.remove(sb);
+	dest->shared_blob_set.add(sb);
+	sb->update_collection(dest);
 	if (dest->cache != cache) {
 	  for (auto& i : sb->bc.buffer_map) {
 	    if (!i.second->is_writing()) {
@@ -3738,6 +3836,25 @@ void BlueStore::Collection::split_cache(
 	    }
 	  }
 	}
+      }
+
+      for (auto bc : bcvec) {
+        if (bc->get_collection() == dest) {
+          ldout(store->cct, 20) << __func__ << "  already moved " << bc
+            << dendl;
+          continue;
+        }
+        ldout(store->cct, 20) << __func__ << "  moving " << bc << dendl;
+        bc->update_collection(dest);
+        if (dest->cache != cache) {
+          for (auto& i : bc->bc.buffer_map) {
+            if (!i.second->is_writing()) {
+              ldout(store->cct, 20) << __func__ << "   moving " << *i.second
+                << dendl;
+              dest->cache->_move(cache, i.second.get());
+            }
+          }
+        }
       }
     }
   }
@@ -7308,13 +7425,13 @@ BlueStore::OnodeRef BlueStore::fsck_check_objects_shallow(
         i.first->get_referenced_bytes();
     }
     if (blob.is_shared()) {
-      if (i.first->shared_blob->get_sbid() > blobid_max) {
+      auto sb = i.first->shared_blob();
+      if (sb->get_sbid() > blobid_max) {
         derr << "fsck error: " << oid << " blob " << blob
-          << " sbid " << i.first->shared_blob->get_sbid() << " > blobid_max "
+          << " sbid " << sb->get_sbid() << " > blobid_max "
           << blobid_max << dendl;
         ++errors;
-      }
-      else if (i.first->shared_blob->get_sbid() == 0) {
+      } else if (sb->get_sbid() == 0) {
         derr << "fsck error: " << oid << " blob " << blob
           << " marked as shared but has uninitialized sbid"
           << dendl;
@@ -7324,13 +7441,13 @@ BlueStore::OnodeRef BlueStore::fsck_check_objects_shallow(
       if (sb_info_lock) {
         sb_info_lock->lock();
       }
-      sb_info_t& sbi = sb_info[i.first->shared_blob->get_sbid()];
+      sb_info_t& sbi = sb_info[sb->get_sbid()];
       ceph_assert(sbi.cid == coll_t() || sbi.cid == c->cid);
       ceph_assert(sbi.pool_id == INT64_MIN ||
         sbi.pool_id == oid.hobj.get_logical_pool());
       sbi.cid = c->cid;
       sbi.pool_id = oid.hobj.get_logical_pool();
-      sbi.sb = i.first->shared_blob;
+      sbi.sb = sb;
       sbi.oids.push_back(oid);
       sbi.compressed = blob.is_compressed();
       for (auto e : blob.get_extents()) {
@@ -8441,8 +8558,7 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
 
 	  if (b->get_blob().is_shared()) {
             b->dirty_blob().clear_flag(bluestore_blob_t::FLAG_SHARED);
-
-	    auto sb_it = sb_info.find(b->shared_blob->get_sbid());
+            auto sb_it = sb_info.find(b->shared_blob()->get_sbid());
 	    ceph_assert(sb_it != sb_info.end());
 	    sb_info_t& sbi = sb_it->second;
 
@@ -8708,7 +8824,7 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
   }
   if (repair) {
     if (!per_pool_omap &&
-	depth != FSCK_SHALLOW) {
+      depth != FSCK_SHALLOW) {
       dout(5) << __func__ << " marking per_pool_omap=1" << dendl;
       repairer.fix_per_pool_omap(db);
     }
@@ -9381,8 +9497,8 @@ void BlueStore::_read_cache(
 
     ready_regions_t cache_res;
     interval_set<uint32_t> cache_interval;
-    bptr->shared_blob->bc.read(
-      bptr->shared_blob->get_cache(), b_off, b_len, cache_res, cache_interval,
+    bptr->buffer_space()->bc.read(
+      bptr->buffer_space()->get_cache(), b_off, b_len, cache_res, cache_interval,
       read_cache_policy);
     dout(20) << __func__ << "  blob " << *bptr << std::hex
              << " need 0x" << b_off << "~" << b_len
@@ -9549,7 +9665,7 @@ int BlueStore::_generate_read_result_bl(
       if (r < 0)
         return r;
       if (buffered) {
-        bptr->shared_blob->bc.did_read(bptr->shared_blob->get_cache(), 0,
+        bptr->buffer_space()->bc.did_read(bptr->buffer_space()->get_cache(), 0,
                                        raw_bl);
       }
       for (auto& req : r2r) {
@@ -9566,7 +9682,7 @@ int BlueStore::_generate_read_result_bl(
           return -EIO;
         }
         if (buffered) {
-          bptr->shared_blob->bc.did_read(bptr->shared_blob->get_cache(),
+          bptr->buffer_space()->bc.did_read(bptr->buffer_space()->get_cache(),
                                          req.r_off, req.bl);
         }
 
@@ -11254,13 +11370,14 @@ void BlueStore::_txc_committed_kv(TransContext *txc)
 
 void BlueStore::_txc_finish(TransContext *txc)
 {
-  dout(20) << __func__ << " " << txc << " onodes " << txc->onodes << dendl;
+  dout(20) << __func__ << " " << txc << " onodes " << txc->onodes
+           << " blobs " << txc->blobs_written.size() << dendl;
   ceph_assert(txc->state == TransContext::STATE_FINISHING);
 
-  for (auto& sb : txc->shared_blobs_written) {
-    sb->finish_write(txc->seq);
+  for (auto& b : txc->blobs_written) {
+    b->buffer_space()->finish_write(txc->seq);
   }
-  txc->shared_blobs_written.clear();
+  txc->blobs_written.clear();
 
   while (!txc->removed_collections.empty()) {
     _queue_reap_collection(txc->removed_collections.front());
@@ -13038,7 +13155,7 @@ void BlueStore::_do_write_small(
 	      << std::dec << dendl;
   }
   // new blob.
-  BlobRef b = c->new_blob();
+  BlobRef b = new Blob(true, c.get());
   uint64_t b_off = p2phase<uint64_t>(offset, alloc_len);
   uint64_t b_off0 = b_off;
   _pad_zeros(&bl, &b_off0, block_size);
@@ -13123,7 +13240,7 @@ void BlueStore::_do_write_big(
       } while (b == nullptr && any_change);
     }
     if (b == nullptr) {
-      b = c->new_blob();
+      b = new Blob(true, c.get());
       b_off = 0;
       new_blob = true;
     }
@@ -13459,22 +13576,22 @@ void BlueStore::_wctx_finish(
       dout(20) << __func__ << "  blob release " << r << dendl;
       if (blob.is_shared()) {
 	PExtentVector final;
-        c->load_shared_blob(b->shared_blob);
+        c->load_shared_blob(b->shared_blob());
 	bool unshare = false;
 	bool* unshare_ptr =
 	  !maybe_unshared_blobs || b->is_referenced() ? nullptr : &unshare;
 	for (auto e : r) {
-	  b->shared_blob->put_ref(
+	  b->shared_blob()->put_ref(
 	    e.offset, e.length, &final,
 	    unshare_ptr);
 	}
 	if (unshare) {
 	  ceph_assert(maybe_unshared_blobs);
-	  maybe_unshared_blobs->insert(b->shared_blob.get());
+	  maybe_unshared_blobs->insert(b->shared_blob().get());
 	}
 	dout(20) << __func__ << "  shared_blob release " << final
-		 << " from " << *b->shared_blob << dendl;
-	txc->write_shared_blob(b->shared_blob);
+		 << " from " << b->buffer_space() << dendl;
+	txc->write_shared_blob(b->shared_blob());
 	r.clear();
 	r.swap(final);
       }
@@ -13981,17 +14098,18 @@ int BlueStore::_do_remove(
   map<SharedBlob*,bluestore_extent_ref_map_t> expect;
   for (auto& e : h->extent_map.extent_map) {
     const bluestore_blob_t& b = e.blob->get_blob();
-    SharedBlob *sb = e.blob->shared_blob.get();
-    if (b.is_shared() &&
-	sb->loaded &&
-	maybe_unshared_blobs.count(sb)) {
-      if (b.is_compressed()) {
-	expect[sb].get(0, b.get_ondisk_length());
-      } else {
-	b.map(e.blob_offset, e.length, [&](uint64_t off, uint64_t len) {
-	    expect[sb].get(off, len);
-	    return 0;
-	  });
+    if (b.is_shared()) {
+      SharedBlob* sb = e.blob->shared_blob().get();
+      if (sb->loaded &&
+        maybe_unshared_blobs.count(sb)) {
+        if (b.is_compressed()) {
+          expect[sb].get(0, b.get_ondisk_length());
+        } else {
+          b.map(e.blob_offset, e.length, [&](uint64_t off, uint64_t len) {
+            expect[sb].get(off, len);
+            return 0;
+            });
+        }
       }
     }
   }
@@ -14005,9 +14123,8 @@ int BlueStore::_do_remove(
       dout(20) << __func__ << "  unsharing " << *sb << dendl;
       unshared_blobs.push_back(sb);
       txc->unshare_blob(sb);
-      uint64_t sbid = c->make_blob_unshared(sb);
       string key;
-      get_shared_blob_key(sbid, &key);
+      get_shared_blob_key(sb->get_sbid(), &key);
       txc->t->rmkey(PREFIX_SHARED_BLOB, key);
     }
   }
@@ -14017,15 +14134,14 @@ int BlueStore::_do_remove(
   }
 
   for (auto& e : h->extent_map.extent_map) {
-    const bluestore_blob_t& b = e.blob->get_blob();
-    SharedBlob *sb = e.blob->shared_blob.get();
-    if (b.is_shared() &&
-        std::find(unshared_blobs.begin(), unshared_blobs.end(),
-                  sb) != unshared_blobs.end()) {
-      dout(20) << __func__ << "  unsharing " << e << dendl;
-      bluestore_blob_t& blob = e.blob->dirty_blob();
-      blob.clear_flag(bluestore_blob_t::FLAG_SHARED);
-      h->extent_map.dirty_range(e.logical_offset, 1);
+    if (e.blob->is_shared()) {
+      SharedBlob* sb = e.blob->shared_blob().get();
+      if (std::find(unshared_blobs.begin(), unshared_blobs.end(),sb) !=
+            unshared_blobs.end()) {
+        dout(20) << __func__ << "  unsharing " << e << dendl;
+        e.blob->make_blob_unshared(c.get());
+        h->extent_map.dirty_range(e.logical_offset, 1);
+      }
     }
   }
   txc->write_onode(h);
@@ -15139,11 +15255,11 @@ void BlueStore::generate_db_histogram(Formatter *f)
 void BlueStore::_flush_cache()
 {
   dout(10) << __func__ << dendl;
-  for (auto i : onode_cache_shards) {
+  for (auto i : buffer_cache_shards) {
     i->flush();
     ceph_assert(i->empty());
   }
-  for (auto i : buffer_cache_shards) {
+  for (auto i : onode_cache_shards) {
     i->flush();
     ceph_assert(i->empty());
   }
@@ -15169,10 +15285,10 @@ void BlueStore::_flush_cache()
 int BlueStore::flush_cache(ostream *os)
 {
   dout(10) << __func__ << dendl;
-  for (auto i : onode_cache_shards) {
+  for (auto i : buffer_cache_shards) {
     i->flush();
   }
-  for (auto i : buffer_cache_shards) {
+  for (auto i : onode_cache_shards) {
     i->flush();
   }
 
