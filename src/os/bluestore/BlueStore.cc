@@ -1051,6 +1051,7 @@ public:
 
   void _add(BlueStore::Buffer *b, int level, BlueStore::Buffer *near) override
   {
+    ceph_assert(b->length != 0);
     dout(20) << __func__ << " level " << level << " near " << near
              << " on " << *b
              << " which has cache_private " << b->cache_private << dendl;
@@ -1107,7 +1108,7 @@ public:
 
   void _rm(BlueStore::Buffer *b) override
   {
-    dout(20) << __func__ << " " << *b << dendl;
+    dout(20) << __func__ << " " << *b << " " << buffer_bytes << " " << b->length << dendl;
     if (!b->is_empty()) {
       ceph_assert(buffer_bytes >= b->length);
       buffer_bytes -= b->length;
@@ -1191,6 +1192,10 @@ public:
 
   void _trim_to(uint64_t max) override
   {
+    if (max == 0 ) {
+      dout(20) << __func__ << " flush_cache " << hot.size() << " " << warm_in.size() << " " << buffer_bytes << dendl;
+    }
+
     if (buffer_bytes > max) {
       uint64_t kin = max * cct->_conf->bluestore_2q_cache_kin_ratio;
       uint64_t khot = max - kin;
@@ -1283,6 +1288,21 @@ public:
       }
     }
     num = hot.size() + warm_in.size();
+    if (max == 0 && (
+      hot.size() != 0 ||
+      warm_in.size() != 0 ||
+      buffer_bytes != 0)) {
+
+      if (warm_in.size()) {
+        BlueStore::Buffer& b = warm_in.front();
+        derr << __func__ << " leftover " << b << " " << dendl;
+        derr << __func__ << " leftover bspace " << b.space->buffer_map.size() << " " << b.space->writing.size() << dendl;
+      }
+      
+      dout(20) << __func__ << " " << hot.size() << " " << warm_in.size() << " " << buffer_bytes << dendl;
+      ceph_assert(false);
+
+    }
   }
 
   void add_stats(uint64_t *extents,
