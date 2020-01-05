@@ -1577,7 +1577,7 @@ void BlueStore::BufferSpace::_finish_write(BufferCacheShard* cache, uint64_t seq
       ldout(cache->cct, 20) << __func__ << " added " << *b << dendl;
     }
   }
-  cache->_trim();
+  cache->_trim(false);
   cache->_audit("finish_write end");
 }
 
@@ -1629,7 +1629,7 @@ void BlueStore::BufferSpace::split(BufferCacheShard* cache, size_t pos, BlueStor
     }
   }
   ceph_assert(writing.empty());
-  cache->_trim();
+  cache->_trim(false);
 }
 
 // OnodeSpace
@@ -1650,7 +1650,7 @@ BlueStore::OnodeRef BlueStore::OnodeSpace::add(const ghobject_t& oid, OnodeRef o
   ldout(cache->cct, 30) << __func__ << " " << oid << " " << o << dendl;
   onode_map[oid] = o;
   cache->_add(o, 1);
-  cache->_trim();
+  cache->_trim(false);
   return o;
 }
 
@@ -1672,6 +1672,7 @@ BlueStore::OnodeRef BlueStore::OnodeSpace::lookup(const ghobject_t& oid)
       hit = true;
       o = p->second;
     }
+    cache->_trim(true);
   }
 
   if (hit) {
@@ -1730,7 +1731,7 @@ void BlueStore::OnodeSpace::rename(
   cache->_touch(o);
   o->oid = new_oid;
   o->key = new_okey;
-  cache->_trim();
+  cache->_trim(false);
 }
 
 bool BlueStore::OnodeSpace::map_any(std::function<bool(OnodeRef)> f)
@@ -3775,7 +3776,7 @@ void BlueStore::Collection::split_cache(
       }
     }
   }
-  dest->cache->_trim();
+  dest->cache->_trim(false);
 }
 
 // =======================================================

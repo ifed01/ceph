@@ -351,7 +351,7 @@ public:
     int discard(BufferCacheShard* cache, uint32_t offset, uint32_t length) {
       std::lock_guard l(cache->lock);
       int ret = _discard(cache, offset, length);
-      cache->_trim();
+      cache->_trim(false);
       return ret;
     }
     int _discard(BufferCacheShard* cache, uint32_t offset, uint32_t length);
@@ -363,7 +363,7 @@ public:
 			     flags);
       b->cache_private = _discard(cache, offset, bl.length());
       _add_buffer(cache, b, (flags & Buffer::FLAG_NOCACHE) ? 0 : 1, nullptr);
-      cache->_trim();
+      cache->_trim(false);
     }
     void _finish_write(BufferCacheShard* cache, uint64_t seq);
     void did_read(BufferCacheShard* cache, uint32_t offset, bufferlist& bl) {
@@ -371,7 +371,7 @@ public:
       Buffer *b = new Buffer(this, Buffer::STATE_CLEAN, 0, offset, bl);
       b->cache_private = _discard(cache, offset, bl.length());
       _add_buffer(cache, b, 1, nullptr);
-      cache->_trim();
+      cache->_trim(false);
     }
 
     void read(BufferCacheShard* cache, uint32_t offset, uint32_t length,
@@ -1155,8 +1155,10 @@ public:
 
     std::atomic<uint64_t> max = {0};
     std::atomic<uint64_t> num = {0};
+    utime_t next_time_to_trim;
 
-    CacheShard(CephContext* cct) : cct(cct), logger(nullptr) {}
+    CacheShard(CephContext* cct) : cct(cct), logger(nullptr),
+      next_time_to_trim(ceph_clock_now()) {}
     virtual ~CacheShard() {}
 
     void set_max(uint64_t max_) {
@@ -1168,17 +1170,26 @@ public:
     }
 
     virtual void _trim_to(uint64_t new_size) = 0;
-    void _trim() {
+    void _trim(bool periodic) {
       if (cct->_conf->objectstore_blackhole) {
 	// do not trim if we are throwing away IOs a layer down
 	return;
       }
-      _trim_to(max);
+      if (!periodic || next_time_to_trim < ceph_clock_now()) {
+        _trim_to(max);
+
+        // set next trim time if periodic flag is set only
+        // to make non-periodic trim more lightweight
+        if (periodic) {
+          next_time_to_trim = ceph_clock_now();
+          next_time_to_trim += 5.0; //FIXME: to configure
+        }
+      }
     }
 
     void trim() {
       std::lock_guard l(lock);
-      _trim();    
+      _trim(false);
     }
     void flush() {
       std::lock_guard l(lock);
