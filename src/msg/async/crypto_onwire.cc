@@ -21,6 +21,10 @@ static constexpr const std::size_t AESGCM_BLOCK_LEN{16};
 struct nonce_t {
   std::uint32_t random_seq;
   std::uint64_t random_rest;
+
+  bool operator==(const nonce_t& rhs) const {
+    return !memcmp(this, &rhs, sizeof(*this));
+  }
 } __attribute__((packed));
 static_assert(sizeof(nonce_t) == AESGCM_IV_LEN);
 
@@ -34,7 +38,8 @@ class AES128GCM_OnWireTxHandler : public ceph::crypto::onwire::TxHandler {
   CephContext* const cct;
   std::unique_ptr<EVP_CIPHER_CTX, decltype(&::EVP_CIPHER_CTX_free)> ectx;
   ceph::bufferlist buffer;
-  nonce_t nonce;
+  nonce_t nonce, initial_nonce;
+  bool used_initial;
   static_assert(sizeof(nonce) == AESGCM_IV_LEN);
 
 public:
@@ -43,7 +48,7 @@ public:
 			    const nonce_t& nonce)
     : cct(cct),
       ectx(EVP_CIPHER_CTX_new(), EVP_CIPHER_CTX_free),
-      nonce(nonce) {
+      nonce(nonce), initial_nonce(nonce), used_initial(false) {
     ceph_assert_always(ectx);
     ceph_assert_always(key.size() * CHAR_BIT == 128);
 
@@ -77,6 +82,13 @@ public:
 void AES128GCM_OnWireTxHandler::reset_tx_handler(
   std::initializer_list<std::uint32_t> update_size_sequence)
 {
+  if (nonce == initial_nonce) {
+    if (used_initial) {
+      throw ceph::crypto::onwire::TxHandlerError("out of nonces");
+    }
+    used_initial = true;
+  }
+
   if(1 != EVP_EncryptInit_ex(ectx.get(), nullptr, nullptr, nullptr,
       reinterpret_cast<const unsigned char*>(&nonce))) {
     throw std::runtime_error("EVP_EncryptInit_ex failed");
