@@ -1,6 +1,8 @@
 set(kv_srcs
   KeyValueDB.cc
   MemDB.cc
+  pmemkv.cc
+  ceph_pmemkv.cc
   RocksDBStore.cc
   rocksdb_cache/ShardedCache.cc
   rocksdb_cache/BinnedLRUCache.cc)
@@ -14,4 +16,5 @@ add_library(kv STATIC ${kv_srcs}
 
 target_link_libraries(kv ${LEVELDB_LIBRARIES}
   RocksDB::RocksDB
+  pmemobj
   heap_profiler)

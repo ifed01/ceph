@@ -9,6 +9,7 @@
 #ifdef HAVE_LIBROCKSDB
 #include "RocksDBStore.h"
 #endif
+#include "ceph_pmemkv.h"
 
 using std::map;
 using std::string;
@@ -32,6 +33,9 @@ KeyValueDB *KeyValueDB::create(CephContext *cct, const string& type,
   if ((type == "memdb") && 
     cct->check_experimental_feature_enabled("memdb")) {
     return new MemDB(cct, dir, p);
+  }
+  if (type == "pmemkv") {
+    return new PMemKeyValueDB(cct, dir);
   }
   return NULL;
 }

@@ -5799,6 +5799,8 @@ int BlueStore::_prepare_db_environment(bool create, bool read_only,
 	kv_options.erase("separate_wal_dir");
       }
     }
+  } else if (kv_backend == "pmemkv") {
+    fn = cct->_conf->bluestore_block_db_path;
   } else {
     string walfn = path + "/db.wal";
 
@@ -5830,7 +5832,6 @@ int BlueStore::_prepare_db_environment(bool create, bool read_only,
       }
     }
   }
-
 
   db = KeyValueDB::create(cct,
 			  kv_backend,
@@ -5926,6 +5927,7 @@ int BlueStore::allocate_bluefs_freespace(
   uint64_t size,
   PExtentVector* extents_out)
 {
+  ceph_assert(bluefs);
   ceph_assert(min_size <= size);
   if (size) {
     // round up to alloc size
@@ -9033,11 +9035,10 @@ void BlueStore::inject_legacy_omap(coll_t cid, ghobject_t oid)
   OnodeRef o;
   CollectionRef c = _get_collection(cid);
   ceph_assert(c);
-  {
-    std::unique_lock l{ c->lock }; // just to avoid internal asserts
-    o = c->get_onode(oid, false);
-    ceph_assert(o);
-  }
+  std::shared_lock l{ c->lock }; // just to avoid internal asserts
+  o = c->get_onode(oid, false);
+  ceph_assert(o);
+  o->flush();
   o->onode.clear_flag(bluestore_onode_t::FLAG_PERPOOL_OMAP | bluestore_onode_t::FLAG_PGMETA_OMAP);
   txn = db->get_transaction();
   _record_onode(o, txn);
