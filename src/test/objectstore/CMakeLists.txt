@@ -68,6 +68,22 @@ target_link_libraries(ceph_test_filestore_idempotent_sequence
 install(TARGETS ceph_test_filestore_idempotent_sequence
   DESTINATION ${CMAKE_INSTALL_BINDIR})
 
+# ceph_test_pmem_kvdb
+add_executable(ceph_test_pmem_kvdb
+  pmemkv_test.cc
+  )
+
+target_link_libraries(ceph_test_pmem_kvdb
+  os
+  global
+  pmemobj
+  ${EXTRALIBS}
+  ${BLKID_LIBRARIES}
+  ${CMAKE_DL_LIBS}
+  )
+install(TARGETS ceph_test_pmem_kvdb
+  DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 # unittest_chain_xattr
 add_executable(unittest_chain_xattr
   chain_xattr.cc
