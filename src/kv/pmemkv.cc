@@ -37,11 +37,6 @@ pmem_kv::operator<<(std::ostream &out, const pmem_kv::buffer_view &e)
 void
 pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 {
-	/*{
-	  my_test mt;
-		volatile_buffer bv(std::move(mt));
-	}*/
-
 	bool was_empty = kv_set.empty();
 	pmem_kv::volatile_buffer fake_key = string("fakeeee keyyyy");
 
@@ -221,13 +216,16 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 		ceph_assert(*it == nullptr);
 	}
 	std::cout << 8 << std::endl;
-
 	{
 		// bulk fill in batches of 10000 entries
 		size_t base = 100000;
 		size_t max_entries = base + 500000;
 		size_t entries_per_tr = 1000;
 		if (was_empty) {
+			auto t0 = mono_clock::now();
+			ceph::timespan times[ApplyBatchTimes::MAX_TIMES] = {
+				ceph::make_timespan(0)};
+			size_t counts[ApplyBatchTimes::MAX_TIMES] = {0};
 			for (size_t i = base; i < max_entries;
 			     i += entries_per_tr) {
 				if ((i % 100000) == 0) {
@@ -244,10 +242,19 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 								  0xff)));
 				}
 
-				apply_batch(pool, batch);
+				apply_batch(pool, batch, [&](DB::ApplyBatchTimes idx, const ceph::timespan& t) {
+                                          times[idx] += t;
+				          ++counts[idx];
+                                });
+			}
+			std::cout << "bulk completed in "
+				  << double((mono_clock::now() - t0).count()) / 1E9 << std::endl;
+			for (size_t i = 0; i < ApplyBatchTimes::MAX_TIMES;
+			     ++i) {
+				std::cout << i << " :" << counts[i] << " in "
+					  << double(times[i].count()) / 1E9 << std::endl;
 			}
 		}
-
 		auto p = get(fake_key);
 		ceph_assert(p.get() == nullptr);
 

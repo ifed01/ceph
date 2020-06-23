@@ -55,13 +55,55 @@ PMemKeyValueDB::split_key(const pmem_kv::volatile_buffer& in, string *prefix,
 int
 PMemKeyValueDB::init(std::string option_str)
 {
-
 	PerfCountersBuilder plb(cct, "pmemkv", l_pmemkv_first,
 				l_pmemkv_last);
 	plb.add_u64_counter(l_pmemkv_submit_ops, "ops", "Submitted ops");
 	plb.add_time_avg(l_pmemkv_get_latency, "get_latency", "Get latency");
 	plb.add_time_avg(l_pmemkv_submit_latency, "submit_latency",
 			 "Submit Latency");
+	plb.add_time_avg(l_pmemkv_submit_wait_latency, "submit_wait_latency",
+			 "Submit Wait-On-Lock Latency");
+	plb.add_time_avg(l_pmemkv_submit_start_latency, "submit_start_latency",
+			 "Submit PMEM Transaction Start Latency");
+	plb.add_time_avg(l_pmemkv_submit_complete_latency,
+			 "submit_complete_latency",
+			 "Submit PMEM Transaction Completion Latency");
+	plb.add_time_avg(l_pmemkv_submit_set_lookup_latency, "submit_set_lookup_latency",
+			 "Submit SetOp Lookup Latency");
+	plb.add_time_avg(l_pmemkv_submit_set_exec_latency,
+			 "submit_set_exec_latency",
+			 "Submit SetOp Exec Latency");
+	plb.add_time_avg(l_pmemkv_submit_set_existed0_latency,
+			 "submit_set_existed0_latency",
+			 "Submit SetSubOp Assign to Existed0 Latency");
+	plb.add_time_avg(l_pmemkv_submit_set_existed1_latency,
+			 "submit_set_existed1_latency",
+			 "Submit SetSubOp Assign to Existed1 Latency");
+	plb.add_time_avg(l_pmemkv_submit_set_existed2_latency,
+			 "submit_set_existed2_latency",
+			 "Submit SetSubOp Assign to Existed2 Latency");
+	plb.add_time_avg(l_pmemkv_submit_set_existed3_latency,
+			 "submit_set_existed3_latency",
+			 "Submit SetSubOp Assign to Existed3 Latency");
+	plb.add_time_avg(l_pmemkv_submit_set_make_new_persistent_latency,
+			 "submit_set_make_new_persistent_latency",
+			 "Submit SetSubOp Make New Persistent Latency");
+	plb.add_time_avg(l_pmemkv_submit_set_insert_latency,
+			 "submit_set_insert_latency",
+			 "Submit SetSubOp Insert Latency");
+	plb.add_time_avg(l_pmemkv_submit_remove_lookup_latency,
+			 "submit_remove_lookup_latency",
+			 "Submit RemoveOp Lookup Latency");
+	plb.add_time_avg(l_pmemkv_submit_remove_exec_latency,
+			 "submit_remove_exec_latency",
+			 "Submit RemoveOp Exec Latency");
+	plb.add_time_avg(l_pmemkv_submit_merge_lookup_latency,
+			 "submit_merge_lookup_latency",
+			 "Submit MergeOp Lookup Latency");
+	plb.add_time_avg(l_pmemkv_submit_merge_exec_latency,
+			 "submit_merge_exec_latency",
+			 "Submit MergeOp Exec Latency");
+
 	logger = plb.create_perf_counters();
 	cct->get_perfcounters_collection()->add(logger);
 
@@ -146,9 +188,94 @@ PMemKeyValueDB::submit_transaction(Transaction t)
 		PMemKVTransactionImpl *_t =
 			static_cast<PMemKVTransactionImpl *>(t.get());
 		auto ops = _t->get_batch().get_ops_count();
-		apply_batch(pool, _t->get_batch());
+		apply_batch(pool, _t->get_batch(),
+                        [&](DB::ApplyBatchTimes idx,
+                            const ceph::timespan& t) {
+			        switch (idx) {
+			        case ApplyBatchTimes::LOCK_TIME:
+					logger->tinc(
+						l_pmemkv_submit_wait_latency,
+                                                t);
+                                        break;
+			        case ApplyBatchTimes::START_TIME:
+					logger->tinc(
+						l_pmemkv_submit_start_latency,
+                                                t);
+                                        break;
+			        case ApplyBatchTimes::END_TIME:
+					logger->tinc(
+						l_pmemkv_submit_complete_latency,
+                                                t);
+                                        break;
+			        case ApplyBatchTimes::SET_LOOKUP_TIME:
+					logger->tinc(
+						l_pmemkv_submit_set_lookup_latency,
+                                                t);
+                                        break;
+			        case ApplyBatchTimes::SET_EXEC_TIME:
+					logger->tinc(
+						l_pmemkv_submit_set_exec_latency,
+                                                t);
+                                        break;
+				case ApplyBatchTimes::SET_EXISTED0_TIME:
+					logger->tinc(
+						l_pmemkv_submit_set_existed0_latency,
+							t);
+					break;
+				case ApplyBatchTimes::SET_EXISTED1_TIME:
+					logger->tinc(
+						l_pmemkv_submit_set_existed1_latency,
+							t);
+					break;
+				case ApplyBatchTimes::SET_EXISTED2_TIME:
+					logger->tinc(
+						l_pmemkv_submit_set_existed2_latency,
+							t);
+					break;
+
+				case ApplyBatchTimes::SET_EXISTED3_TIME:
+					logger->tinc(
+						l_pmemkv_submit_set_existed3_latency,
+						t);
+					break;
+				case ApplyBatchTimes::SET_MAKE_NEW_PERSISTENT_TIME:
+					logger->tinc(
+						l_pmemkv_submit_set_make_new_persistent_latency,
+						t);
+					break;
+				case ApplyBatchTimes::SET_INSERT_TIME:
+					logger->tinc(
+						l_pmemkv_submit_set_insert_latency,
+						t);
+					break;
+			        case ApplyBatchTimes::REMOVE_LOOKUP_TIME:
+					logger->tinc(
+						l_pmemkv_submit_remove_lookup_latency,
+                                                t);
+                                        break;
+			        case ApplyBatchTimes::REMOVE_EXEC_TIME:
+					logger->tinc(
+						l_pmemkv_submit_remove_exec_latency,
+                                                t);
+                                        break;
+				case ApplyBatchTimes::MERGE_LOOKUP_TIME:
+					logger->tinc(
+						l_pmemkv_submit_merge_lookup_latency,
+						t);
+					break;
+				case ApplyBatchTimes::MERGE_EXEC_TIME:
+					logger->tinc(
+						l_pmemkv_submit_merge_exec_latency,
+						t);
+					break;
+                                default:
+					ceph_assert(false);
+                                        break;
+			        }
+                        });
 		logger->inc(l_pmemkv_submit_ops, ops);
 		logger->tinc(l_pmemkv_submit_latency, ceph_clock_now() - start);
+
 		return 0;
 	}
 	ceph_assert(false);

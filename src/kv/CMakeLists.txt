@@ -17,4 +17,5 @@ add_library(kv STATIC ${kv_srcs}
 target_link_libraries(kv ${LEVELDB_LIBRARIES}
   RocksDB::RocksDB
   pmemobj
+  pmem
   heap_profiler)

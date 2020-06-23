@@ -1,4 +1,14 @@
 #pragma once
+#include "common/ceph_mutex.h"
+#include "common/ceph_time.h"
+#include "include/buffer.h"
+#include "include/ceph_assert.h"
+#include "include/intarith.h"
+#include <algorithm>
+#include <boost/intrusive/set.hpp>
+#include <boost/variant.hpp>
+#include <functional>
+#include <libpmem.h>
 #include <libpmemobj++/container/array.hpp>
 #include <libpmemobj++/detail/common.hpp>
 #include <libpmemobj++/make_persistent.hpp>
@@ -9,16 +19,9 @@
 #include <libpmemobj++/transaction.hpp>
 #include <libpmemobj++/utils.hpp>
 #include <libpmemobj.h>
-#include <algorithm>
 #include <shared_mutex>
 #include <stdexcept>
 #include <string>
-#include <functional>
-#include <boost/intrusive/set.hpp>
-#include <boost/variant.hpp>
-#include "common/ceph_mutex.h"
-#include "include/buffer.h"
-#include "include/ceph_assert.h"
 
 const size_t PMEM_UNIT_SIZE = 0x100;
 
@@ -115,14 +118,6 @@ public:
 		return !(*this == other);
 	}
 
-        /*buffer_view &
-	operator=(const buffer_view &other)
-	{
-                data = other.data;
-                size = other.size;
-                return *this;
-	}*/
-
 	std::string
 	to_str() const
 	{
@@ -134,13 +129,16 @@ public:
 	{
 		ceph_assert(data != nullptr);
 		ceph_assert(o + len <= size);
-		memcpy(dest, data + o, len);
+		// memcpy(dest, data + o, len);
+		// pmem_memcpy_nodrain(dest, data + o, len);
+		pmem_memcpy(dest, data + o, len,
+			    PMEMOBJ_F_MEM_NOFLUSH | PMEMOBJ_F_MEM_NODRAIN);
 	}
 
-        bool
+	bool
 	is_null() const
 	{
-                return data == nullptr;
+		return data == nullptr;
 	}
 
 private:
@@ -247,7 +245,7 @@ public:
 		}
 		return false;
 	}
-        bool
+	bool
 	operator<=(const buffer_view &other) const
 	{
 		switch (which()) {
@@ -289,7 +287,7 @@ public:
 	bool
 	operator>(const buffer_view &other) const
 	{
-		return !(*this<=other);
+		return !(*this <= other);
 	}
 	bool
 	operator>=(const buffer_view &other) const
@@ -314,14 +312,38 @@ public:
 				auto &bl = boost::get<bufferlist>(*this);
 
 				ceph_assert(o + len <= bl.length());
-				auto it = bl.begin();
+				auto it = bl.buffers().begin();
+				size_t offs = 0;
+				while (it != bl.buffers().end() && len) {
+					if (offs + it->length() > o) {
+						const char *src = it->c_str();
+						src += o - offs;
+						size_t l = it->length() -
+							(o - offs);
+						l = std::min(l, len);
+						pmem_memcpy(
+							dest, src, l,
+							PMEMOBJ_F_MEM_NOFLUSH |
+								PMEMOBJ_F_MEM_NODRAIN);
+						len -= l;
+						o += l;
+						dest += l;
+					}
+					offs += it->length();
+					++it;
+				}
+				/*auto it = bl.begin();
 				it += o;
-				it.copy(len, dest);
+				it.copy(len, dest);*/
 				break;
 			}
 			case String: {
-				boost::get<std::string>(*this).copy(dest, len,
-								    o);
+				/*boost::get<std::string>(*this).copy(dest, len,
+								    o);*/
+				auto &s = boost::get<std::string>(*this);
+				pmem_memcpy(dest, s.c_str() + o, len,
+					    PMEMOBJ_F_MEM_NOFLUSH |
+						    PMEMOBJ_F_MEM_NODRAIN);
 				break;
 			}
 			default:
@@ -354,14 +376,15 @@ public:
 					*prefix = std::string(in.c_str(),
 							      prefix_len);
 				if (tail && tail_len)
-					*tail = std::string(separator + 1, tail_len);
+					*tail = std::string(separator + 1,
+							    tail_len);
 				break;
 			}
 			case BufferList: {
 				auto &bl = boost::get<bufferlist>(*this);
 
 				auto it = bl.begin();
-                                size_t pos = 0;
+				size_t pos = 0;
 				if (prefix) {
 					prefix->clear();
 					prefix->reserve(bl.length());
@@ -369,8 +392,11 @@ public:
 				while (it != bl.end()) {
 					if (*it == separator) {
 						if (tail) {
-							tail->resize(bl.length() - pos - 1);
-							it.copy(tail->length(), &tail->at(0));
+							tail->resize(
+								bl.length() -
+								pos - 1);
+							it.copy(tail->length(),
+								&tail->at(0));
 						}
 						it = bl.end();
 					} else {
@@ -379,26 +405,29 @@ public:
 						++it;
 						++pos;
 					}
-                                }
+				}
 				break;
 			}
 			case String: {
-				auto& in = boost::get<std::string>(*this);
+				auto &in = boost::get<std::string>(*this);
 
-	                        size_t prefix_len = in.length();
-                                size_t tail_len = 0;
+				size_t prefix_len = in.length();
+				size_t tail_len = 0;
 				char *separator = (char *)memchr(in.c_str(), 0,
 								 prefix_len);
 				if (separator != NULL) {
-				        prefix_len = size_t(separator - in.c_str());
-					tail_len = size_t(in.length() - prefix_len - 1);
-                                }
+					prefix_len =
+						size_t(separator - in.c_str());
+					tail_len = size_t(in.length() -
+							  prefix_len - 1);
+				}
 
 				if (prefix)
-					*prefix =
-						std::string(in.c_str(), prefix_len);
+					*prefix = std::string(in.c_str(),
+							      prefix_len);
 				if (tail && tail_len)
-					*tail = std::string(separator + 1, tail_len);
+					*tail = std::string(separator + 1,
+							    tail_len);
 				break;
 			}
 			default:
@@ -410,24 +439,25 @@ public:
 	{
 		switch (which()) {
 			case BufferView: {
-				return boost::get<pmem_kv::buffer_view>(*this).c_str();
+				return boost::get<pmem_kv::buffer_view>(*this)
+					.c_str();
 			}
 			case BufferList: {
 				auto &bl = boost::get<bufferlist>(*this);
 				if (bl.get_num_buffers() == 1) {
 					return bl.front().c_str();
 				}
-                                return nullptr;
+				return nullptr;
 			}
 			case String: {
 				return boost::get<std::string>(*this).c_str();
 			}
-                        case Null:
+			case Null:
 			default:
 				ceph_assert(false);
 		}
-                return nullptr;
-        }
+		return nullptr;
+	}
 
 	bool
 	is_prefix_for(const buffer_view &bv) const
@@ -439,9 +469,10 @@ public:
 			case BufferView: {
 				auto &self_bv = boost::get<buffer_view>(*this);
 				auto l = self_bv.length();
-				return l <= bv.length() ?
-                                        memcmp(self_bv.c_str(), bv.c_str(), l) == 0 :
-                                        false;
+				return l <= bv.length()
+					? memcmp(self_bv.c_str(), bv.c_str(),
+						 l) == 0
+					: false;
 			}
 			case BufferList: {
 				auto &bl = boost::get<bufferlist>(*this);
@@ -491,17 +522,30 @@ class pmem_kv_entry {
 	pmem::obj::p<uint32_t> val_size = 0;
 
 	byte_array_ptr extern_data = nullptr;
+	pmem::obj::p<uint32_t> extern_data_size = 0;
 
-	enum { MAX_EMBED_SIZE = PMEM_UNIT_SIZE - sizeof(extern_data) -
-		       sizeof(key_size) - sizeof(val_size) };
-	pmem::obj::array<byte, MAX_EMBED_SIZE> embed_data;
+	enum { MAX_EMBED_SIZE = PMEM_UNIT_SIZE - sizeof(key_size) -
+		       sizeof(val_size) - sizeof(extern_data) -
+		       sizeof(extern_data_size) };
+	// pmem::obj::array<byte, MAX_EMBED_SIZE> embed_data;
+	byte embed_data[MAX_EMBED_SIZE];
 
+	void
+	dispose(byte_array_ptr &data)
+	{
+		if (data != nullptr) {
+			pmemobj_tx_free(data.raw());
+			// pmem::obj::delete_persistent<byte_array>(data.raw(),
+			// sz);
+			data = nullptr;
+		}
+	}
 	void
 	dispose()
 	{
 		if (extern_data != nullptr) {
-			pmemobj_tx_free(extern_data.raw());
-			extern_data = nullptr;
+			dispose(extern_data);
+			extern_data_size = 0;
 		}
 	}
 
@@ -509,14 +553,17 @@ class pmem_kv_entry {
 	alloc_and_assign_extern(const volatile_buffer &s)
 	{
 		ceph_assert(extern_data == nullptr);
-		ceph_assert( s.length() != 0);
+		ceph_assert(s.length() != 0);
 		/*
 		 * We need to cache pmemobj_tx_alloc return value and only after
 		 * that assign it to _data, because when pmemobj_tx_alloc fails,
 		 * it aborts transaction.
 		 */
-		byte_array_ptr res = pmemobj_tx_alloc(
-			s.length(), pmem::detail::type_num<byte>());
+		size_t new_len = p2roundup(s.length(), PMEM_UNIT_SIZE);
+		byte_array_ptr res =
+			pmem::obj::make_persistent<byte_array>(new_len);
+		/*pmemobj_tx_alloc(
+			s.length(), pmem::detail::type_num<byte>());*/
 		if (res == nullptr) {
 			if (errno == ENOMEM)
 				throw pmem::transaction_out_of_memory(
@@ -529,6 +576,7 @@ class pmem_kv_entry {
 		}
 		s.copy_out(0, s.length(), res.get());
 		extern_data = res;
+		extern_data_size = new_len;
 	}
 
 	void
@@ -543,9 +591,12 @@ class pmem_kv_entry {
 		 * that assign it to _data, because when pmemobj_tx_alloc fails,
 		 * it aborts transaction.
 		 */
+		size_t new_len =
+			p2roundup(s1.length() + s2.length(), PMEM_UNIT_SIZE);
 		byte_array_ptr res =
-			pmemobj_tx_alloc(s1.length() + s2.length(),
-					 pmem::detail::type_num<byte>());
+			pmem::obj::make_persistent<byte_array>(new_len);
+		/*pmemobj_tx_alloc(s1.length() + s2.length(),
+				 pmem::detail::type_num<byte>());*/
 		if (res == nullptr) {
 			if (errno == ENOMEM)
 				throw pmem::transaction_out_of_memory(
@@ -559,6 +610,7 @@ class pmem_kv_entry {
 		s1.copy_out(0, s1.length(), res.get());
 		s2.copy_out(0, s2.length(), res.get() + s1.length());
 		extern_data = res;
+		extern_data_size = new_len;
 	}
 
 public:
@@ -567,40 +619,115 @@ public:
 	}
 	pmem_kv_entry(const volatile_buffer &k, const volatile_buffer &v)
 	{
-		assign(k, v);
+		assign(k, v, false);
 	}
 
 	~pmem_kv_entry()
 	{
 		dispose();
 	}
+	int
+	assign_value(const volatile_buffer &v)
+	{
+		int res;
+		ceph_assert(key_size != 0);
+		val_size = v.length();
+		size_t k_v_size = key_size + val_size;
+		if (k_v_size <= MAX_EMBED_SIZE) {
+			dispose();
+			if (val_size) {
+				/*auto slice =
+					embed_data.range(key_size, val_size);
+				v.copy_out(0, val_size, &slice.at(0));*/
+				pmemobj_tx_add_range_direct(
+					embed_data + key_size, val_size);
+				v.copy_out(0, val_size, embed_data + key_size);
+			}
+			res = 0;
+		} else if (key_size <= MAX_EMBED_SIZE) {
+			if (extern_data_size >= val_size) {
+				ceph_assert(extern_data != nullptr);
+				pmemobj_tx_add_range_direct(extern_data.get(),
+							    val_size);
+				v.copy_out(0, val_size, extern_data.get());
+			} else {
+				dispose();
+				alloc_and_assign_extern(v);
+			}
+			res = 1;
+		} else if (val_size <= MAX_EMBED_SIZE) {
+			if (val_size) {
+				/*auto slice = embed_data.range(0, val_size);
+				v.copy_out(0, val_size, &slice.at(0));*/
+				pmemobj_tx_add_range_direct(embed_data,
+							    val_size);
+				v.copy_out(0, val_size, embed_data);
+			}
+			res = 2;
+		} else {
+			// FIXME minor: can be done in a bit more effective
+			// manner
+			// by reusing existing extern_data if possible
+			auto old_extern_data = extern_data;
+			volatile_buffer k(key_view());
+			extern_data = nullptr;
+			extern_data_size = 0;
+			alloc_and_assign_extern(k, v);
+			dispose(old_extern_data);
+			res = 3;
+		}
+		return res;
+	}
 	void
-	assign(const volatile_buffer &k, const volatile_buffer &v)
+	assign(const volatile_buffer &k, const volatile_buffer &v,
+	       bool need_snapshot = true)
 	{
 		dispose();
 		key_size = k.length();
 		val_size = v.length();
 		size_t k_v_size = key_size + val_size;
 		if (k_v_size <= MAX_EMBED_SIZE) {
-			auto slice = embed_data.range(0, k_v_size);
-			k.copy_out(0, key_size, &slice.at(0));
-			if (val_size) {
-				v.copy_out(0, val_size, &slice.at(k.length()));
+			/*			auto slice = embed_data.range(0,
+			   k_v_size, need_snapshot ? k_v_size : 0);
+						k.copy_out(0, key_size,
+			   &slice.at(0)); if (val_size) { v.copy_out(0,
+			   val_size, &slice.at(key_size));
+						}*/
+			if (need_snapshot) {
+				pmemobj_tx_add_range_direct(embed_data,
+							    k_v_size);
 			}
+			k.copy_out(0, key_size, embed_data);
+			if (val_size) {
+				v.copy_out(0, val_size, embed_data + key_size);
+			}
+
 		} else if (key_size <= MAX_EMBED_SIZE) {
-			auto slice = embed_data.range(0, key_size);
+			/*auto slice = embed_data.range(0, key_size,
+				need_snapshot ? k_v_size : 0);
 			k.copy_out(0, key_size, &slice.at(0));
+			*/
+			if (need_snapshot) {
+                                pmemobj_tx_add_range_direct(embed_data, key_size);
+                        }
+			k.copy_out(0, key_size, embed_data);
 			alloc_and_assign_extern(v);
 		} else if (val_size <= MAX_EMBED_SIZE) {
 			if (val_size) {
-				auto slice = embed_data.range(0, val_size);
-				v.copy_out(0, val_size, &slice.at(0));
+				/*auto slice = embed_data.range(0, val_size);
+				v.copy_out(0, val_size, &slice.at(0));*/
+				if (need_snapshot) {
+				        pmemobj_tx_add_range_direct(embed_data,
+							            val_size);
+                                }
+				v.copy_out(0, val_size, embed_data);
 			}
 			alloc_and_assign_extern(k);
 		} else {
 			alloc_and_assign_extern(k, v);
 		}
 	}
+
 	void
 	dump(std::ostream &out) const
 	{
@@ -609,6 +736,38 @@ public:
 		out << '}';
 	}
 	const buffer_view
+	key_view() const
+	{
+		buffer_view res;
+		size_t k_v_size = key_size + val_size;
+		if (k_v_size <= MAX_EMBED_SIZE) {
+			res.append(embed_data, key_size);
+		} else if (key_size <= MAX_EMBED_SIZE) {
+			res.append(embed_data, key_size);
+		} else if (val_size <= MAX_EMBED_SIZE) {
+			res.append(extern_data.get(), key_size);
+		} else {
+			res.append(extern_data.get(), key_size);
+		}
+		return res;
+	}
+	const buffer_view
+	value_view() const
+	{
+		buffer_view res;
+		size_t k_v_size = key_size + val_size;
+		if (k_v_size <= MAX_EMBED_SIZE) {
+			res.append(embed_data + key_size, val_size);
+		} else if (key_size <= MAX_EMBED_SIZE) {
+			res.append(extern_data.get(), val_size);
+		} else if (val_size <= MAX_EMBED_SIZE) {
+			res.append(embed_data, val_size);
+		} else {
+			res.append(extern_data.get() + key_size, val_size);
+		}
+		return res;
+	}
+	/*const buffer_view
 	key_view() const
 	{
 		buffer_view res;
@@ -639,7 +798,7 @@ public:
 			res.append(extern_data.get() + key_size, val_size);
 		}
 		return res;
-	}
+	}*/
 
 	std::string
 	key() const
@@ -655,7 +814,6 @@ public:
 	operator<(const pmem_kv_entry &other_kv) const
 	{
 		return key_view() < other_kv.key_view();
-		// return key_view().cmp(other_kv.key_view()) < 0;
 	}
 };
 
@@ -691,8 +849,7 @@ class DB {
 		kv_set_t;
 	kv_set_t kv_set;
 	uint64_t rm_seq = 0;
-	ceph::shared_mutex general_mutex =
-		ceph::make_shared_mutex("DB");
+	ceph::shared_mutex general_mutex = ceph::make_shared_mutex("DB");
 
 	struct Dispose {
 		void
@@ -734,27 +891,23 @@ class DB {
 			// return cmp(e.kv_pair->key_view(), string_to_view(s));
 		}
 	};
+
 protected:
-        virtual volatile_buffer _handle_merge(
-          const volatile_buffer& key,
-          const volatile_buffer &new_value,
-          const buffer_view& orig_value)
+	virtual volatile_buffer
+	_handle_merge(const volatile_buffer &key,
+		      const volatile_buffer &new_value,
+		      const buffer_view &orig_value)
 	{
-                  // default implementation simply performs no merge
-                  return new_value;
+		// default implementation simply performs no merge
+		return new_value;
 	}
 
 public:
 	class batch {
 		friend class DB;
-		enum Op {
-                        SET,
-                        REMOVE,
-                        REMOVE_PREFIX,
-                        REMOVE_RANGE,
-                        MERGE
-                };
-		std::vector<std::tuple<Op, volatile_buffer, volatile_buffer>> ops;
+		enum Op { SET, REMOVE, REMOVE_PREFIX, REMOVE_RANGE, MERGE };
+		std::vector<std::tuple<Op, volatile_buffer, volatile_buffer>>
+			ops;
 
 	public:
 		void
@@ -833,11 +986,11 @@ public:
 		{
 			ops.clear();
 		}
-                size_t
+		size_t
 		get_ops_count() const
 		{
 			return ops.size();
-                }
+		}
 	};
 	class iterator {
 		friend class DB;
@@ -849,16 +1002,15 @@ public:
 		iterator_imp it;
 		uint64_t seq = 0;
 
-                // ctors are supposed to be called from within DB only.
-                // hence they're declared private and lack locking.
-                //
-		iterator(DB &_kv, bool last = false)
-		    : kv(&_kv), seq(_kv.rm_seq)
+		// ctors are supposed to be called from within DB only.
+		// hence they're declared private and lack locking.
+		//
+		iterator(DB &_kv, bool last = false) : kv(&_kv), seq(_kv.rm_seq)
 		{
-                        // FIXME minor: may be modify begin/end iterators in a way they don't use real iterator
-                        // but are dereferenced when needed?
-                        // no need to lock KV when init such iterators 
-                        // in this case
+			// FIXME minor: may be modify begin/end iterators in a
+			// way they don't use real iterator but are dereferenced
+			// when needed? no need to lock KV when init such
+			// iterators in this case
 			if (last) {
 				it = kv->kv_set.end();
 			} else {
@@ -868,8 +1020,7 @@ public:
 				}
 			}
 		}
-		iterator(DB &_kv, const volatile_buffer &key,
-			 Mode m)
+		iterator(DB &_kv, const volatile_buffer &key, Mode m)
 		    : kv(&_kv), seq(_kv.rm_seq)
 		{
 			switch (m) {
@@ -891,26 +1042,27 @@ public:
 				cur_key = it->kv_pair->key();
 			}
 		}
-        public:
+
+	public:
 		iterator()
 		{
 		}
 		iterator(iterator &&other)
-                        : kv(other.kv), it(other.it), seq(other.seq)
+		    : kv(other.kv), it(other.it), seq(other.seq)
 		{
-                        cur_key.swap(other.cur_key);
+			cur_key.swap(other.cur_key);
 		}
 
-                DB&
+		DB &
 		get_kv() const
 		{
 			ceph_assert(kv);
-                        return *kv;
+			return *kv;
 		}
-                bool
+		bool
 		valid()
 		{
-                        return kv != nullptr && !at_end();
+			return kv != nullptr && !at_end();
 		}
 
 		iterator &
@@ -962,11 +1114,12 @@ public:
 		{
 			std::shared_lock l(kv->general_mutex);
 			if (seq != kv->rm_seq) {
-			        it = kv->kv_set.lower_bound(
-				        volatile_buffer(string_to_view(cur_key)),
-				        Compare());
-			        seq = kv->rm_seq;
-		        }
+				it = kv->kv_set.lower_bound(
+					volatile_buffer(
+						string_to_view(cur_key)),
+					Compare());
+				seq = kv->rm_seq;
+			}
 			if (it != kv->kv_set.begin()) {
 				--it;
 			}
@@ -1003,20 +1156,20 @@ public:
 		at_end()
 		{
 			if (!cur_key.empty()) {
-			        std::shared_lock l(kv->general_mutex);
-			        if (seq != kv->rm_seq) {
-				        it = kv->kv_set.lower_bound(
-					        volatile_buffer(
-						        string_to_view(cur_key)),
-					                Compare());
-				        seq = kv->rm_seq;
-				        if (it != kv->kv_set.end()) {
-					        cur_key = it->kv_pair->key();
-				        } else {
-					        cur_key.clear();
-				        }
-			        }
-                        }
+				std::shared_lock l(kv->general_mutex);
+				if (seq != kv->rm_seq) {
+					it = kv->kv_set.lower_bound(
+						volatile_buffer(string_to_view(
+							cur_key)),
+						Compare());
+					seq = kv->rm_seq;
+					if (it != kv->kv_set.end()) {
+						cur_key = it->kv_pair->key();
+					} else {
+						cur_key.clear();
+					}
+				}
+			}
 			return cur_key.empty();
 		}
 	};
@@ -1056,8 +1209,7 @@ public:
 	}
 
 	void
-	insert(pmem::obj::pool_base &pool,
-               const volatile_buffer &k,
+	insert(pmem::obj::pool_base &pool, const volatile_buffer &k,
 	       const volatile_buffer &v)
 	{
 		ceph_assert(k.length() != 0);
@@ -1089,126 +1241,242 @@ public:
 		});
 	}
 
+#define LOG_TIME(idx)                                                          \
+	if (f)                                                                 \
+		f(idx, mono_clock::now() - t0);
+
+	enum ApplyBatchTimes {
+		LOCK_TIME,
+		START_TIME,
+		END_TIME,
+		SET_LOOKUP_TIME,
+		SET_EXEC_TIME,
+		SET_EXISTED0_TIME,
+		SET_EXISTED1_TIME,
+		SET_EXISTED2_TIME,
+		SET_EXISTED3_TIME,
+		SET_MAKE_NEW_PERSISTENT_TIME,
+		SET_INSERT_TIME,
+		REMOVE_LOOKUP_TIME,
+		REMOVE_EXEC_TIME,
+		MERGE_LOOKUP_TIME,
+		MERGE_EXEC_TIME,
+		MAX_TIMES
+	};
+
 	void
-	apply_batch(pmem::obj::pool_base &pool, const batch &b)
+	apply_batch(pmem::obj::pool_base &pool, const batch &b,
+		    std::function<void(ApplyBatchTimes, const ceph::timespan &)>
+			    f = nullptr)
 	{
 		if (b.ops.empty())
 			return;
+		auto t0 = mono_clock::now();
 		std::lock_guard l(general_mutex);
-		pmem::obj::transaction::run(pool, [&] {
-			for (auto &p : b.ops) {
-				auto &key = std::get<1>(p);
-				/*std::cerr << key << " " << std::get<0>(p)
-					  << std::endl;*/
-				switch (std::get<0>(p)) {
-                                        case batch::SET:
-                                        {
-						auto it = kv_set.find(
-							key, Compare());
-						auto &val = std::get<2>(p);
-						//std::cerr << val << std::endl;
-						if (it == kv_set.end()) {
-							auto v = pmem::obj::
-								make_persistent<
-									pmem_kv_entry>(
-									key,
-									val);
-							kv_set.insert(
-								*new volatile_map_entry(
-									v));
-						} else {
-							it->kv_pair->assign(
-								key, val);
-						}
-                                                break;
-				        }
-					case batch::REMOVE: 
-                                        {
-						auto it = kv_set.find(
-							key, Compare());
-						if (it != kv_set.end()) {
-							pmem::obj::delete_persistent<
-								pmem_kv_entry>(
-								it->kv_pair);
-							kv_set.erase_and_dispose(
-								it, Dispose());
-							++rm_seq;
-						}
-						break;
-					}
-					case batch::REMOVE_PREFIX:
-                                        {
-						auto it = kv_set.lower_bound(
-							key, Compare());
+		LOG_TIME(LOCK_TIME);
+		t0 = mono_clock::now();
+		pmem::obj::
+			transaction::
+				run(pool,
+				    [&] {
+					    LOG_TIME(START_TIME);
+					    for (auto &p : b.ops) {
+						    auto &key = std::get<1>(p);
+						    /*std::cerr << key << " " <<
+						       std::get<0>(p)
+							      << std::endl;*/
+						    switch (std::get<0>(p)) {
+							    case batch::SET: {
+								    t0 = mono_clock::
+									    now();
+								    kv_set_t::insert_commit_data
+									    commit_data;
+								    auto ip = kv_set.insert_check(
+									    key,
+									    Compare(),
+									    commit_data);
+								    LOG_TIME(
+									    SET_LOOKUP_TIME);
+								    t0 = mono_clock::
+									    now();
+								    auto &val = std::get<
+									    2>(
+									    p);
+								    if (!ip.second) {
+									    int r = ip.first->kv_pair
+											    ->assign_value(
+												    val);
+									    LOG_TIME(ApplyBatchTimes(
+										    SET_EXISTED0_TIME +
+										    r));
+								    } else {
+									    auto v = pmem::obj::make_persistent<
+										    pmem_kv_entry>(
+										    key,
+										    val);
+									    LOG_TIME(
+										    SET_MAKE_NEW_PERSISTENT_TIME);
+									    auto t0 = mono_clock::
+										    now();
+									    kv_set.insert_commit(
+										    *new volatile_map_entry(
+											    v),
+										    commit_data);
+									    LOG_TIME(
+										    SET_INSERT_TIME);
+								    }
+								    LOG_TIME(
+									    SET_EXEC_TIME);
+								    break;
+							    }
+							    case batch::
+								    REMOVE: {
+								    t0 = mono_clock::
+									    now();
+								    auto it = kv_set.find(
+									    key,
+									    Compare());
+								    LOG_TIME(
+									    REMOVE_LOOKUP_TIME);
+								    t0 = mono_clock::
+									    now();
+								    if (it !=
+									kv_set.end()) {
+									    pmem::obj::delete_persistent<
+										    pmem_kv_entry>(
+										    it->kv_pair);
+									    kv_set.erase_and_dispose(
+										    it,
+										    Dispose());
+									    ++rm_seq;
+								    }
+								    LOG_TIME(
+									    REMOVE_EXEC_TIME);
+								    break;
+							    }
+							    case batch::
+								    REMOVE_PREFIX: {
+								    t0 = mono_clock::
+									    now();
+								    auto it = kv_set.lower_bound(
+									    key,
+									    Compare());
 
-                                                bool any_remove = false;
-						while (it != kv_set.end() &&
-                                                       key.is_prefix_for(it->kv_pair->key_view())) {
-							pmem::obj::delete_persistent<
-								pmem_kv_entry>(
-								it->kv_pair);
-						        it = kv_set.erase_and_dispose(
-								        it, Dispose());
-                                                        any_remove = true;
-						}
-						if (any_remove) {
-						        ++rm_seq;
-                                                }
-						break;
-					}
-					case batch::REMOVE_RANGE:
-                                        {
-						auto &key_end = std::get<2>(p);
-						auto it = kv_set.lower_bound(
-							key, Compare());
-						bool any_remove = false;
-						while (it != kv_set.end() &&
-                                                       key_end > it->kv_pair->key_view()) {
-							pmem::obj::delete_persistent<
-								pmem_kv_entry>(
-								it->kv_pair);
-							it = kv_set.erase_and_dispose(
-								it, Dispose());
-							any_remove = true;
-						}
-						if (any_remove) {
-							++rm_seq;
-						}
-						break;
-					}
-					case batch::MERGE:
-                                        {
-						auto it = kv_set.find(
-							key, Compare());
-						auto &val = std::get<2>(p);
-						bool present =
-							it != kv_set.end();
-                                                buffer_view orig_bv;
-						if (present) {
-							orig_bv = 
-								it->kv_pair->value_view();
-						}
-						volatile_buffer new_v = _handle_merge(
-                                                        key, val, orig_bv);
+								    LOG_TIME(
+									    REMOVE_LOOKUP_TIME);
+								    t0 = mono_clock::
+									    now();
+								    bool any_remove =
+									    false;
+								    while (it != kv_set.end() &&
+									   key.is_prefix_for(
+										   it->kv_pair
+											   ->key_view())) {
+									    pmem::obj::delete_persistent<
+										    pmem_kv_entry>(
+										    it->kv_pair);
+									    it = kv_set.erase_and_dispose(
+										    it,
+										    Dispose());
+									    any_remove =
+										    true;
+								    }
+								    if (any_remove) {
+									    ++rm_seq;
+								    }
+								    LOG_TIME(
+									    REMOVE_EXEC_TIME);
+								    break;
+							    }
+							    case batch::
+								    REMOVE_RANGE: {
+								    t0 = mono_clock::
+									    now();
+								    auto &key_end = std::
+									    get<2>(p);
+								    auto it = kv_set.lower_bound(
+									    key,
+									    Compare());
+								    LOG_TIME(
+									    REMOVE_LOOKUP_TIME);
+								    t0 = mono_clock::
+									    now();
+								    bool any_remove =
+									    false;
+								    while (it != kv_set.end() &&
+									   key_end >
+										   it->kv_pair
+											   ->key_view()) {
+									    pmem::obj::delete_persistent<
+										    pmem_kv_entry>(
+										    it->kv_pair);
+									    it = kv_set.erase_and_dispose(
+										    it,
+										    Dispose());
+									    any_remove =
+										    true;
+								    }
+								    if (any_remove) {
+									    ++rm_seq;
+								    }
+								    LOG_TIME(
+									    REMOVE_EXEC_TIME);
+								    break;
+							    }
+							    case batch::MERGE: {
+								    t0 = mono_clock::
+									    now();
+								    kv_set_t::insert_commit_data
+									    commit_data;
+								    auto ip = kv_set.insert_check(
+									    key,
+									    Compare(),
+									    commit_data);
+								    LOG_TIME(
+									    MERGE_LOOKUP_TIME);
+								    t0 = mono_clock::
+									    now();
+								    auto &val = std::get<
+									    2>(
+									    p);
+								    bool present =
+									    !ip.second;
+								    buffer_view
+									    orig_bv;
+								    if (present) {
+									    orig_bv =
+										    ip.first->kv_pair
+											    ->value_view();
+								    }
+								    volatile_buffer new_v = _handle_merge(
+									    key,
+									    val,
+									    orig_bv);
 
-						if (!present) {
-							auto v = pmem::obj::
-								make_persistent<
-									pmem_kv_entry>(
-									key,
-									new_v);
-							kv_set.insert(
-								*new volatile_map_entry(
-									v));
-						} else {
-							it->kv_pair->assign(
-								key, new_v);
-						}
-						break;
-					}
-				}
-			}
-		});
+								    if (!present) {
+									    auto v = pmem::obj::make_persistent<
+										    pmem_kv_entry>(
+										    key,
+										    new_v);
+									    kv_set.insert_commit(
+										    *new volatile_map_entry(
+											    v),
+										    commit_data);
+								    } else {
+									    ip.first->kv_pair
+										    ->assign_value(
+											    new_v);
+								    }
+								    LOG_TIME(
+									    MERGE_EXEC_TIME);
+
+								    break;
+							    }
+						    }
+					    }
+					    t0 = mono_clock::now();
+				    });
+		LOG_TIME(END_TIME);
 	}
 
 	bool
