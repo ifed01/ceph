@@ -117,6 +117,40 @@ pmem_kv::pmem_kv_entry2::try_assign_value(const pmem_kv::volatile_buffer &v)
 	return res;
 }
 
+size_t
+pmem_kv::volatile_buffer::get_hash() const
+{
+	switch (which()) {
+		case Null: {
+			return 0;
+		}
+		case BufferView: {
+			return std::hash<buffer_view>{}(
+				boost::get<buffer_view>(*this));
+		}
+		case BufferList: {
+			size_t res = 0;
+			auto &bl = boost::get<bufferlist>(*this);
+			auto it = bl.buffers().begin();
+			while (it != bl.buffers().end()) {
+				std::string_view sv(it->c_str(), it->length());
+				res += std::hash<std::string_view>{}(sv);
+				++it;
+			}
+			return res;
+		}
+		case String: {
+			return std::hash<std::string>{}(
+				boost::get<std::string>(*this));
+		}
+		case PMemPages:
+		case PMemKVEntry2:
+		default:
+			ceph_assert(false);
+	}
+	return 0;
+}
+
 void
 pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 {
