@@ -138,7 +138,7 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 	}
 	if (was_empty) {
 		// basic ops on a single key
-		batch batch;
+		batch batch(pool, true);
 		pmem_kv::buffer_view k = string_to_view("some_key");
 		pmem_kv::buffer_view v = string_to_view("some_value");
 
@@ -229,7 +229,7 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 	}
 	if (was_empty) {
 		// basic ops on 3 keys
-		batch batch;
+		batch batch(pool, true);
 		pmem_kv::buffer_view k = string_to_view("some5_key");
 		pmem_kv::buffer_view v = string_to_view("some5_value");
 		pmem_kv::buffer_view k2 = string_to_view("some2_key");
@@ -315,7 +315,7 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 					std::cout << "inserting " << i
 						  << std::endl;
 				}
-				batch batch;
+				batch batch(pool, false);
 
 				for (size_t j = 0; j < entries_per_tr; j++) {
 					batch.set(std::move(stringify(i + j)),
@@ -383,7 +383,7 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 	if (remove) {
 		{
 			// remove by prefix
-			batch bat;
+			batch bat(pool, true);
 			std::cout << "removing by prefix '3'" << std::endl;
 			bat.remove_by_prefix(string("3"));
 			auto size0 = size();
@@ -394,7 +394,7 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 		}
 		{
 			// remove range
-			batch bat;
+			batch bat(pool, true);
 			std::cout << "removing range 450000-499999999"
 				  << std::endl;
 			bat.remove_range(
@@ -408,7 +408,7 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 		}
 		{
 			// remove range
-			batch bat;
+			batch bat(pool, true);
 			std::cout << "removing range 410000-442999"
 				  << std::endl;
 			bat.remove_range(
@@ -428,7 +428,7 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
                 // reverse enumeration
 		while (i < 50000) {
 			size_t entries_per_tr = 1000;
-			batch batch;
+			batch batch(pool, true);
 			if ((i % 10000) == 0) {
 				std::cout << "removing " << i << " \""
 					  << (*it)[0].key() << "\""
@@ -448,7 +448,7 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 		it = begin();
 		while (!it.at_end()) {
 			size_t entries_per_tr = 1000;
-			batch batch;
+			batch batch(pool, true);
 			if ((i % 100000) == 0) {
 				std::cout << "removing " << i << " \""
 					  << (*it)[0].key() << "\""

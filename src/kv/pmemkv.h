@@ -1161,6 +1161,8 @@ public:
 		enum Op { SET, SET_PMEM, REMOVE, REMOVE_PREFIX, REMOVE_RANGE, MERGE };
 		std::vector<std::tuple<Op, volatile_buffer, volatile_buffer>>
 			ops;
+		pmem::obj::pool_base &pool;
+		bool preexec_mode = false;
 
                 static pmem_pages_t
 		allocate_pmem_pages_and_copyin(pmem::obj::pool_base &pool,
@@ -1190,6 +1192,10 @@ public:
 		}
 
 	public:
+		batch(pmem::obj::pool_base &_pool, bool _preexec_mode = false)
+		    : pool(_pool), preexec_mode(_preexec_mode)
+		{
+		}
 		~batch()
 		{
                         reset();
@@ -1197,24 +1203,47 @@ public:
 		void
 		set(const volatile_buffer &key, const volatile_buffer &val)
 		{
-			ops.emplace_back(SET, key, val);
+			if (preexec_mode) {
+			        auto pp = allocate_pmem_kv_and_copyin(pool, key, val);
+			        ops.emplace_back(SET_PMEM, key, pp);
+			} else {
+			        ops.emplace_back(SET, key, val);
+                        }
 		}
 		void
 		set(volatile_buffer &&key, volatile_buffer &&val)
 		{
-			ops.emplace_back(SET, key, val);
+			if (preexec_mode) {
+				auto pp = allocate_pmem_kv_and_copyin(pool, key,
+								      val);
+				ops.emplace_back(SET_PMEM, key, pp);
+			} else {
+				ops.emplace_back(SET, key, val);
+			}
 		}
 		void
 		set(volatile_buffer &&key, const volatile_buffer &val)
 		{
-			ops.emplace_back(SET, key, val);
+			if (preexec_mode) {
+				auto pp = allocate_pmem_kv_and_copyin(pool, key,
+								      val);
+				ops.emplace_back(SET_PMEM, key, pp);
+			} else {
+				ops.emplace_back(SET, key, val);
+			}
 		}
 		void
 		set(const volatile_buffer &key, volatile_buffer &&val)
 		{
-			ops.emplace_back(SET, key, val);
+			if (preexec_mode) {
+				auto pp = allocate_pmem_kv_and_copyin(pool, key,
+								      val);
+				ops.emplace_back(SET_PMEM, key, pp);
+			} else {
+				ops.emplace_back(SET, key, val);
+			}
 		}
-		void
+		/*void
 		set_allocate_pmem(pmem::obj::pool_base &pool,
                                   const volatile_buffer &key,
 				  const volatile_buffer &val)
@@ -1229,7 +1258,7 @@ public:
 		{
 			auto pp = allocate_pmem_kv_and_copyin(pool, key, val);
 			ops.emplace_back(SET_PMEM, key, pp);
-		}
+		}*/
 		void
 		remove(const volatile_buffer &key)
 		{

@@ -85,11 +85,10 @@ public:
 	close() override;
 
         class PMemKVTransactionImpl : public KeyValueDB::TransactionImpl {
-                pmem_kv::DB::batch bat;
-		pmem::obj::pool_base &pool;
+		pmem_kv::DB::batch bat;
 
 	public:
-		PMemKVTransactionImpl(pmem::obj::pool_base &_pool) : pool(_pool)
+		PMemKVTransactionImpl(pmem::obj::pool_base &_pool) : bat(_pool, true)
 		{
 		}
 		pmem_kv::DB::batch &
@@ -100,20 +99,12 @@ public:
 		void set(const std::string &prefix, const std::string &k,
 			 const ceph::bufferlist &bl) override
                 {
-			//bat.set(std::move(PMemKeyValueDB::make_key(prefix, k)), bl);
-                        //FIXME minor: can omit K_V copying here
-			bat.set_allocate_pmem(pool,
-                                              PMemKeyValueDB::make_key(prefix, k),
-                                              bl);
+			bat.set(std::move(PMemKeyValueDB::make_key(prefix, k)), bl);
 		}
 		void set(const std::string &prefix, const char *k, size_t keylen,
 		    const ceph::bufferlist &bl) override
 		{
-			//bat.set(std::move(PMemKeyValueDB::make_key(prefix, k, keylen)), bl);
-			// FIXME minor: can omit K_V copying here
-			bat.set_allocate_pmem(pool,
-                                              PMemKeyValueDB::make_key(prefix, k,keylen),
-				              bl);
+			bat.set(std::move(PMemKeyValueDB::make_key(prefix, k, keylen)), bl);
 		}
 		void rmkey(const std::string &prefix, const std::string &k) override
 		{
