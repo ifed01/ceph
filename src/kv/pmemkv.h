@@ -183,22 +183,7 @@ struct pmem_page {
 
 using pmem_page_ptr = pmem::obj::persistent_ptr<pmem_page[]>;
 using pmem_pages_t = std::pair<uint32_t, pmem_page_ptr>;
-/*class pmem_pages_t : public pmem_pages_base {
-public:
-	pmem_pages_t(uint32_t sz = 0, pmem_page *ptr = nullptr)
-	    : pmem_pages_base(sz, ptr)
-	{
-	}
-	pmem_pages_t(pmem_pages_t &&from) : pmem_pages_base(from)
-	{
-		from.second = nullptr;
-	}
-	~pmem_pages_t()
-	{
-		if (second != nullptr) {
-		}
-	}
-};*/
+
 class pmem_kv_entry2;
 using pmem_kv_entry2_ptr = pmem::obj::persistent_ptr<pmem_kv_entry2[]>;
 
@@ -495,7 +480,6 @@ public:
 							dest, src, l,
 							PMEMOBJ_F_MEM_NOFLUSH |
 								PMEMOBJ_F_MEM_NODRAIN);
-						// TX_MEMCPY(dest, src, l);
 						len -= l;
 						o += l;
 						dest += l;
@@ -503,14 +487,9 @@ public:
 					offs += it->length();
 					++it;
 				}
-				/*auto it = bl.begin();
-				it += o;
-				it.copy(len, dest);*/
 				break;
 			}
 			case String: {
-				/*boost::get<std::string>(*this).copy(dest, len,
-								    o);*/
 				auto &s = boost::get<std::string>(*this);
 				pmem_memcpy(dest, s.c_str() + o, len,
 					    PMEMOBJ_F_MEM_NOFLUSH |
@@ -732,359 +711,6 @@ public:
 
 const buffer_view string_to_view(const std::string &s);
 const buffer_view string_to_view(const char *s);
-
-class pmem_kv_entry;
-using pmem_kv_entry_ptr = pmem::obj::persistent_ptr<pmem_kv_entry>;
-
-class pmem_kv_entry {
-	// FIXME minor: merge into a single 64bit field to reduce logging
-	// overhead
-	pmem::obj::p<uint32_t> key_size = 0;
-	pmem::obj::p<uint32_t> val_size = 0;
-
-	pmem_page_ptr extern_data = nullptr;
-	pmem::obj::p<uint32_t> extern_data_size = 0;
-
-	enum { MAX_EMBED_SIZE = PMEM_UNIT_SIZE - sizeof(key_size) -
-		       sizeof(val_size) - sizeof(extern_data) -
-		       sizeof(extern_data_size) };
-	byte embed_data[MAX_EMBED_SIZE];
-
-	void
-	dispose(pmem_page_ptr &data, uint32_t size)
-	{
-		if (data != nullptr) {
-			uint32_t sz = p2roundup<uint32_t>(sz, PMEM_PAGE_SIZE) /
-				PMEM_PAGE_SIZE;
-			pmem::obj::delete_persistent<pmem_page[]>(data.get(),
-								  size_t(sz));
-			data = nullptr;
-		}
-	}
-	void
-	dispose()
-	{
-		if (extern_data != nullptr) {
-			dispose(extern_data, extern_data_size);
-			extern_data_size = 0;
-		}
-	}
-
-	void
-	alloc_and_assign_extern(const volatile_buffer &s)
-	{
-		ceph_assert(extern_data == nullptr);
-		ceph_assert(s.length() != 0);
-		/*
-		 * We need to cache pmemobj_tx_alloc return value and only after
-		 * that assign it to _data, because when pmemobj_tx_alloc fails,
-		 * it aborts transaction.
-		 */
-		size_t new_len = p2roundup(s.length(), PMEM_PAGE_SIZE);
-		// std::cout << "??? " << sizeof(pmem_page) << " " << new_len /
-		// PMEM_PAGE_SIZE << std::endl;
-		pmem_page_ptr res = pmem::obj::make_persistent<pmem_page[]>(
-			new_len / PMEM_PAGE_SIZE);
-		/*pmemobj_tx_alloc(new_len / PMEM_PAGE_SIZE,
-				 pmem::detail::type_num<pmem_page>());*/
-		// std::cout << "!!! " << new_len / PMEM_PAGE_SIZE << std::endl;
-		if (res == nullptr) {
-			if (errno == ENOMEM)
-				throw pmem::transaction_out_of_memory(
-					"Failed to allocate persistent memory object")
-					.with_pmemobj_errormsg();
-			else
-				throw pmem::transaction_alloc_error(
-					"Failed to allocate persistent memory object")
-					.with_pmemobj_errormsg();
-		}
-		// FIXME minor: remove
-		// sanity development phase check
-		// std::cout << "vvv?vvv" << std::endl;
-		if (new_len > PMEM_PAGE_SIZE) {
-			ceph_assert(res[0].data() + PMEM_PAGE_SIZE ==
-				    res[1].data());
-		}
-		/*std::cout << "vvvvvv" << std::endl;
-		std::cout << "------" << s.length() << " " << std::hex <<
-		(void*)res[0].data() << std::dec
-			  << std::endl;
-		std::cout << "------" << s.length() << " " << std::hex
-			  << (void *)res[1].data() << std::dec << std::endl;*/
-		s.copy_out(0, s.length(), res[0].data());
-		// std::cout << "^^^^" << std::endl;
-		extern_data = res;
-		extern_data_size = new_len;
-	}
-
-	void
-	alloc_and_assign_extern(const volatile_buffer &s1,
-				const volatile_buffer &s2)
-	{
-		ceph_assert(extern_data == nullptr);
-		ceph_assert(s1.length() != 0);
-		ceph_assert(s2.length() != 0);
-		/*
-		 * We need to cache pmemobj_tx_alloc return value and only after
-		 * that assign it to _data, because when pmemobj_tx_alloc fails,
-		 * it aborts transaction.
-		 */
-		size_t new_len =
-			p2roundup(s1.length() + s2.length(), PMEM_PAGE_SIZE);
-		// std::cout << "??? " << new_len / PMEM_PAGE_SIZE << std::endl;
-		pmem_page_ptr res = pmem::obj::make_persistent<pmem_page[]>(
-			new_len / PMEM_PAGE_SIZE);
-		/*pmemobj_tx_alloc(new_len / PMEM_PAGE_SIZE,
-			 pmem::detail::type_num<pmem_page>());*/
-		// std::cout << "!!! " << new_len / PMEM_PAGE_SIZE << std::endl;
-		if (res == nullptr) {
-			if (errno == ENOMEM)
-				throw pmem::transaction_out_of_memory(
-					"Failed to allocate persistent memory object")
-					.with_pmemobj_errormsg();
-			else
-				throw pmem::transaction_alloc_error(
-					"Failed to allocate persistent memory object")
-					.with_pmemobj_errormsg();
-		}
-		// FIXME minor: remove
-		// sanity development phase check
-		// std::cout << "vvv???vvv" << std::endl;
-		if (new_len > PMEM_PAGE_SIZE) {
-			ceph_assert(res[0].data() + PMEM_PAGE_SIZE ==
-				    res[1].data());
-		}
-
-		// std::cout << "vvvvvv" << std::endl;
-		s1.copy_out(0, s1.length(), res[0].data());
-		/*std::cout << "------" << std::hex << res[0].data() << std::dec
-		<< std::endl; std::cout << "------" << std::hex << res[0].data()
-		+ s1.length()
-			  << std::dec << std::endl;*/
-		s2.copy_out(0, s2.length(), res[0].data() + s1.length());
-		// std::cout << "^^^^" << std::endl;
-		extern_data = res;
-		extern_data_size = new_len;
-	}
-
-public:
-	static pmem_kv_entry_ptr
-	allocate(const volatile_buffer &k, const volatile_buffer &v)
-	{
-		pmem_kv_entry_ptr res;
-		res = pmem::obj::make_persistent<pmem_kv_entry>();
-		ceph_assert(res[0].key_size == 0);
-		ceph_assert(res[0].val_size == 0);
-		res->assign(k, v, false);
-		return res;
-	}
-	static void
-	release(pmem_kv_entry_ptr p)
-	{
-		pmem::obj::delete_persistent<pmem_kv_entry>(p);
-	}
-
-	pmem_kv_entry()
-	{
-	}
-	pmem_kv_entry(const volatile_buffer &k, const volatile_buffer &v)
-	{
-		assign(k, v, false);
-	}
-
-	~pmem_kv_entry()
-	{
-		dispose();
-	}
-	bool
-	try_assign_value(const volatile_buffer &v)
-	{
-		ceph_assert(key_size != 0);
-		val_size = v.length();
-		size_t k_v_size = key_size + val_size;
-		if (k_v_size <= MAX_EMBED_SIZE) {
-			dispose();
-			if (val_size) {
-				/*auto slice =
-					embed_data.range(key_size, val_size);
-				v.copy_out(0, val_size, &slice.at(0));*/
-				pmemobj_tx_add_range_direct(
-					embed_data + key_size, val_size);
-				v.copy_out(0, val_size, embed_data + key_size);
-			}
-		} else if (key_size <= MAX_EMBED_SIZE) {
-			if (extern_data_size >= val_size) {
-				ceph_assert(extern_data != nullptr);
-				pmemobj_tx_add_range_direct(
-					extern_data[0].data() + 0, val_size);
-
-				v.copy_out(0, val_size, extern_data[0].data());
-			} else {
-				dispose();
-				alloc_and_assign_extern(v);
-			}
-		} else if (val_size <= MAX_EMBED_SIZE) {
-			if (val_size) {
-				/*auto slice = embed_data.range(0, val_size);
-				v.copy_out(0, val_size, &slice.at(0));*/
-				pmemobj_tx_add_range_direct(embed_data,
-							    val_size);
-				v.copy_out(0, val_size, embed_data);
-			}
-		} else {
-			// FIXME minor: can be done in a bit more effective
-			// manner
-			// by reusing existing extern_data if possible
-			auto old_extern_data = extern_data;
-			auto old_size = extern_data_size;
-			volatile_buffer k(key_view());
-			extern_data = nullptr;
-			extern_data_size = 0;
-			alloc_and_assign_extern(k, v);
-			dispose(old_extern_data, old_size);
-		}
-		return true;
-	}
-	void
-	assign(const volatile_buffer &k, const volatile_buffer &v,
-	       bool need_snapshot = true)
-	{
-		dispose();
-		key_size = k.length();
-		val_size = v.length();
-		size_t k_v_size = key_size + val_size;
-		if (k_v_size <= MAX_EMBED_SIZE) {
-			/*			auto slice = embed_data.range(0,
-			   k_v_size, need_snapshot ? k_v_size : 0);
-						k.copy_out(0, key_size,
-			   &slice.at(0)); if (val_size) { v.copy_out(0,
-			   val_size, &slice.at(key_size));
-						}*/
-			if (need_snapshot) {
-				pmemobj_tx_add_range_direct(embed_data,
-							    k_v_size);
-			}
-			k.copy_out(0, key_size, embed_data);
-			if (val_size) {
-				v.copy_out(0, val_size, embed_data + key_size);
-			}
-
-		} else if (key_size <= MAX_EMBED_SIZE) {
-			/*auto slice = embed_data.range(0, key_size,
-				need_snapshot ? k_v_size : 0);
-			k.copy_out(0, key_size, &slice.at(0));
-			*/
-			if (need_snapshot) {
-				pmemobj_tx_add_range_direct(embed_data,
-							    key_size);
-			}
-			k.copy_out(0, key_size, embed_data);
-			alloc_and_assign_extern(v);
-		} else if (val_size <= MAX_EMBED_SIZE) {
-			if (val_size) {
-				/*auto slice = embed_data.range(0, val_size);
-				v.copy_out(0, val_size, &slice.at(0));*/
-				if (need_snapshot) {
-					pmemobj_tx_add_range_direct(embed_data,
-								    val_size);
-				}
-				v.copy_out(0, val_size, embed_data);
-			}
-			alloc_and_assign_extern(k);
-		} else {
-			alloc_and_assign_extern(k, v);
-		}
-	}
-
-	void
-	dump(std::ostream &out) const
-	{
-		out << '{';
-		out << "k:" << key_view() << ", v:" << value_view();
-		out << '}';
-	}
-	const buffer_view
-	key_view() const
-	{
-		buffer_view res;
-		size_t k_v_size = key_size + val_size;
-		if (k_v_size <= MAX_EMBED_SIZE) {
-			res.append(embed_data, key_size);
-		} else if (key_size <= MAX_EMBED_SIZE) {
-			res.append(embed_data, key_size);
-		} else if (val_size <= MAX_EMBED_SIZE) {
-			res.append(extern_data[0].data(), key_size);
-		} else {
-			res.append(extern_data[0].data(), key_size);
-		}
-		return res;
-	}
-	const buffer_view
-	value_view() const
-	{
-		buffer_view res;
-		size_t k_v_size = key_size + val_size;
-		if (k_v_size <= MAX_EMBED_SIZE) {
-			res.append(embed_data + key_size, val_size);
-		} else if (key_size <= MAX_EMBED_SIZE) {
-			res.append(extern_data[0].data(), val_size);
-		} else if (val_size <= MAX_EMBED_SIZE) {
-			res.append(embed_data, val_size);
-		} else {
-			res.append(extern_data[0].data() + key_size, val_size);
-		}
-		return res;
-	}
-	/*const buffer_view
-	key_view() const
-	{
-		buffer_view res;
-		size_t k_v_size = key_size + val_size;
-		if (k_v_size <= MAX_EMBED_SIZE) {
-			res.append(embed_data.cdata(), key_size);
-		} else if (key_size <= MAX_EMBED_SIZE) {
-			res.append(embed_data.cdata(), key_size);
-		} else if (val_size <= MAX_EMBED_SIZE) {
-			res.append(extern_data.get(), key_size);
-		} else {
-			res.append(extern_data.get(), key_size);
-		}
-		return res;
-	}
-	const buffer_view
-	value_view() const
-	{
-		buffer_view res;
-		size_t k_v_size = key_size + val_size;
-		if (k_v_size <= MAX_EMBED_SIZE) {
-			res.append(embed_data.cdata() + key_size, val_size);
-		} else if (key_size <= MAX_EMBED_SIZE) {
-			res.append(extern_data.get(), val_size);
-		} else if (val_size <= MAX_EMBED_SIZE) {
-			res.append(embed_data.cdata(), val_size);
-		} else {
-			res.append(extern_data.get() + key_size, val_size);
-		}
-		return res;
-	}*/
-
-	std::string
-	key() const
-	{
-		return key_view().to_str();
-	}
-	std::string
-	value() const
-	{
-		return value_view().to_str();
-	}
-	bool
-	operator<(const pmem_kv_entry &other_kv) const
-	{
-		return key_view() < other_kv.key_view();
-	}
-};
-std::ostream &operator<<(std::ostream &out, const pmem_kv_entry &e);
 
 template <class T>
 struct volatile_map_entry_base {
@@ -1621,7 +1247,6 @@ public:
 	load_from_pool(pmem::obj::pool_base &pool)
 	{
 		ceph_assert(kv_set.empty());
-		// std::lock_guard l(general_mutex);
 		size_t entries = 0;
 		for_each<pmem_kv_entry2>(pool, [&](pmemoid &o) {
 			++entries;
@@ -1639,30 +1264,6 @@ public:
 				kv_set.insert(*new volatile_map_entry(kv_ptr));
 			}
 		});
-		/*		auto entry_type_num =
-		   pmem::detail::type_num<entry>(); auto o =
-		   POBJ_FIRST_TYPE_NUM(pool.handle(), entry_type_num); while
-		   (!OID_IS_NULL(o)) {
-					++entries;
-					if ((entries % 100000) == 0) {
-						std::cout << "Loading " <<
-		   entries << std::endl;
-					}
-
-					entry_ptr kv_ptr(
-						(entry *)pmemobj_direct(
-							o)); // FIXME minor: in
-		   fact we just
-							     // need the ability
-		   to create
-							     // persistent_ptr
-		   from PMEMoid not
-							     // from void*
-					kv_set.insert(*new
-		   volatile_map_entry(kv_ptr));
-
-					o = POBJ_NEXT_TYPE_NUM(o);
-				}*/
 	}
 
 	void

@@ -21,13 +21,6 @@ pmem_kv::string_to_view(const char *s)
 }
 
 std::ostream &
-pmem_kv::operator<<(std::ostream &out, const pmem_kv::pmem_kv_entry &e)
-{
-	e.dump(out);
-	return out;
-}
-
-std::ostream &
 pmem_kv::operator<<(std::ostream &out, const pmem_kv::pmem_kv_entry2 &e)
 {
 	e.dump(out);
