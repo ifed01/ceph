@@ -86,22 +86,34 @@ public:
 
         class PMemKVTransactionImpl : public KeyValueDB::TransactionImpl {
                 pmem_kv::DB::batch bat;
+		pmem::obj::pool_base &pool;
 
 	public:
-		const pmem_kv::DB::batch &
-		get_batch() const
+		PMemKVTransactionImpl(pmem::obj::pool_base &_pool) : pool(_pool)
+		{
+		}
+		pmem_kv::DB::batch &
+		get_batch()
 		{
 		        return bat;
                 }
 		void set(const std::string &prefix, const std::string &k,
 			 const ceph::bufferlist &bl) override
                 {
-			bat.set(std::move(PMemKeyValueDB::make_key(prefix, k)), bl);
+			//bat.set(std::move(PMemKeyValueDB::make_key(prefix, k)), bl);
+                        //FIXME minor: can omit K_V copying here
+			bat.set_allocate_pmem(pool,
+                                              PMemKeyValueDB::make_key(prefix, k),
+                                              bl);
 		}
 		void set(const std::string &prefix, const char *k, size_t keylen,
 		    const ceph::bufferlist &bl) override
 		{
-			bat.set(std::move(PMemKeyValueDB::make_key(prefix, k, keylen)), bl);
+			//bat.set(std::move(PMemKeyValueDB::make_key(prefix, k, keylen)), bl);
+			// FIXME minor: can omit K_V copying here
+			bat.set_allocate_pmem(pool,
+                                              PMemKeyValueDB::make_key(prefix, k,keylen),
+				              bl);
 		}
 		void rmkey(const std::string &prefix, const std::string &k) override
 		{
@@ -141,7 +153,7 @@ public:
 	Transaction
 	get_transaction() override
 	{
-		return std::make_shared<PMemKVTransactionImpl>();
+		return std::make_shared<PMemKVTransactionImpl>(pool);
 	}
 	int submit_transaction(Transaction t) override;
 

@@ -19,7 +19,7 @@ using namespace pmem_kv;
 
 struct root {
 	pmem::obj::p<bool> restart;
-	pmem::obj::persistent_ptr<pmem_kv_dummy> d1;
+	//pmem::obj::persistent_ptr<pmem_kv_dummy> d1;
 };
 
 void
@@ -58,7 +58,7 @@ main(int argc, char *argv[])
 
 		auto r = pop.root();
 
-		if (first) {
+/*		if (first) {
 			pmem::obj::transaction::run(pop, [&] {
 				r->d1 = pmem::obj::make_persistent<
 					pmem_kv_dummy>();
@@ -66,12 +66,18 @@ main(int argc, char *argv[])
 				r->d1->b = 2;
 			});
 			std::cout << "root/dummy created " << std::endl;
-		}
+		}*/
 
 		size_t total = 0;
 		PMEMoid oid;
 
 		if (first || r->restart) {
+			if (first) {
+				std::cout << "first test... "
+					  << std::endl;
+				int_kv_map.test2(pop);
+			}
+
 			std::cout << "restarted " << int_kv_map.size()
 				  << std::endl;
 			POBJ_FOREACH(pop.handle(), oid)
@@ -112,7 +118,7 @@ main(int argc, char *argv[])
                                 r->restart = true;
 			});
 
-			try {
+			/*try {
 				pmem::obj::transaction::run(pop, [&] {
 					++r->d1->a;
 					++r->d1->b;
@@ -121,7 +127,7 @@ main(int argc, char *argv[])
 			} catch (...) {
 			  std::cout << "aborted " << r->d1->a << " "
 					  << r->d1->b << " " << r->restart << std::endl;
-			}
+			} */
 		}
 
 	} catch (pmem::pool_error &e) {

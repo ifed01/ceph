@@ -294,7 +294,7 @@ PMemKeyValueDB::get(const std::string &prefix, ///< [in] Prefix/CF for key
             auto res_ptr = pmem_kv::DB::get(k);  // FIXME: we might need to copy data at this (or even inside DB::get) point since resulting pointer isn't guaranteed to exist forever
 	    logger->tinc(l_pmemkv_get_latency, ceph_clock_now() - start);
 	    if (res_ptr != 0) {
-	            auto& vv = res_ptr->value_view();
+	            auto& vv = res_ptr[0].value_view();
                     auto insert_pair = out->emplace(key, bufferlist());
 	            insert_pair.first->second.append(vv.c_str(), vv.length());
             } else {
@@ -317,7 +317,7 @@ int PMemKeyValueDB::get(const std::string &prefix, ///< [in] prefix or CF name
 	logger->tinc(l_pmemkv_get_latency, ceph_clock_now() - start);
 
 	if (res_ptr != 0) {
-		auto &vv = res_ptr->value_view();
+		auto &vv = res_ptr[0].value_view();
 		value->append(vv.c_str(), vv.length());
 	} else {
 		return -ENOENT;
@@ -374,7 +374,7 @@ PMemKeyValueDB:: WholeSpaceIteratorImpl::seek_to_first(const std::string &prefix
 	pmem_kv::volatile_buffer k(pmem_kv::string_to_view(prefix));
 
         auto it = dbiter.get_kv().lower_bound(k);
-	if (it.at_end() || !k.is_prefix_for(it->key_view())) {
+	if (it.at_end() || !k.is_prefix_for((*it)[0].key_view())) {
 		dbiter = dbiter.get_kv().end();
 	} else {
                 dbiter = it;
@@ -440,7 +440,7 @@ std::string
 PMemKeyValueDB::WholeSpaceIteratorImpl::key() 
 {
 	string key_tail;
-	PMemKeyValueDB::split_key(dbiter->key_view(), nullptr, &key_tail);
+	PMemKeyValueDB::split_key((*dbiter)[0].key_view(), nullptr, &key_tail);
         return key_tail;
 }
 
@@ -448,7 +448,7 @@ std::pair<std::string, std::string>
 PMemKeyValueDB::WholeSpaceIteratorImpl::raw_key()
 {
 	std::pair<std::string, std::string> res;
-	split_key(dbiter->key_view(), &res.first, &res.second);
+	split_key((*dbiter)[0].key_view(), &res.first, &res.second);
 	ceph_assert(res.first.length() != 0);
 	ceph_assert(res.second.length() != 0);
         return res;
@@ -457,7 +457,7 @@ PMemKeyValueDB::WholeSpaceIteratorImpl::raw_key()
 bool PMemKeyValueDB::WholeSpaceIteratorImpl::raw_key_is_prefixed(const std::string &prefix)
 {
 	// Look for "prefix\0" right in key_view
-	auto k = dbiter->key_view();
+	auto k = (*dbiter)[0].key_view();
 	if ((k.length() > prefix.length()) &&
             (k.c_str()[prefix.length()] == '\0')) {
 		return memcmp(k.c_str(), prefix.c_str(), prefix.length()) == 0;
@@ -468,7 +468,7 @@ bool PMemKeyValueDB::WholeSpaceIteratorImpl::raw_key_is_prefixed(const std::stri
 ceph::bufferlist
 PMemKeyValueDB::WholeSpaceIteratorImpl::value()
 {
-	auto v = dbiter->value_view();
+	auto v = (*dbiter)[0].value_view();
 	ceph::bufferlist bl;
         bl.append(v.c_str(), v.length());
 	return bl;
@@ -477,7 +477,7 @@ PMemKeyValueDB::WholeSpaceIteratorImpl::value()
 ceph::bufferptr
 PMemKeyValueDB::WholeSpaceIteratorImpl::value_as_ptr() 
 {
-	auto v = dbiter->value_view();
+	auto v = (*dbiter)[0].value_view();
 	return bufferptr(v.c_str(), v.length());
 }
 
@@ -491,11 +491,11 @@ PMemKeyValueDB::WholeSpaceIteratorImpl::status()
 size_t 
 PMemKeyValueDB::WholeSpaceIteratorImpl::key_size()
 {
-	return dbiter->key_view().length();
+	return (*dbiter)[0].key_view().length();
 }
 
 size_t
 PMemKeyValueDB::WholeSpaceIteratorImpl::value_size()
 {
-	return dbiter->value_view().length();
+	return (*dbiter)[0].value_view().length();
 }
