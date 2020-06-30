@@ -377,7 +377,7 @@ public:
 					auto p = it.get_current_ptr();
 					int r = memcmp(p.c_str(),
 						       other.c_str() + pos,
-						       l - pos);
+						       p.length());
 					if (r != 0) {
 						return r < 0;
 					}
@@ -418,7 +418,7 @@ public:
 					auto p = it.get_current_ptr();
 					int r = memcmp(p.c_str(),
 						       other.c_str() + pos,
-						       l - pos);
+						       p.length());
 					if (r != 0) {
 						return r < 0;
 					}
