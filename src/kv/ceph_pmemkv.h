@@ -26,7 +26,7 @@ enum { l_pmemkv_first = 754300,
        l_pmemkv_last,
 };
 
-class PMemKeyValueDB : public KeyValueDB, pmem_kv::DB
+class PMemKeyValueDB : public KeyValueDB, protected pmem_kv::DB
 {
 	CephContext *cct;
 	PerfCounters *logger = nullptr;
@@ -88,10 +88,12 @@ public:
 		pmem_kv::DB::batch bat;
 
 	public:
-		PMemKVTransactionImpl(pmem::obj::pool_base &_pool) : bat(_pool, true)
+		PMemKVTransactionImpl(pmem_kv::DB &_kv,
+                                      pmem::obj::pool_base &_pool)
+                        : bat(_kv, _pool, true)
 		{
 		}
-		pmem_kv::DB::batch &
+		pmem_kv::DB::batch&
 		get_batch()
 		{
 		        return bat;
@@ -144,7 +146,8 @@ public:
 	Transaction
 	get_transaction() override
 	{
-		return std::make_shared<PMemKVTransactionImpl>(pool);
+		return std::make_shared<PMemKVTransactionImpl>(
+                        *(pmem_kv::DB*)this, pool);
 	}
 	int submit_transaction(Transaction t) override;
 
