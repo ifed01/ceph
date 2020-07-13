@@ -756,14 +756,23 @@ const buffer_view string_to_view(const char *s);
 template <class T>
 struct volatile_map_entry_base {
 	T kv_pair;
+	std::string ss;
 	boost::intrusive::set_member_hook<> set_hook;
-	volatile_map_entry_base(T _kv_pair) : kv_pair(_kv_pair)
+	volatile_map_entry_base(T _kv_pair) 
+		: kv_pair(_kv_pair), ss(_kv_pair[0].key_view().to_str())
 	{
 	}
+        const buffer_view
+        key_view() const
+        {
+               return string_to_view(ss);
+                //return kv_pair[0].key_view();
+        }
 	bool
 	operator<(const volatile_map_entry_base<T> &other_kv) const
 	{
-		return kv_pair[0] < other_kv.kv_pair[0];
+		return ss < other_kv.ss;
+		//return kv_pair[0] < other_kv.kv_pair[0];
 	}
 };
 
@@ -802,29 +811,30 @@ class DB {
 			   const volatile_map_entry &e) const
 		{
 			return s < e.kv_pair[0].key_view();
+			return s < e.key_view();
 		}
 
 		bool
 		operator()(const volatile_map_entry &e,
 			   const buffer_view &s) const
 		{
-			return e.kv_pair[0].key_view() < s;
+			//return e.kv_pair[0].key_view() < s;
+			return e.key_view() < s;
 		}
 		bool
 		operator()(const volatile_buffer &b,
 			   const volatile_map_entry &e) const
 		{
-			return b < e.kv_pair[0].key_view();
+			//return b < e.kv_pair[0].key_view();
+			return b < e.key_view();
 		}
 
 		bool
 		operator()(const volatile_map_entry &e,
 			   const volatile_buffer &b) const
 		{
-			// return e.kv_pair->key_view().cmp(string_to_view(s)) <
-			// 0;
-			return !(b <= e.kv_pair[0].key_view());
-			// return cmp(e.kv_pair->key_view(), string_to_view(s));
+			//return !(b <= e.kv_pair[0].key_view());
+			return !(b <= e.key_view());
 		}
 	};
 
