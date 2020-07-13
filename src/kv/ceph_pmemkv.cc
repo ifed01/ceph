@@ -352,20 +352,18 @@ PMemKeyValueDB::_commit_transactions(pmem_kv::DB::batch& b)
 	        });
 	logger->inc(l_pmemkv_submit_ops, b.get_ops_count());
 	logger->tinc(l_pmemkv_submit_latency, ceph_clock_now() - start);
-	/*for (size_t i = 0; i < cur_batch; ++i) {
+	for (size_t i = 0; i < cur_batch; ++i) {
 		batch_set[i].reset();
 	}
 	ops_count = 0;
-        cur_batch=0;*/
+        cur_batch=0;
         b.reset();
 }
 
-/*
 int
 PMemKeyValueDB::submit_transaction_sync(Transaction t)
 {
 	if (opened && !read_only) {
-dout(0)<<__func__<<dendl;
 		PMemKVTransactionImpl *_t =
 			static_cast<PMemKVTransactionImpl *>(t.get());
 		ceph_assert(cur_batch < MAX_BATCH);
@@ -373,7 +371,6 @@ dout(0)<<__func__<<dendl;
 				     .get_ops_count();
 		batch_set[cur_batch++].swap(_t->get_batch());
 		_commit_transactions();
-dout(0)<<__func__<<" !"<<dendl;
 		return 0;
 	}
 	ceph_assert(false);
@@ -383,7 +380,6 @@ dout(0)<<__func__<<" !"<<dendl;
 int PMemKeyValueDB::submit_transaction(Transaction t)
 {
 	if (opened && !read_only) {
-dout(0)<<__func__<<""<<dendl;
 		PMemKVTransactionImpl *_t =
 			static_cast<PMemKVTransactionImpl *>(t.get());
 		ceph_assert(cur_batch < MAX_BATCH);
@@ -392,14 +388,13 @@ dout(0)<<__func__<<""<<dendl;
 		if (cur_batch == MAX_BATCH) {
 			_commit_transactions();
 		}
-dout(0)<<__func__<<" !"<<dendl;
                 return 0;
 	}
 	ceph_assert(false);
 	return -EPERM;
 }
-*/
 
+/*
 int
 PMemKeyValueDB::submit_transaction_sync(Transaction t)
 {
@@ -425,6 +420,7 @@ int PMemKeyValueDB::submit_transaction(Transaction t)
 	ceph_assert(false);
 	return -EPERM;
 }
+*/
 
 int
 PMemKeyValueDB::get(const std::string &prefix, ///< [in] Prefix/CF for key
