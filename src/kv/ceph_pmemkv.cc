@@ -8,7 +8,7 @@
 
 
 const char* pmem_pool_name = "pmemkv";
-const uint64_t pmem_pool_size = 16 * (uint64_t)1024 * 1024 * 1024;
+const uint64_t pmem_pool_size = 64 * (uint64_t)1024 * 1024 * 1024;
 
 
 std::string
@@ -180,103 +180,247 @@ PMemKeyValueDB::close()
 	opened = read_only = false;
 }
 
+void
+PMemKeyValueDB::_commit_transactions()
+{
+	if (cur_batch == 0) {
+                return;
+	}
+	utime_t start = ceph_clock_now();
+	
+	apply_batch(pool, batch_set.data(), cur_batch, 
+                [&](DB::ApplyBatchTimes idx, const ceph::timespan &t) {
+		        switch (idx) {
+			        case ApplyBatchTimes::LOCK_TIME:
+				        logger->tinc(l_pmemkv_submit_wait_latency, t);
+				        break;
+			        case ApplyBatchTimes::START_TIME:
+				        logger->tinc(l_pmemkv_submit_start_latency, t);
+				        break;
+			        case ApplyBatchTimes::END_TIME:
+				        logger->tinc(l_pmemkv_submit_complete_latency,
+					             t);
+				        break;
+			        case ApplyBatchTimes::SET_LOOKUP_TIME:
+				        logger->tinc(l_pmemkv_submit_set_lookup_latency,
+					             t);
+				        break;
+			        case ApplyBatchTimes::SET_EXEC_TIME:
+				        logger->tinc(l_pmemkv_submit_set_exec_latency,
+					             t);
+				        break;
+			        case ApplyBatchTimes::SET_EXISTED0_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_set_existed0_latency,
+					        t);
+				        break;
+			        case ApplyBatchTimes::SET_EXISTED1_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_set_existed1_latency,
+					        t);
+				        break;
+			        case ApplyBatchTimes::SET_EXISTED2_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_set_existed2_latency,
+					        t);
+				        break;
+
+			        case ApplyBatchTimes::SET_EXISTED3_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_set_existed3_latency,
+					        t);
+				        break;
+			        case ApplyBatchTimes::SET_MAKE_NEW_PERSISTENT_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_set_make_new_persistent_latency,
+					        t);
+				        break;
+			        case ApplyBatchTimes::SET_INSERT_TIME:
+				        logger->tinc(l_pmemkv_submit_set_insert_latency,
+					             t);
+				        break;
+			        case ApplyBatchTimes::REMOVE_LOOKUP_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_remove_lookup_latency,
+					        t);
+				        break;
+			        case ApplyBatchTimes::REMOVE_EXEC_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_remove_exec_latency, t);
+				        break;
+			        case ApplyBatchTimes::MERGE_LOOKUP_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_merge_lookup_latency,
+					        t);
+				        break;
+			        case ApplyBatchTimes::MERGE_EXEC_TIME:
+				        logger->tinc(l_pmemkv_submit_merge_exec_latency,
+					             t);
+				        break;
+			        default:
+				        ceph_assert(false);
+				        break;
+		        }
+	        });
+	logger->inc(l_pmemkv_submit_ops, ops_count);
+	logger->tinc(l_pmemkv_submit_latency, ceph_clock_now() - start);
+	for (size_t i = 0; i < cur_batch; ++i) {
+		batch_set[i].reset();
+	}
+	ops_count = 0;
+        cur_batch=0;
+}
+
+void
+PMemKeyValueDB::_commit_transactions(pmem_kv::DB::batch& b)
+{
+	utime_t start = ceph_clock_now();
+	
+	apply_batch(pool, b,
+                [&](DB::ApplyBatchTimes idx, const ceph::timespan &t) {
+		        switch (idx) {
+			        case ApplyBatchTimes::LOCK_TIME:
+				        logger->tinc(l_pmemkv_submit_wait_latency, t);
+				        break;
+			        case ApplyBatchTimes::START_TIME:
+				        logger->tinc(l_pmemkv_submit_start_latency, t);
+				        break;
+			        case ApplyBatchTimes::END_TIME:
+				        logger->tinc(l_pmemkv_submit_complete_latency,
+					             t);
+				        break;
+			        case ApplyBatchTimes::SET_LOOKUP_TIME:
+				        logger->tinc(l_pmemkv_submit_set_lookup_latency,
+					             t);
+				        break;
+			        case ApplyBatchTimes::SET_EXEC_TIME:
+				        logger->tinc(l_pmemkv_submit_set_exec_latency,
+					             t);
+				        break;
+			        case ApplyBatchTimes::SET_EXISTED0_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_set_existed0_latency,
+					        t);
+				        break;
+			        case ApplyBatchTimes::SET_EXISTED1_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_set_existed1_latency,
+					        t);
+				        break;
+			        case ApplyBatchTimes::SET_EXISTED2_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_set_existed2_latency,
+					        t);
+				        break;
+
+			        case ApplyBatchTimes::SET_EXISTED3_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_set_existed3_latency,
+					        t);
+				        break;
+			        case ApplyBatchTimes::SET_MAKE_NEW_PERSISTENT_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_set_make_new_persistent_latency,
+					        t);
+				        break;
+			        case ApplyBatchTimes::SET_INSERT_TIME:
+				        logger->tinc(l_pmemkv_submit_set_insert_latency,
+					             t);
+				        break;
+			        case ApplyBatchTimes::REMOVE_LOOKUP_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_remove_lookup_latency,
+					        t);
+				        break;
+			        case ApplyBatchTimes::REMOVE_EXEC_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_remove_exec_latency, t);
+				        break;
+			        case ApplyBatchTimes::MERGE_LOOKUP_TIME:
+				        logger->tinc(
+					        l_pmemkv_submit_merge_lookup_latency,
+					        t);
+				        break;
+			        case ApplyBatchTimes::MERGE_EXEC_TIME:
+				        logger->tinc(l_pmemkv_submit_merge_exec_latency,
+					             t);
+				        break;
+			        default:
+				        ceph_assert(false);
+				        break;
+		        }
+	        });
+	logger->inc(l_pmemkv_submit_ops, b.get_ops_count());
+	logger->tinc(l_pmemkv_submit_latency, ceph_clock_now() - start);
+	/*for (size_t i = 0; i < cur_batch; ++i) {
+		batch_set[i].reset();
+	}
+	ops_count = 0;
+        cur_batch=0;*/
+        b.reset();
+}
+
+/*
 int
-PMemKeyValueDB::submit_transaction(Transaction t)
+PMemKeyValueDB::submit_transaction_sync(Transaction t)
 {
 	if (opened && !read_only) {
-		utime_t start = ceph_clock_now();
+dout(0)<<__func__<<dendl;
 		PMemKVTransactionImpl *_t =
 			static_cast<PMemKVTransactionImpl *>(t.get());
-		auto ops = _t->get_batch().get_ops_count();
-		apply_batch(pool, _t->get_batch(),
-                        [&](DB::ApplyBatchTimes idx,
-                            const ceph::timespan& t) {
-			        switch (idx) {
-			        case ApplyBatchTimes::LOCK_TIME:
-					logger->tinc(
-						l_pmemkv_submit_wait_latency,
-                                                t);
-                                        break;
-			        case ApplyBatchTimes::START_TIME:
-					logger->tinc(
-						l_pmemkv_submit_start_latency,
-                                                t);
-                                        break;
-			        case ApplyBatchTimes::END_TIME:
-					logger->tinc(
-						l_pmemkv_submit_complete_latency,
-                                                t);
-                                        break;
-			        case ApplyBatchTimes::SET_LOOKUP_TIME:
-					logger->tinc(
-						l_pmemkv_submit_set_lookup_latency,
-                                                t);
-                                        break;
-			        case ApplyBatchTimes::SET_EXEC_TIME:
-					logger->tinc(
-						l_pmemkv_submit_set_exec_latency,
-                                                t);
-                                        break;
-				case ApplyBatchTimes::SET_EXISTED0_TIME:
-					logger->tinc(
-						l_pmemkv_submit_set_existed0_latency,
-							t);
-					break;
-				case ApplyBatchTimes::SET_EXISTED1_TIME:
-					logger->tinc(
-						l_pmemkv_submit_set_existed1_latency,
-							t);
-					break;
-				case ApplyBatchTimes::SET_EXISTED2_TIME:
-					logger->tinc(
-						l_pmemkv_submit_set_existed2_latency,
-							t);
-					break;
-
-				case ApplyBatchTimes::SET_EXISTED3_TIME:
-					logger->tinc(
-						l_pmemkv_submit_set_existed3_latency,
-						t);
-					break;
-				case ApplyBatchTimes::SET_MAKE_NEW_PERSISTENT_TIME:
-					logger->tinc(
-						l_pmemkv_submit_set_make_new_persistent_latency,
-						t);
-					break;
-				case ApplyBatchTimes::SET_INSERT_TIME:
-					logger->tinc(
-						l_pmemkv_submit_set_insert_latency,
-						t);
-					break;
-			        case ApplyBatchTimes::REMOVE_LOOKUP_TIME:
-					logger->tinc(
-						l_pmemkv_submit_remove_lookup_latency,
-                                                t);
-                                        break;
-			        case ApplyBatchTimes::REMOVE_EXEC_TIME:
-					logger->tinc(
-						l_pmemkv_submit_remove_exec_latency,
-                                                t);
-                                        break;
-				case ApplyBatchTimes::MERGE_LOOKUP_TIME:
-					logger->tinc(
-						l_pmemkv_submit_merge_lookup_latency,
-						t);
-					break;
-				case ApplyBatchTimes::MERGE_EXEC_TIME:
-					logger->tinc(
-						l_pmemkv_submit_merge_exec_latency,
-						t);
-					break;
-                                default:
-					ceph_assert(false);
-                                        break;
-			        }
-                        });
-		logger->inc(l_pmemkv_submit_ops, ops);
-		logger->tinc(l_pmemkv_submit_latency, ceph_clock_now() - start);
-
+		ceph_assert(cur_batch < MAX_BATCH);
+		ops_count += _t->get_batch()
+				     .get_ops_count();
+		batch_set[cur_batch++].swap(_t->get_batch());
+		_commit_transactions();
+dout(0)<<__func__<<" !"<<dendl;
 		return 0;
+	}
+	ceph_assert(false);
+	return -EPERM;
+}
+
+int PMemKeyValueDB::submit_transaction(Transaction t)
+{
+	if (opened && !read_only) {
+dout(0)<<__func__<<""<<dendl;
+		PMemKVTransactionImpl *_t =
+			static_cast<PMemKVTransactionImpl *>(t.get());
+		ceph_assert(cur_batch < MAX_BATCH);
+		ops_count += _t->get_batch().get_ops_count();
+		batch_set[cur_batch++].swap(_t->get_batch());
+		if (cur_batch == MAX_BATCH) {
+			_commit_transactions();
+		}
+dout(0)<<__func__<<" !"<<dendl;
+                return 0;
+	}
+	ceph_assert(false);
+	return -EPERM;
+}
+*/
+
+int
+PMemKeyValueDB::submit_transaction_sync(Transaction t)
+{
+	if (opened && !read_only) {
+		PMemKVTransactionImpl *_t =
+			static_cast<PMemKVTransactionImpl *>(t.get());
+		ceph_assert(cur_batch < MAX_BATCH);
+		_commit_transactions(_t->get_batch());
+		return 0;
+	}
+	ceph_assert(false);
+	return -EPERM;
+}
+
+int PMemKeyValueDB::submit_transaction(Transaction t)
+{
+	if (opened && !read_only) {
+		PMemKVTransactionImpl *_t =
+			static_cast<PMemKVTransactionImpl *>(t.get());
+		_commit_transactions(_t->get_batch());
+                return 0;
 	}
 	ceph_assert(false);
 	return -EPERM;

@@ -42,6 +42,16 @@ class PMemKeyValueDB : public KeyValueDB, protected pmem_kv::DB
 
 	std::map<std::string, std::shared_ptr<MergeOperator>> merge_ops;
 
+        enum {
+          MAX_BATCH = 1
+        };
+        std::array<batch, MAX_BATCH> batch_set;
+        size_t cur_batch = 0;
+        size_t ops_count = 0;
+
+        void _commit_transactions(batch& b);
+        void _commit_transactions();
+
 protected:
 	pmem_kv::volatile_buffer
 	_handle_merge(const pmem_kv::volatile_buffer &key,
@@ -90,7 +100,7 @@ public:
 	public:
 		PMemKVTransactionImpl(pmem_kv::DB &_kv,
                                       pmem::obj::pool_base &_pool)
-                        : bat(_kv, _pool, true)
+                        : bat(_kv, _pool, true, false)
 		{
 		}
 		pmem_kv::DB::batch&
@@ -150,6 +160,7 @@ public:
                         *(pmem_kv::DB*)this, pool);
 	}
 	int submit_transaction(Transaction t) override;
+	int submit_transaction_sync(Transaction t) override;
 
         /// Retrieve Keys
 	int get(const std::string &prefix,	///< [in] Prefix/CF for key

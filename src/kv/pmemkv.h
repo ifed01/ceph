@@ -756,18 +756,50 @@ const buffer_view string_to_view(const char *s);
 template <class T>
 struct volatile_map_entry_base {
 	T kv_pair;
+        std::string ss;
 	boost::intrusive::set_member_hook<> set_hook;
-	volatile_map_entry_base(T _kv_pair) : kv_pair(_kv_pair)
+	volatile_map_entry_base(T _kv_pair) 
+                : kv_pair(_kv_pair) , ss(_kv_pair[0].key_view().to_str())
 	{
 	}
+        const buffer_view
+	key_view() const
+	{
+		return string_to_view(ss);
+                //return kv_pair[0].key_view();
+	}
+
 	bool
 	operator<(const volatile_map_entry_base<T> &other_kv) const
 	{
-		return kv_pair[0] < other_kv.kv_pair[0];
+		return ss < other_kv.ss;
+		//return kv_pair[0] < other_kv.kv_pair[0];
 	}
 };
 
 class DB {
+public:
+	enum ApplyBatchTimes {
+		LOCK_TIME,
+		START_TIME,
+		END_TIME,
+		SET_LOOKUP_TIME,
+		SET_EXEC_TIME,
+		SET_EXISTED0_TIME,
+		SET_EXISTED1_TIME,
+		SET_EXISTED2_TIME,
+		SET_EXISTED3_TIME,
+		SET_MAKE_NEW_PERSISTENT_TIME,
+		SET_INSERT_TIME,
+		REMOVE_LOOKUP_TIME,
+		REMOVE_EXEC_TIME,
+		MERGE_LOOKUP_TIME,
+		MERGE_EXEC_TIME,
+		MAX_TIMES
+	};
+	class batch;
+
+private:
 	friend class iterator;
 
 	using entry = pmem_kv_entry2;
@@ -801,20 +833,20 @@ class DB {
 		operator()(const buffer_view &s,
 			   const volatile_map_entry &e) const
 		{
-			return s < e.kv_pair[0].key_view();
+			return s < e.key_view();
 		}
 
 		bool
 		operator()(const volatile_map_entry &e,
 			   const buffer_view &s) const
 		{
-			return e.kv_pair[0].key_view() < s;
+			return e.key_view() < s;
 		}
 		bool
 		operator()(const volatile_buffer &b,
 			   const volatile_map_entry &e) const
 		{
-			return b < e.kv_pair[0].key_view();
+			return b < e.key_view();
 		}
 
 		bool
@@ -823,7 +855,7 @@ class DB {
 		{
 			// return e.kv_pair->key_view().cmp(string_to_view(s)) <
 			// 0;
-			return !(b <= e.kv_pair[0].key_view());
+			return !(b <= e.key_view());
 			// return cmp(e.kv_pair->key_view(), string_to_view(s));
 		}
 	};
@@ -836,7 +868,11 @@ class DB {
 		++op_seq[h % BUCKET_COUNT];
 	}
 
-protected:
+        void
+	_exec_batch(batch &b,
+		    std::function<void(ApplyBatchTimes, const ceph::timespan &)> f);
+
+	protected:
 	virtual volatile_buffer
 	_handle_merge(const volatile_buffer &key,
 		      const volatile_buffer &new_value,
@@ -1134,8 +1170,8 @@ public:
 
 		std::vector<std::tuple<Op, volatile_buffer, preprocessed_t>>
 			ops;
-		DB  &kv;
-		pmem::obj::pool_base &pool;
+		DB  *kv = nullptr;
+		pmem::obj::pool_base *pool = nullptr;
 		bool preexec_mode = false;
 		bool prelookup_mode = false;
 
@@ -1172,12 +1208,15 @@ public:
 		}
 
 	public:
+		batch()
+		{
+		}
 		batch(DB &_kv,
 		      pmem::obj::pool_base &_pool,
                       bool _preexec_mode = false,
                       bool _prelookup_mode = false)
-		    : kv(_kv),
-		      pool(_pool),
+		    : kv(&_kv),
+		      pool(&_pool),
 		      preexec_mode(_preexec_mode),
                       prelookup_mode(_prelookup_mode)
 		{
@@ -1187,14 +1226,26 @@ public:
 			reset();
 		}
 		void
+		swap(batch &other)
+		{
+			std::swap(kv, other.kv);
+			std::swap(pool, other.pool);
+			std::swap(preexec_mode, other.preexec_mode);
+			std::swap(prelookup_mode, other.prelookup_mode);
+			ops.swap(other.ops);
+		}
+
+		void
 		set(const volatile_buffer &key, const volatile_buffer &val)
 		{
 			if (preexec_mode) {
-				auto pp = allocate_pmem_kv_and_copyin(pool, key,
+				ceph_assert(kv);
+				ceph_assert(pool);
+				auto pp = allocate_pmem_kv_and_copyin(*pool, key,
 								      val);
                                 iterator it;
 				if (prelookup_mode) {
-					it = kv.lower_bound(key);
+					it = kv->lower_bound(key);
 				}
 				ops.emplace_back(SET_PREEXEC, key,
                                         preprocessed_t(std::move(it), pp));
@@ -1206,11 +1257,13 @@ public:
 		set(volatile_buffer &&key, volatile_buffer &&val)
 		{
 			if (preexec_mode) {
-				auto pp = allocate_pmem_kv_and_copyin(pool, key,
+				ceph_assert(kv);
+				ceph_assert(pool);
+				auto pp = allocate_pmem_kv_and_copyin(*pool, key,
 								      val);
 				iterator it;
 				if (prelookup_mode) {
-					it = kv.lower_bound(key);
+					it = kv->lower_bound(key);
 				}
 				ops.emplace_back(SET_PREEXEC, key,
 					preprocessed_t(std::move(it), pp));
@@ -1222,11 +1275,13 @@ public:
 		set(volatile_buffer &&key, const volatile_buffer &val)
 		{
 			if (preexec_mode) {
-				auto pp = allocate_pmem_kv_and_copyin(pool, key,
+				ceph_assert(kv);
+				ceph_assert(pool);
+				auto pp = allocate_pmem_kv_and_copyin(*pool, key,
 								      val);
 				iterator it;
 				if (prelookup_mode) {
-					it = kv.lower_bound(key);
+					it = kv->lower_bound(key);
 				}
 				ops.emplace_back(SET_PREEXEC, key,
 					preprocessed_t(std::move(it), pp));
@@ -1238,11 +1293,13 @@ public:
 		set(const volatile_buffer &key, volatile_buffer &&val)
 		{
 			if (preexec_mode) {
-				auto pp = allocate_pmem_kv_and_copyin(pool, key,
+				ceph_assert(kv);
+				ceph_assert(pool);
+				auto pp = allocate_pmem_kv_and_copyin(*pool, key,
 								      val);
 				iterator it;
 				if (prelookup_mode) {
-					it = kv.lower_bound(key);
+					it = kv->lower_bound(key);
 				}
 				ops.emplace_back(SET_PREEXEC, key,
 					preprocessed_t(std::move(it), pp));
@@ -1419,318 +1476,16 @@ public:
 		});
 	}
 
-#define LOG_TIME(idx)                                                          \
-	if (f)                                                                 \
-		f(idx, mono_clock::now() - t0);
-
-	enum ApplyBatchTimes {
-		LOCK_TIME,
-		START_TIME,
-		END_TIME,
-		SET_LOOKUP_TIME,
-		SET_EXEC_TIME,
-		SET_EXISTED0_TIME,
-		SET_EXISTED1_TIME,
-		SET_EXISTED2_TIME,
-		SET_EXISTED3_TIME,
-		SET_MAKE_NEW_PERSISTENT_TIME,
-		SET_INSERT_TIME,
-		REMOVE_LOOKUP_TIME,
-		REMOVE_EXEC_TIME,
-		MERGE_LOOKUP_TIME,
-		MERGE_EXEC_TIME,
-		MAX_TIMES
-	};
-
+        void
+	apply_batch(pmem::obj::pool_base &pool, batch *bp, size_t batch_count,
+		    std::function<void(ApplyBatchTimes, const ceph::timespan &)>
+			    f = nullptr);
 	void
 	apply_batch(pmem::obj::pool_base &pool, batch &b,
 		    std::function<void(ApplyBatchTimes, const ceph::timespan &)>
 			    f = nullptr)
 	{
-		if (b.ops.empty())
-			return;
-		auto t0 = mono_clock::now();
-		pmem::obj::transaction::
-			run(
-				pool, [&] {
-					LOG_TIME(START_TIME);
-					t0 = mono_clock::now();
-					std::lock_guard l(general_mutex);
-					LOG_TIME(LOCK_TIME);
-
-					for (auto &p : b.ops) {
-						auto &key = std::get<1>(p);
-						/*std::cerr << key << " " <<
-						   std::get<0>(p)
-							  << std::endl;*/
-						switch (std::get<0>(p)) {
-							case batch::SET: {
-								t0 = mono_clock::
-									now();
-								kv_set_t::insert_commit_data
-									commit_data;
-								auto ip = kv_set.insert_check(
-									key,
-									Compare(),
-									commit_data);
-								LOG_TIME(
-									SET_LOOKUP_TIME);
-								t0 = mono_clock::
-									now();
-								auto &val = std::
-									get<2>(p).vbuf;
-								if (!ip.second) {
-									int path =
-										0;
-									if (!ip.first
-										     ->kv_pair
-											     [0]
-										     .try_assign_value(
-											     val)) {
-										entry::release(
-											ip.first->kv_pair);
-										ip.first->kv_pair =
-											entry::allocate(
-												key,
-												val);
-										path = 1;
-									}
-
-									LOG_TIME(ApplyBatchTimes(
-										SET_EXISTED0_TIME +
-										path));
-								} else {
-									auto kv = entry::allocate(
-										key,
-										val);
-									LOG_TIME(
-										SET_MAKE_NEW_PERSISTENT_TIME);
-									auto t0 = mono_clock::
-										now();
-									kv_set.insert_commit(
-										*new volatile_map_entry(
-											kv),
-										commit_data);
-									inc_op(key);
-									LOG_TIME(
-										SET_INSERT_TIME);
-								}
-								LOG_TIME(
-									SET_EXEC_TIME);
-								break;
-							}
-							case batch:: SET_PREEXEC: {
-								t0 = mono_clock::
-									now();
-								auto &preproc_val =
-									std::get<2>(p);
-
-								pmem_kv_entry2_ptr kv =
-									preproc_val.entry_ptr;
-								preproc_val.entry_ptr = nullptr;
-								ceph_assert(
-									kv !=
-									nullptr);
-								iterator_imp preexec_it =
-									preproc_val.it.get_validate_iterator_impl(
-                                                                                kv_set.end());
-								if (preexec_it != kv_set.end()) {
-									kv[0].persist();
-									if (key == string_to_view(preproc_val.it.get_current_key())) {
-										entry::release(
-											preexec_it->kv_pair);
-										preexec_it->kv_pair = kv;
-									        LOG_TIME(
-										        SET_EXISTED1_TIME);
-									} else {
-										kv_set.insert(
-                                                                                        preexec_it,
-											*new volatile_map_entry(
-												kv));
-									        LOG_TIME(
-										        SET_EXISTED2_TIME);
-									}
-								} else {
-                                                                        kv_set_t::insert_commit_data
-									        commit_data;
-								        auto ip = kv_set.insert_check(
-									        key,
-									        Compare(),
-									        commit_data);
-
-								        LOG_TIME(
-									        SET_LOOKUP_TIME);
-								        t0 = mono_clock::
-									        now();
-									kv[0].persist();
-									if (!ip.second) {
-									        entry::release(
-										        ip.first->kv_pair);
-									        ip.first->kv_pair =
-										        kv;
-									        LOG_TIME(ApplyBatchTimes(
-										        SET_EXISTED0_TIME));
-								        } else {
-									        LOG_TIME(
-										        SET_MAKE_NEW_PERSISTENT_TIME);
-									        auto t0 = mono_clock::
-										        now();
-									        kv_set.insert_commit(
-										        *new volatile_map_entry(
-											        kv),
-										        commit_data);
-									        inc_op(key);
-									        LOG_TIME(
-										        SET_INSERT_TIME);
-								        }
-                                                                }
-								LOG_TIME(
-									SET_EXEC_TIME);
-								break;
-							}
-							case batch::REMOVE: {
-								t0 = mono_clock::
-									now();
-								auto it = kv_set.find(
-									key,
-									Compare());
-								LOG_TIME(
-									REMOVE_LOOKUP_TIME);
-								t0 = mono_clock::
-									now();
-								if (it !=
-								    kv_set.end()) {
-									inc_op(key);
-									entry::release(
-										it->kv_pair);
-									kv_set.erase_and_dispose(
-										it,
-										Dispose());
-								}
-								LOG_TIME(
-									REMOVE_EXEC_TIME);
-								break;
-							}
-							case batch::
-								REMOVE_PREFIX: {
-								t0 = mono_clock::
-									now();
-								auto it = kv_set.lower_bound(
-									key,
-									Compare());
-
-								LOG_TIME(
-									REMOVE_LOOKUP_TIME);
-								t0 = mono_clock::
-									now();
-								while (it != kv_set.end() &&
-								       key.is_prefix_for(
-									       it->kv_pair[0]
-										       .key_view())) {
-									inc_op(it->kv_pair[0]
-										       .key_view());
-									entry::release(
-										it->kv_pair);
-									it = kv_set.erase_and_dispose(
-										it,
-										Dispose());
-								}
-								LOG_TIME(
-									REMOVE_EXEC_TIME);
-								break;
-							}
-							case batch::
-								REMOVE_RANGE: {
-								t0 = mono_clock::
-									now();
-								auto &key_end = std::
-									get<2>(p).vbuf;
-								auto it = kv_set.lower_bound(
-									key,
-									Compare());
-								LOG_TIME(
-									REMOVE_LOOKUP_TIME);
-								t0 = mono_clock::
-									now();
-								while (it != kv_set.end() &&
-								       key_end >
-									       it->kv_pair[0]
-										       .key_view()) {
-									inc_op(it->kv_pair[0]
-										       .key_view());
-									entry::release(
-										it->kv_pair);
-									it = kv_set.erase_and_dispose(
-										it,
-										Dispose());
-								}
-								LOG_TIME(
-									REMOVE_EXEC_TIME);
-								break;
-							}
-							case batch::MERGE: {
-								t0 = mono_clock::
-									now();
-								kv_set_t::insert_commit_data
-									commit_data;
-								auto ip = kv_set.insert_check(
-									key,
-									Compare(),
-									commit_data);
-								LOG_TIME(
-									MERGE_LOOKUP_TIME);
-								t0 = mono_clock::
-									now();
-								auto &val = std::
-									get<2>(p).vbuf;
-								bool present =
-									!ip.second;
-								buffer_view
-									orig_bv;
-								if (present) {
-									orig_bv =
-										ip.first
-											->kv_pair
-												[0]
-											.value_view();
-								}
-								volatile_buffer new_v = _handle_merge(
-									key,
-									val,
-									orig_bv);
-
-								if (!present) {
-									auto v = entry::allocate(
-										key,
-										new_v);
-									kv_set.insert_commit(
-										*new volatile_map_entry(
-											v),
-										commit_data);
-									inc_op(key);
-								} else if (
-									!ip.first
-										 ->kv_pair
-											 [0]
-										 .try_assign_value(
-											 new_v)) {
-									entry::release(
-										ip.first->kv_pair);
-									ip.first->kv_pair =
-										entry::allocate(
-											key,
-											new_v);
-								}
-								LOG_TIME(
-									MERGE_EXEC_TIME);
-
-								break;
-							}
-						}
-					}
-					t0 = mono_clock::now();
-				});
-		LOG_TIME(END_TIME);
+		apply_batch(pool, &b, 1, f);
 	}
 
 	bool
