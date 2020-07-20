@@ -5,7 +5,9 @@
 #include "include/ceph_assert.h"
 #include "include/intarith.h"
 #include <algorithm>
+#include <boost/intrusive/any_hook.hpp>
 #include <boost/intrusive/set.hpp>
+#include <boost/intrusive/list.hpp>
 #include <boost/variant.hpp>
 #include <functional>
 #include <libpmem.h>
@@ -239,7 +241,10 @@ public:
 	}
 	void assign(const volatile_buffer &k, const volatile_buffer &v,
 		    bool need_snapshot = true);
-	bool try_assign_value(const volatile_buffer &v);
+	/*inline bool
+	can_assign_value(const pmem_kv::volatile_buffer &v) const;
+
+	bool try_assign_value(const volatile_buffer &v);*/
 	void
 	dump(std::ostream &out) const
 	{
@@ -355,6 +360,17 @@ public:
 				ceph_assert(false);
 		}
 		return 0;
+	}
+	volatile_buffer &
+	operator=(const volatile_buffer &other)
+	{
+		*reinterpret_cast<volatile_buffer_base*>(this) = other;
+                return *this;
+	}
+	void
+	swap(volatile_buffer& other)
+	{
+		reinterpret_cast<volatile_buffer_base *>(this)->swap(other);
 	}
 	bool
 	operator<(const buffer_view &other) const
@@ -754,47 +770,84 @@ const buffer_view string_to_view(const std::string &s);
 const buffer_view string_to_view(const char *s);
 
 template <class T>
-struct volatile_map_entry_base {
+struct volatile_map_entry_base
+{
 	T kv_pair;
         std::string ss;
-	boost::intrusive::set_member_hook<> set_hook;
+	boost::intrusive::any_member_hook<> _hook;
 	volatile_map_entry_base(T _kv_pair) 
                 : kv_pair(_kv_pair) , ss(_kv_pair[0].key_view().to_str())
 	{
 	}
-        const buffer_view
+	bool
+	operator<(const volatile_map_entry_base<T> &other_kv) const
+	{
+		return ss < other_kv.ss;
+		// return kv_pair[0] < other_kv.kv_pair[0];
+	}
+
+        // may be implement func below via operator override or something?
+	const buffer_view
 	key_view() const
 	{
 		return string_to_view(ss);
                 //return kv_pair[0].key_view();
 	}
-
-	bool
-	operator<(const volatile_map_entry_base<T> &other_kv) const
+	const buffer_view
+	value_view() const
 	{
-		return ss < other_kv.ss;
-		//return kv_pair[0] < other_kv.kv_pair[0];
+		return kv_pair[0].value_view();
 	}
+
+	inline void
+	persist()
+	{
+		kv_pair[0].persist();
+	}
+	/*inline bool
+        can_assign_value(const pmem_kv::volatile_buffer &v) const
+	{
+		return kv_pair[0].can_assign_value(v);
+	}
+	inline bool
+        try_assign_value(const volatile_buffer &v)
+	{
+		return kv_pair[0].try_assign_value(v);
+	}*/
 };
 
 class DB {
 public:
-	enum ApplyBatchTimes {
-		LOCK_TIME,
+	enum BatchTimes {
+		/*LOCK_TIME,
 		START_TIME,
-		END_TIME,
-		SET_LOOKUP_TIME,
+		END_TIME,*/
+
+		SUBMIT_BATCH_WAIT_LOCK_TIME,
+		SUBMIT_BATCH_EXEC_TIME,
+
+		COMMIT_BATCH_TIME,
+
+		SET_PREEXEC_TIME,
+		SET_PREEXEC_LOOKUP_TIME,
+		SET_PREEXEC_EXISTED0_TIME,
+		SET_PREEXEC_EXISTED1_TIME,
+		SET_PREEXEC_EXISTED2_TIME,
+		SET_PREEXEC_INSERT_TIME,
+		REMOVE_LOOKUP_TIME,
+		REMOVE_EXEC_TIME,
+		MERGE_LOOKUP_TIME,
+		MERGE_EXEC_TIME,
+
+		/*SET_LOOKUP_TIME,
 		SET_EXEC_TIME,
 		SET_EXISTED0_TIME,
 		SET_EXISTED1_TIME,
 		SET_EXISTED2_TIME,
 		SET_EXISTED3_TIME,
 		SET_MAKE_NEW_PERSISTENT_TIME,
-		SET_INSERT_TIME,
-		REMOVE_LOOKUP_TIME,
-		REMOVE_EXEC_TIME,
-		MERGE_LOOKUP_TIME,
-		MERGE_EXEC_TIME,
+		SET_INSERT_TIME,*/
+
 		MAX_TIMES
 	};
 	class batch;
@@ -807,11 +860,19 @@ private:
 
 	using volatile_map_entry = volatile_map_entry_base<entry_ptr>;
 
+        typedef boost::intrusive::any_to_set_hook<
+	        boost::intrusive::member_hook<
+                            volatile_map_entry,
+                            boost::intrusive::any_member_hook<>,
+		            &volatile_map_entry::_hook>>
+	        kv_set_t_option;
+
 	typedef boost::intrusive::set<
 		volatile_map_entry,
-		boost::intrusive::member_hook<
-			volatile_map_entry, boost::intrusive::set_member_hook<>,
-			&volatile_map_entry::set_hook>>
+                kv_set_t_option
+		/*boost::intrusive::member_hook<
+			volatile_map_entry, boost::intrusive::any_member_hook<>,
+			&volatile_map_entry::_hook>*/>
 		kv_set_t;
 	kv_set_t kv_set;
 	enum { BUCKET_COUNT = 16386 };
@@ -819,11 +880,41 @@ private:
 
 	ceph::shared_mutex general_mutex = ceph::make_shared_mutex("DB");
 
-	struct Dispose {
+	struct DisposeVolatile {
 		void
 		operator()(volatile_map_entry *e)
 		{
 			delete e;
+		}
+	};
+
+        // to be called within a transaction
+	struct Release {
+		void
+		operator()(volatile_map_entry *e)
+		{
+			if (e) {
+				if (e->kv_pair) {
+					entry::release(e->kv_pair);
+				}
+				delete e;
+			}
+		}
+	};
+	struct ReleaseAtomic {
+		void
+		operator()(volatile_map_entry *e)
+		{
+			if (e) {
+				if (e->kv_pair) {
+					// delete_persistent_atomic does
+					// exactly the same call to
+					// pmemobj_free. Hence using it
+					// directly
+					pmemobj_free(e->kv_pair.raw_ptr());
+				}
+				delete e;
+			}
 		}
 	};
 
@@ -868,9 +959,9 @@ private:
 		++op_seq[h % BUCKET_COUNT];
 	}
 
-        void
+        /*void
 	_exec_batch(batch &b,
-		    std::function<void(ApplyBatchTimes, const ceph::timespan &)> f);
+		    std::function<void(BatchTimes, const ceph::timespan &)> f);*/
 
 	protected:
 	virtual volatile_buffer
@@ -1076,7 +1167,8 @@ public:
 			}
 			return *this;
 		}
-		const entry_ptr operator->()
+
+                const entry_ptr operator->()
 		{
 			std::shared_lock l(kv->general_mutex);
 			if (!cur_key.empty() &&
@@ -1143,7 +1235,19 @@ public:
 		struct preprocessed_t{
                         iterator it;
 			volatile_buffer vbuf;
-			pmem_kv_entry2_ptr entry_ptr = nullptr;
+			volatile_map_entry* entry_ptr = nullptr;
+
+                        typedef boost::intrusive::any_to_list_hook<
+				boost::intrusive::member_hook<
+					volatile_map_entry,
+					boost::intrusive::any_member_hook<>,
+				        &volatile_map_entry::_hook>>
+				kv_list_t_option;
+                        typedef boost::intrusive::list<
+			volatile_map_entry,
+                        kv_list_t_option>
+			kv_list_t;
+                        kv_list_t kv_to_release;
 
                         preprocessed_t()
 			{
@@ -1161,10 +1265,17 @@ public:
 			    : vbuf(std::move(val))
 			{
 			}
-			preprocessed_t(iterator &&it, pmem_kv_entry2_ptr ptr)
+			preprocessed_t(iterator &&it, volatile_map_entry* ptr)
 			    : it(std::move(it)),
 			      entry_ptr(ptr)
 			{
+			}
+			void
+			release(volatile_map_entry* e)
+			{
+				if (e) {
+					kv_to_release.push_back(*e);
+				}
 			}
 		};
 
@@ -1223,7 +1334,7 @@ public:
 		}
 		~batch()
 		{
-			reset();
+			dispose();
 		}
 		void
 		swap(batch &other)
@@ -1248,7 +1359,8 @@ public:
 					it = kv->lower_bound(key);
 				}
 				ops.emplace_back(SET_PREEXEC, key,
-                                        preprocessed_t(std::move(it), pp));
+                                        preprocessed_t(std::move(it),
+						new volatile_map_entry(pp)));
 			} else {
 				ops.emplace_back(SET, key, val);
 			}
@@ -1266,7 +1378,8 @@ public:
 					it = kv->lower_bound(key);
 				}
 				ops.emplace_back(SET_PREEXEC, key,
-					preprocessed_t(std::move(it), pp));
+					preprocessed_t(std::move(it),
+                                                new volatile_map_entry(pp)));
 			} else {
 				ops.emplace_back(SET, key, val);
 			}
@@ -1284,7 +1397,9 @@ public:
 					it = kv->lower_bound(key);
 				}
 				ops.emplace_back(SET_PREEXEC, key,
-					preprocessed_t(std::move(it), pp));
+					preprocessed_t(std::move(it),
+                                                new volatile_map_entry(pp)));
+
 			} else {
 				ops.emplace_back(SET, key, val);
 			}
@@ -1302,7 +1417,8 @@ public:
 					it = kv->lower_bound(key);
 				}
 				ops.emplace_back(SET_PREEXEC, key,
-					preprocessed_t(std::move(it), pp));
+					preprocessed_t(std::move(it),
+						new volatile_map_entry(pp)));
 			} else {
 				ops.emplace_back(SET, key, val);
 			}
@@ -1359,24 +1475,20 @@ public:
 			ops.emplace_back(MERGE, key, val);
 		}
 		void
-		reset()
+		dispose()
 		{
 			for (auto &o : ops) {
-				if (std::get<0>(o) == SET_PREEXEC) {
-					pmem_kv_entry2_ptr pp =
-						std::get<2>(o).entry_ptr;
-					if (pp) {
-						// delete_persistent_atomic does
-						// exactly the same call to
-						// pmemobj_free. Hence using it
-						// directly
-						pmemobj_free(pp.raw_ptr());
-					}
-				}
+				auto& pp = std::get<2>(o);
+				ReleaseAtomic()(pp.entry_ptr);
+                                pp.kv_to_release.clear_and_dispose(ReleaseAtomic());
 			}
 			ops.clear();
 		}
-		size_t
+		void clear()
+                {
+                        ops.clear();
+                }
+                size_t
 		get_ops_count() const
 		{
 			return ops.size();
@@ -1388,7 +1500,7 @@ public:
 	}
 	virtual ~DB()
 	{
-		kv_set.clear_and_dispose(Dispose());
+		kv_set.clear_and_dispose(DisposeVolatile());
 	}
 
 	uint64_t
@@ -1471,21 +1583,35 @@ public:
 			auto it = kv_set.find(k, Compare());
 			if (it != kv_set.end()) {
 				entry::release(it->kv_pair);
-				kv_set.erase_and_dispose(it, Dispose());
+				kv_set.erase_and_dispose(it,
+                                        DisposeVolatile());
 			}
 		});
 	}
 
-        void
-	apply_batch(pmem::obj::pool_base &pool, batch *bp, size_t batch_count,
-		    std::function<void(ApplyBatchTimes, const ceph::timespan &)>
+	void
+	submit_batch(pmem::obj::pool_base &pool, batch &b,
+		    std::function<void(BatchTimes, const ceph::timespan &)>
 			    f = nullptr);
+
+        void
+	commit_batch_set(pmem::obj::pool_base &pool, batch *bp, size_t batch_count,
+		    std::function<void(BatchTimes, const ceph::timespan &)> f =
+			    nullptr);
+	void
+	commit_batch(pmem::obj::pool_base &pool, batch &b,
+		    std::function<void(BatchTimes, const ceph::timespan &)> f =
+			    nullptr)
+	{
+		commit_batch_set(pool, &b, 1, f);
+	}
 	void
 	apply_batch(pmem::obj::pool_base &pool, batch &b,
-		    std::function<void(ApplyBatchTimes, const ceph::timespan &)>
-			    f = nullptr)
+		     std::function<void(BatchTimes, const ceph::timespan &)> f =
+			     nullptr)
 	{
-		apply_batch(pool, &b, 1, f);
+		submit_batch(pool, b, f);
+		commit_batch(pool, b, f);
 	}
 
 	bool
@@ -1560,6 +1686,11 @@ public:
 
 	void test(pmem::obj::pool_base &pool, bool remove = true);
 	void test2(pmem::obj::pool_base &pool);
+private:
+	void
+	_commit_batch(batch &b,
+		      std::function<void(BatchTimes, const ceph::timespan &)> f);
+
 
 }; // class DB
 }; // namespace pmem_kv

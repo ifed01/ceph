@@ -5,20 +5,33 @@
 #include "pmemkv.h"
 
 enum { l_pmemkv_first = 754300,
-       l_pmemkv_submit_ops,
        l_pmemkv_get_latency,
+       l_pmemkv_precommit_latency,
+       l_pmemkv_commit_ops,
+       l_pmemkv_commit_latency,
        l_pmemkv_submit_latency,
-       l_pmemkv_submit_wait_latency,
-       l_pmemkv_submit_start_latency,
-       l_pmemkv_submit_complete_latency,
-       l_pmemkv_submit_set_lookup_latency,
+
+       l_pmemkv_submit_batch_wait_latency,
+       l_pmemkv_submit_batch_exec_latency,
+
+       l_pmemkv_commit_batch_latency,
+
+       l_pmemkv_submit_set_preexec_latency,
+       l_pmemkv_submit_set_preexec_lookup_latency,
+       l_pmemkv_submit_set_preexec_existed0_latency,
+       l_pmemkv_submit_set_preexec_existed1_latency,
+       l_pmemkv_submit_set_preexec_existed2_latency,
+       l_pmemkv_submit_set_preexec_insert_latency,
+
+       /*l_pmemkv_submit_set_lookup_latency,
        l_pmemkv_submit_set_exec_latency,
        l_pmemkv_submit_set_existed0_latency,
        l_pmemkv_submit_set_existed1_latency,
        l_pmemkv_submit_set_existed2_latency,
        l_pmemkv_submit_set_existed3_latency,
        l_pmemkv_submit_set_make_new_persistent_latency,
-       l_pmemkv_submit_set_insert_latency,
+       l_pmemkv_submit_set_insert_latency,*/
+
        l_pmemkv_submit_remove_lookup_latency,
        l_pmemkv_submit_remove_exec_latency,
        l_pmemkv_submit_merge_lookup_latency,
@@ -31,6 +44,7 @@ class PMemKeyValueDB : public KeyValueDB, protected pmem_kv::DB
 	CephContext *cct;
 	PerfCounters *logger = nullptr;
 	std::string path;
+	ceph::mutex commit_lock = ceph::make_mutex("ceph_pmemkv::commit_lock");
 
         struct pmem_root {
 		pmem::obj::p<uint64_t> dummy;
@@ -43,14 +57,17 @@ class PMemKeyValueDB : public KeyValueDB, protected pmem_kv::DB
 	std::map<std::string, std::shared_ptr<MergeOperator>> merge_ops;
 
         enum {
-          MAX_BATCH = 32
+          MAX_BATCH = 128
         };
         std::array<batch, MAX_BATCH> batch_set;
         size_t cur_batch = 0;
         size_t ops_count = 0;
 
-        void _commit_transactions(batch& b);
-        void _commit_transactions();
+	void _log_latency(DB::BatchTimes idx,
+			  const ceph::timespan &t);
+
+	void _submit_transaction(batch &b);
+	void _maybe_commit_transactions(bool force, batch &b);
 
 protected:
 	pmem_kv::volatile_buffer
