@@ -11229,7 +11229,7 @@ void BlueStore::_txc_update_store_statfs(TransContext *txc)
   if (per_pool_stat_collection) {
     string key;
     get_pool_stat_key(txc->osd_pool_id, &key);
-    txc->t->merge(PREFIX_STAT, key, bl);
+    //txc->t->merge(PREFIX_STAT, key, bl);
 
     std::lock_guard l(vstatfs_lock);
     auto& stats = osd_pools[txc->osd_pool_id];
@@ -11238,7 +11238,7 @@ void BlueStore::_txc_update_store_statfs(TransContext *txc)
     vstatfs += txc->statfs_delta; //non-persistent in this mode
 
   } else {
-    txc->t->merge(PREFIX_STAT, BLUESTORE_GLOBAL_STATFS_KEY, bl);
+    //txc->t->merge(PREFIX_STAT, BLUESTORE_GLOBAL_STATFS_KEY, bl);
 
     std::lock_guard l(vstatfs_lock);
     vstatfs += txc->statfs_delta;
@@ -11487,7 +11487,7 @@ void BlueStore::_txc_finalize_kv(TransContext *txc, KeyValueDB::Transaction t)
   }
 
   // update freelist with non-overlap sets
-  for (interval_set<uint64_t>::iterator p = pallocated->begin();
+/*  for (interval_set<uint64_t>::iterator p = pallocated->begin();
        p != pallocated->end();
        ++p) {
     fm->allocate(p.get_start(), p.get_len(), t);
@@ -11498,7 +11498,7 @@ void BlueStore::_txc_finalize_kv(TransContext *txc, KeyValueDB::Transaction t)
     dout(20) << __func__ << " release 0x" << std::hex << p.get_start()
 	     << "~" << p.get_len() << std::dec << dendl;
     fm->release(p.get_start(), p.get_len(), t);
-  }
+  }*/
 
   _txc_update_store_statfs(txc);
 }
