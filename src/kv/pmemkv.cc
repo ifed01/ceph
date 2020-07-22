@@ -864,3 +864,243 @@ pmem_kv::DB::test2(pmem::obj::pool_base &pool)
 		ceph_assert(num_pages == 0);
 	}
 }
+
+
+struct test3_data{
+	pmem::obj::p<uint64_t> cnt = 0;
+	pmem_kv::pmem_kv_entry2_ptr entry = nullptr;
+};
+
+void
+pmem_kv::DB::test3(pmem::obj::pool_base &pool)
+{
+	pmem::obj::persistent_ptr <test3_data> p = nullptr;
+	pmem::obj::make_persistent_atomic<test3_data>(
+		pool, p,
+		pmem::obj::allocation_flag_atomic(POBJ_XALLOC_ZERO));
+	mono_clock::time_point t0 = mono_clock::now();
+        size_t count = 5000000;
+	for (size_t i = 0; i < count; ++i) {
+		pmem::obj::transaction::run(pool, [&] {
+			p->cnt++;
+		});
+	}
+
+        auto t = double((mono_clock::now() - t0).count()) / 1E9;
+        std::cout << "test3 completed in "
+		  << t
+                  << " iops " << count / t
+		  << std::endl;
+	pmem::obj::delete_persistent_atomic<test3_data>(p);
+}
+
+void
+pmem_kv::DB::test3_1(pmem::obj::pool_base &pool)
+{
+	pmem::obj::persistent_ptr<test3_data> p = nullptr;
+	pmem::obj::make_persistent_atomic<test3_data>(
+		pool, p, pmem::obj::allocation_flag_atomic(POBJ_XALLOC_ZERO));
+	mono_clock::time_point t0 = mono_clock::now();
+	size_t count = 5000000;
+	const size_t sample_size =
+		PMEM_PAGE_SIZE * 1;
+	unsigned char sample[sample_size] = {0xff};
+	for (size_t i = 0; i < count; ++i) {
+		pmem::obj::transaction::run(pool, [&] {
+			if (p->entry != nullptr) {
+				pmem::obj::delete_persistent<pmem_kv_entry2[]>(
+					p->entry, 1);
+                        }
+			p->entry = pmem::obj::make_persistent<
+					pmem_kv_entry2[]>(sample_size / PMEM_PAGE_SIZE);
+			pmem_memcpy_nodrain(p->entry.get(), sample,
+					    sample_size);
+		});
+	}
+
+        auto t = double((mono_clock::now() - t0).count()) / 1E9;
+	std::cout << "test3_1 completed in "
+		  << t
+                  << " iops " << count / t
+		  << std::endl;
+	pmem::obj::delete_persistent_atomic<test3_data>(p);
+}
+
+void
+pmem_kv::DB::test3_2(pmem::obj::pool_base &pool)
+{
+	pmem::obj::persistent_ptr<test3_data> p = nullptr;
+	pmem::obj::make_persistent_atomic<test3_data>(
+		pool, p, pmem::obj::allocation_flag_atomic(POBJ_XALLOC_ZERO));
+	mono_clock::time_point t0 = mono_clock::now();
+	size_t count = 5000000;
+	const size_t sample_size = PMEM_PAGE_SIZE * 1;
+	unsigned char sample[sample_size] = {0xff};
+	for (size_t i = 0; i < count; ++i) {
+		if (p->entry != nullptr) {
+			pmem::obj::delete_persistent_atomic<pmem_kv_entry2[]>(
+				p->entry, 1);
+		}
+		pmem::obj::make_persistent_atomic<pmem_kv_entry2[]>(
+			pool, p->entry, sample_size / PMEM_PAGE_SIZE);
+
+		pmem::obj::transaction::run(pool, [&] {
+		        pmem_memcpy_nodrain( (void*)p->entry.get(), sample,
+				            sample_size);
+		});
+	}
+
+        auto t = double((mono_clock::now() - t0).count()) / 1E9;
+	std::cout << "test3_2 completed in "
+		  << t
+                  << " iops " << count / t
+		  << std::endl;
+	pmem::obj::delete_persistent_atomic<test3_data>(p);
+}
+
+std::atomic_int running = 0;
+#include "common/Thread.h"
+#include <initializer_list>
+struct TestThread : public Thread {
+      pmem::obj::pool_base &pool;
+      size_t count;
+      TestThread(pmem::obj::pool_base &_pool, size_t _count)
+	  : pool(_pool), count(_count)
+      {
+      }
+      /*TestThread(std::initializer_list<TestThread> l) : pool(l.pool), count(l.count)
+      {
+      }*/
+      void *
+      entry() override
+      {
+	      pmem::obj::persistent_ptr<test3_data> p = nullptr;
+	      pmem::obj::make_persistent_atomic<test3_data>(
+		      pool, p,
+		      pmem::obj::allocation_flag_atomic(POBJ_XALLOC_ZERO));
+	      const size_t sample_size = PMEM_PAGE_SIZE;
+	      unsigned char sample[sample_size] = {0xff};
+              size_t conflicts = 0;
+	      for (size_t i = 0; i < count; ++i) {
+		      pmem::obj::transaction::run(pool, [&] {
+			      if (++running > 1) {
+                                        ++conflicts;
+			      }
+			      if (p->entry != nullptr) {
+				      pmem::obj::delete_persistent<
+					      pmem_kv::pmem_kv_entry2[]>(p->entry, 1);
+			      }
+			      p->entry = pmem::obj::make_persistent<
+				      pmem_kv::pmem_kv_entry2[]>(
+				              sample_size / PMEM_PAGE_SIZE);
+			      pmem_memcpy_nodrain(p->entry.get(), sample,
+						  sample_size);
+                              --running;
+		      });
+	      }
+	      std::cout << "conflicts detected " << conflicts << std::endl;
+	      pmem::obj::delete_persistent_atomic<test3_data>(p);
+	      return NULL;
+      }
+      /*void *
+      entry() override
+      {
+	      pmem::obj::persistent_ptr<test3_data> p = nullptr;
+	      pmem::obj::make_persistent_atomic<test3_data>(
+		      pool, p,
+		      pmem::obj::allocation_flag_atomic(POBJ_XALLOC_ZERO));
+	      const size_t sample_size = PMEM_PAGE_SIZE * 1;
+	      unsigned char sample[sample_size] = {0xff};
+	      for (size_t i = 0; i < count; ++i) {
+		      if (p->entry != nullptr) {
+			      pmem::obj::delete_persistent_atomic<
+				      pmem_kv::pmem_kv_entry2[]>(p->entry, 1);
+		      }
+		      pmem::obj::make_persistent_atomic<
+			      pmem_kv::pmem_kv_entry2[]>(
+			      pool, p->entry, sample_size / PMEM_PAGE_SIZE);
+
+		      pmem::obj::transaction::run(pool, [&] {
+			      pmem_memcpy_nodrain((void *)p->entry.get(),
+						  sample, sample_size);
+		      });
+	      }
+
+	      pmem::obj::delete_persistent_atomic<test3_data>(p);
+	      return NULL;
+      }*/
+};
+
+void
+pmem_kv::DB::test3_3(pmem::obj::pool_base &pool)
+{
+        const size_t thread_count = 8;
+        const size_t ops_count = 5000000;
+	TestThread ths[thread_count] = { 
+                TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+                TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		/*TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+                TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),*/
+                /*TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),*/
+
+                /*TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+                TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+                TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+                TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),*/
+
+                /*TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+                TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count),
+		TestThread(pool, ops_count)*/
+        };
+
+        mono_clock::time_point t0 = mono_clock::now();
+	for (size_t i = 0; i < thread_count; ++i) {
+		ths[i].create("thread");
+	}
+	for (size_t i = 0; i < thread_count; ++i) {
+		ths[i].join();
+	}
+	auto t = double((mono_clock::now() - t0).count()) / 1E9;
+	std::cout << "test3_3 completed in "
+		  << t
+                  << " iops " << thread_count * ops_count / t
+		  << std::endl;
+}

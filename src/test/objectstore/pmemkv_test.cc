@@ -76,6 +76,15 @@ main(int argc, char *argv[])
 				std::cout << "first test... "
 					  << std::endl;
 				int_kv_map.test2(pop);
+
+				std::cout << "test3... " << std::endl;
+				int_kv_map.test3(pop);
+				std::cout << "test3_1... " << std::endl;
+				int_kv_map.test3_1(pop);
+				std::cout << "test3_2... " << std::endl;
+				int_kv_map.test3_2(pop);
+				std::cout << "test3_3... " << std::endl;
+				int_kv_map.test3_3(pop);
 			}
 
 			std::cout << "restarted " << int_kv_map.size()

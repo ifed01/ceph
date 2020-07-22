@@ -57,7 +57,7 @@ class PMemKeyValueDB : public KeyValueDB, protected pmem_kv::DB
 	std::map<std::string, std::shared_ptr<MergeOperator>> merge_ops;
 
         enum {
-          MAX_BATCH = 128
+                MAX_BATCH = 128
         };
         std::array<batch, MAX_BATCH> batch_set;
         size_t cur_batch = 0;

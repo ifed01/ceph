@@ -959,10 +959,6 @@ private:
 		++op_seq[h % BUCKET_COUNT];
 	}
 
-        /*void
-	_exec_batch(batch &b,
-		    std::function<void(BatchTimes, const ceph::timespan &)> f);*/
-
 	protected:
 	virtual volatile_buffer
 	_handle_merge(const volatile_buffer &key,
@@ -1038,18 +1034,16 @@ public:
                 iterator_imp
                 get_validate_iterator_impl(iterator_imp invalid_val) const
 		{
-                        if (!kv) {
+			if (!kv || cur_key.empty()) {
                                 return invalid_val;
 			}
-			ceph_assert(ceph_mutex_is_locked(kv->general_mutex));
-			iterator_imp res = invalid_val;
-			if (!cur_key.empty()) {
-				if (last_op_seqno ==
-				    kv->get_last_op(cur_key_hash)) {
-				    res = it;
-                                }
-			}
-                        return res;
+			ceph_assert(ceph_mutex_is_locked(
+				kv->general_mutex));
+			if (last_op_seqno ==
+			    kv->get_last_op(cur_key_hash)) {
+			    return it;
+                        }
+			return invalid_val;
 		}
 
 	public:
@@ -1686,7 +1680,12 @@ public:
 
 	void test(pmem::obj::pool_base &pool, bool remove = true);
 	void test2(pmem::obj::pool_base &pool);
-private:
+	void test3(pmem::obj::pool_base &pool);
+	void test3_1(pmem::obj::pool_base &pool);
+	void test3_2(pmem::obj::pool_base &pool);
+	void test3_3(pmem::obj::pool_base &pool);
+
+		private:
 	void
 	_commit_batch(batch &b,
 		      std::function<void(BatchTimes, const ceph::timespan &)> f);
