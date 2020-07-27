@@ -315,6 +315,9 @@ struct Engine {
   // file to which to output formatted perf information
   const std::optional<std::string> perf_output_file;
 
+  mono_clock::time_point last = ceph::mono_clock::zero();
+  std::atomic_int busy_perf_dump = 0;
+
   explicit Engine(thread_data* td);
   ~Engine();
 
@@ -324,6 +327,26 @@ struct Engine {
     return &engine;
   }
 
+  void maybe_perf_dump() {
+    static auto timespan_10s = ceph::make_timespan(10);
+    if (++busy_perf_dump == 1) {
+      if ((ceph::mono_clock::now() - last) >= timespan_10s) {
+        ostringstream ostr;
+        Formatter* f = Formatter::create(
+          "json-pretty", "json-pretty", "json-pretty");
+        f->open_object_section("perf_output");
+        cct->get_perfcounters_collection()->dump_formatted(f, false);
+        f->close_section();
+
+        f->flush(ostr);
+        delete f;
+        dout(0) << ostr.str() << dendl;
+
+        last = ceph::mono_clock::now();
+      }
+    }
+    --busy_perf_dump;
+  }
   void ref() {
     std::lock_guard<std::mutex> l(lock);
     ++ref_count;
@@ -732,6 +755,9 @@ enum fio_q_status fio_ceph_os_queue(thread_data* td, io_u* u)
   auto& object = job->objects[u->file->engine_pos];
   auto& coll = object.coll;
   auto& os = job->engine->os;
+  auto& engine = job->engine;
+
+  engine->maybe_perf_dump();
 
   job->check_throttle();
 
