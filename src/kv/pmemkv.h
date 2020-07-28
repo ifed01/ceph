@@ -853,6 +853,11 @@ protected:
 	using iterator_imp = DB::kv_set_t::iterator;
 
 public:
+        struct root {
+                pmem::obj::p<bool> restart;
+                pmem::obj::p<uint64_t> dummy;
+        };
+
 	class iterator {
 		friend class DB;
 
@@ -1453,7 +1458,9 @@ public:
 	};
 
 	void
-	apply_batch(pmem::obj::pool_base &pool, batch &b,
+	apply_batch(pmem::obj::pool<root> &pool,
+                    //pmem::obj::pool_base &pool,
+                    batch &b,
 		    std::function<void(ApplyBatchTimes, const ceph::timespan &)>
 			    f = nullptr)
 	{
@@ -1543,7 +1550,7 @@ public:
 									preproc_val.it.get_validate_iterator_impl(
                                                                                 kv_set.end());
 								if (preexec_it != kv_set.end()) {
-									kv[0].persist();
+									//kv[0].persist();
 									if (key == string_to_view(preproc_val.it.get_current_key())) {
 										entry::release(
 											preexec_it->kv_pair);
@@ -1570,7 +1577,7 @@ public:
 								        LOG_TIME(
 									        SET_LOOKUP_TIME);
                                                                         LOG_TIME_START;
-									kv[0].persist();
+									//kv[0].persist();
 									if (!ip.second) {
 									        entry::release(
 										        ip.first->kv_pair);
@@ -1804,8 +1811,8 @@ public:
 		return iterator(*this, key, iterator::EXACT_MATCH);
 	}
 
-	void test(pmem::obj::pool_base &pool, bool remove = true);
-	void test2(pmem::obj::pool_base &pool);
+	void test(pmem::obj::pool<root> &pool, bool remove = true);
+	void test2(pmem::obj::pool<root> &pool);
 
 }; // class DB
 }; // namespace pmem_kv

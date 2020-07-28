@@ -66,7 +66,7 @@ pmem_kv::pmem_kv_entry2::allocate_atomic_volatile(pmem::obj::pool_base &pool,
 	ceph_assert(res[0].key_size == 0);
 	ceph_assert(res[0].val_size == 0);
 	ceph_assert(res[0].allocated == 0);
-        res[0].allocated = -num_pages * PMEM_PAGE_SIZE - HEADER_SIZE;
+        res[0].allocated = num_pages * PMEM_PAGE_SIZE - HEADER_SIZE;
         res[0].assign(k, v, false);
 
         return res;
@@ -141,7 +141,7 @@ pmem_kv::volatile_buffer::get_hash() const
 }
 
 void
-pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
+pmem_kv::DB::test(pmem::obj::pool<pmem_kv::DB::root> &pool, bool remove)
 {
 	bool was_empty = kv_set.empty();
 	pmem_kv::volatile_buffer fake_key = string("fakeeee keyyyy");
@@ -492,7 +492,7 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 }
 
 void
-pmem_kv::DB::test2(pmem::obj::pool_base &pool)
+pmem_kv::DB::test2(pmem::obj::pool<pmem_kv::DB::root> &pool)
 {
 	bool was_empty = kv_set.empty();
 

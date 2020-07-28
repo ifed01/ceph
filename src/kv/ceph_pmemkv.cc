@@ -114,7 +114,7 @@ int
 PMemKeyValueDB::open(std::ostream &out, const std::string &cfs)
 {
 	try {
-		pool = pmem::obj::pool<pmem_root>::open(path, pmem_pool_name);
+		pool = pmem::obj::pool<root>::open(path, pmem_pool_name);
 		load_from_pool(pool);
 		read_only = false;
 		opened = true;
@@ -130,7 +130,7 @@ PMemKeyValueDB::create_and_open(std::ostream &out, const std::string &cfs)
 {
 	try {
 		::unlink(path.c_str());
-		pool = pmem::obj::pool<pmem_root>::create(path,
+		pool = pmem::obj::pool<root>::create(path,
                         pmem_pool_name,
                         pmem_pool_size,
                         S_IRWXU);
@@ -148,7 +148,7 @@ int
 PMemKeyValueDB::open_read_only(std::ostream &out, const std::string &cfs)
 {
 	try {
-		pool = pmem::obj::pool<pmem_root>::open(path, pmem_pool_name);
+		pool = pmem::obj::pool<root>::open(path, pmem_pool_name);
 		load_from_pool(pool);
 		read_only = true;
                 opened = true;
