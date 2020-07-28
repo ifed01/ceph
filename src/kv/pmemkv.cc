@@ -7,17 +7,13 @@
 const pmem_kv::buffer_view
 pmem_kv::string_to_view(const std::string &s)
 {
-	pmem_kv::buffer_view sv;
-	sv.append(s.c_str(), s.size());
-	return sv;
+	return pmem_kv::buffer_view(s.c_str(), s.size());
 }
 
 const pmem_kv::buffer_view
 pmem_kv::string_to_view(const char *s)
 {
-	pmem_kv::buffer_view sv;
-	sv.append(s, strlen(s));
-	return sv;
+	return pmem_kv::buffer_view(s, strlen(s));
 }
 
 std::ostream &
@@ -70,8 +66,8 @@ pmem_kv::pmem_kv_entry2::allocate_atomic_volatile(pmem::obj::pool_base &pool,
 	ceph_assert(res[0].key_size == 0);
 	ceph_assert(res[0].val_size == 0);
 	ceph_assert(res[0].allocated == 0);
-	res[0].allocated = -num_pages * PMEM_PAGE_SIZE - HEADER_SIZE;
-	res[0].assign(k, v, false);
+        res[0].allocated = -num_pages * PMEM_PAGE_SIZE - HEADER_SIZE;
+        res[0].assign(k, v, false);
 
         return res;
 }

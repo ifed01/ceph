@@ -90,7 +90,7 @@ public:
 	public:
 		PMemKVTransactionImpl(pmem_kv::DB &_kv,
                                       pmem::obj::pool_base &_pool)
-                        : bat(_kv, _pool, true)
+                        : bat(_kv, _pool, true, false)
 		{
 		}
 		pmem_kv::DB::batch&
