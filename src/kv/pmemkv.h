@@ -972,6 +972,11 @@ private:
 	using iterator_imp = DB::kv_set_t::iterator;
 
 public:
+        struct root {
+                pmem::obj::p<bool> restart;
+                pmem::obj::p<uint64_t> dummy;
+        };
+
 	class iterator {
 		friend class DB;
 
@@ -1689,7 +1694,6 @@ public:
 	void
 	_commit_batch(batch &b,
 		      std::function<void(BatchTimes, const ceph::timespan &)> f);
-
 
 }; // class DB
 }; // namespace pmem_kv

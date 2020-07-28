@@ -17,11 +17,6 @@
 
 using namespace pmem_kv;
 
-struct root {
-	pmem::obj::p<bool> restart;
-	//pmem::obj::persistent_ptr<pmem_kv_dummy> d1;
-};
-
 void
 show_usage(char *argv[])
 {
@@ -40,18 +35,17 @@ main(int argc, char *argv[])
 
 	const char *path = argv[1];
 	
-        PMemKeyValueDB kv(nullptr, path);
-
-	pmem::obj::pool<root> pop;
+        //PMemKeyValueDB kv(nullptr, path);
+        pmem::obj::pool<pmem_kv::DB::root> pop;
 
 	try {
                 bool first = false;
                 if (access(path, F_OK) != 0) {
-			pop = pmem::obj::pool<root>::create(path, "pmemkv",
+			pop = pmem::obj::pool<pmem_kv::DB::root>::create(path, "pmemkv",
 						 GB * 10 , S_IRWXU);
                         first = true;
 		} else {
-			pop = pmem::obj::pool<root>::open(path, "pmemkv");
+			pop = pmem::obj::pool<pmem_kv::DB::root>::open(path, "pmemkv");
 		}
 
 		DB int_kv_map;

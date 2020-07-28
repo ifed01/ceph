@@ -46,11 +46,6 @@ class PMemKeyValueDB : public KeyValueDB, protected pmem_kv::DB
 	std::string path;
 	ceph::mutex commit_lock = ceph::make_mutex("ceph_pmemkv::commit_lock");
 
-        struct pmem_root {
-		pmem::obj::p<uint64_t> dummy;
-	};
-
-	pmem::obj::pool<pmem_root> pool;
         bool read_only = false;
         bool opened = false;
 
@@ -76,6 +71,8 @@ protected:
 		      const pmem_kv::buffer_view &orig_value) override;
 
 public:
+	pmem::obj::pool<root> pool;
+
 	static std::string make_key(const std::string &prefix,
 				    const std::string &key);
 	static std::string make_key(const std::string &prefix,
