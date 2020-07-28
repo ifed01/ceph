@@ -7,17 +7,13 @@
 const pmem_kv::buffer_view
 pmem_kv::string_to_view(const std::string &s)
 {
-	pmem_kv::buffer_view sv;
-	sv.append(s.c_str(), s.size());
-	return sv;
+	return pmem_kv::buffer_view(s.c_str(), s.size());
 }
 
 const pmem_kv::buffer_view
 pmem_kv::string_to_view(const char *s)
 {
-	pmem_kv::buffer_view sv;
-	sv.append(s, strlen(s));
-	return sv;
+	return pmem_kv::buffer_view(s, strlen(s));
 }
 
 std::ostream &
@@ -70,8 +66,8 @@ pmem_kv::pmem_kv_entry2::allocate_atomic_volatile(pmem::obj::pool_base &pool,
 	ceph_assert(res[0].key_size == 0);
 	ceph_assert(res[0].val_size == 0);
 	ceph_assert(res[0].allocated == 0);
-	res[0].allocated = -num_pages * PMEM_PAGE_SIZE - HEADER_SIZE;
-	res[0].assign(k, v, false);
+        res[0].allocated = -num_pages * PMEM_PAGE_SIZE - HEADER_SIZE;
+        res[0].assign(k, v, false);
 
         return res;
 }
@@ -151,6 +147,15 @@ pmem_kv::volatile_buffer::get_hash() const
 	return 0;
 }
 
+/*#define LOG_TIME_START ;
+#define LOG_TIME(idx) ;
+*/
+
+#define LOG_TIME_START_DEF \
+        auto t0 = mono_clock::now();
+
+#define LOG_TIME_START \
+        t0 = mono_clock::now();
 #define LOG_TIME(idx)                                                          \
 	if (f)                                                                 \
 		f(idx, mono_clock::now() - t0);
@@ -173,7 +178,8 @@ void
 pmem_kv::DB::_commit_batch(batch &b,
 	std::function<void(BatchTimes, const ceph::timespan &)> f)
 {
-	mono_clock::time_point t0 = mono_clock::now();
+	mono_clock::time_point t0;
+        LOG_TIME_START;
 
 	for (auto &p : b.ops) {
 		auto &preproc_val = std::get<2>(p);
@@ -260,11 +266,13 @@ pmem_kv::DB::submit_batch(
         batch &b,
         std::function<void(BatchTimes, const ceph::timespan &)> f)
 {
-	mono_clock::time_point t0 = mono_clock::now();
+	mono_clock::time_point t0;
+        LOG_TIME_START;
+
 	std::lock_guard l(general_mutex);
 	LOG_TIME(SUBMIT_BATCH_WAIT_LOCK_TIME);
 
-        t0 = mono_clock::now();
+        LOG_TIME_START;
 	for (auto &p : b.ops) {
 		auto &key = std::get<1>(p);
 		switch (std::get<0>(p)) {
@@ -304,7 +312,8 @@ pmem_kv::DB::submit_batch(
 				break;
 			}
 			case batch::SET_PREEXEC: {
-				auto t0 = mono_clock::now();
+                                LOG_TIME_START_DEF;
+
 				auto &preproc_val = std::get<2>(p);
 
 				volatile_map_entry *entry_ptr =
@@ -332,14 +341,16 @@ pmem_kv::DB::submit_batch(
 						LOG_TIME(SET_PREEXEC_EXISTED2_TIME);
 					}
 				} else {
-					auto t0 = mono_clock::now();
+                                        LOG_TIME_START_DEF;
+
 					kv_set_t::insert_commit_data
 						commit_data;
 					auto ip = kv_set.insert_check(
 						key, Compare(), commit_data);
 
 					LOG_TIME(SET_PREEXEC_LOOKUP_TIME);
-					t0 = mono_clock::now();
+                                        LOG_TIME_START;
+
 					if (!ip.second) {
 						std::swap(ip.first->kv_pair,
 							  entry_ptr->kv_pair);
@@ -362,11 +373,13 @@ pmem_kv::DB::submit_batch(
 				break;
 			}
 			case batch::REMOVE: {
-				auto t0 = mono_clock::now();
+                                LOG_TIME_START_DEF;
+
 				auto &preproc_val = std::get<2>(p);
 				auto it = kv_set.find(key, Compare());
 				LOG_TIME(REMOVE_LOOKUP_TIME);
-				t0 = mono_clock::now();
+                                LOG_TIME_START;
+
 				if (it != kv_set.end()) {
 					inc_op(key);
                                         auto& e = *it;
@@ -377,12 +390,14 @@ pmem_kv::DB::submit_batch(
 				break;
 			}
 			case batch::REMOVE_PREFIX: {
-				auto t0 = mono_clock::now();
+                                LOG_TIME_START_DEF;
+
 				auto it = kv_set.lower_bound(key, Compare());
 				auto &preproc_val = std::get<2>(p);
 
 				LOG_TIME(REMOVE_LOOKUP_TIME);
-				t0 = mono_clock::now();
+                                LOG_TIME_START;
+
 				while (it != kv_set.end() &&
 				       key.is_prefix_for(it->key_view())) {
 				        inc_op(it->key_view());
@@ -394,12 +409,14 @@ pmem_kv::DB::submit_batch(
 				break;
 			}
 			case batch::REMOVE_RANGE: {
-				auto t0 = mono_clock::now();
+                                LOG_TIME_START_DEF;
+
 				auto &preproc_val = std::get<2>(p);
 				auto &key_end = preproc_val.vbuf;
 				auto it = kv_set.lower_bound(key, Compare());
 				LOG_TIME(REMOVE_LOOKUP_TIME);
-				t0 = mono_clock::now();
+                                LOG_TIME_START;
+
 				while (it != kv_set.end() &&
 				       key_end > it->key_view()) {
 				        inc_op(it->key_view());
@@ -411,12 +428,14 @@ pmem_kv::DB::submit_batch(
 				break;
 			}
 			case batch::MERGE: {
-				auto t0 = mono_clock::now();
+                                LOG_TIME_START_DEF;
+
 				kv_set_t::insert_commit_data commit_data;
 				auto ip = kv_set.insert_check(key, Compare(),
 							      commit_data);
 				LOG_TIME(MERGE_LOOKUP_TIME);
-				t0 = mono_clock::now();
+                                LOG_TIME_START;
+
 				auto &preproc_val = std::get<2>(p);
 				ceph_assert(preproc_val.entry_ptr == nullptr);
 				bool present = !ip.second;

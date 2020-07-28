@@ -232,13 +232,14 @@ public:
 	{
 		return allocated >= 0;
 	}
-	void
+	inline void
 	persist()
 	{
 		if (allocated < 0) {
 			allocated = -allocated;
 		}
 	}
+
 	void assign(const volatile_buffer &k, const volatile_buffer &v,
 		    bool need_snapshot = true);
 	/*inline bool
@@ -252,19 +253,15 @@ public:
 		out << "k:" << key_view() << ", v:" << value_view();
 		out << '}';
 	}
-	const buffer_view
+	inline const buffer_view
 	key_view() const
 	{
-		buffer_view res;
-		res.append(data, key_size);
-		return res;
+		return buffer_view(data, key_size);
 	}
-	const buffer_view
+	inline const buffer_view
 	value_view() const
 	{
-		buffer_view res;
-		res.append(data + key_size, val_size);
-		return res;
+		return buffer_view(data + key_size, val_size);
 	}
 	std::string
 	key() const
@@ -276,7 +273,7 @@ public:
 	{
 		return value_view().to_str();
 	}
-	bool
+	inline bool
 	operator<(const pmem_kv_entry2 &other_kv) const
 	{
 		return key_view() < other_kv.key_view();
@@ -766,9 +763,6 @@ public:
 	}
 };
 
-const buffer_view string_to_view(const std::string &s);
-const buffer_view string_to_view(const char *s);
-
 template <class T>
 struct volatile_map_entry_base
 {
@@ -779,20 +773,19 @@ struct volatile_map_entry_base
                 : kv_pair(_kv_pair) , ss(_kv_pair[0].key_view().to_str())
 	{
 	}
-	bool
+        inline const buffer_view
+        key_view() const
+        {
+               return string_to_view(ss);
+                //return kv_pair[0].key_view();
+        }
+	inline bool
 	operator<(const volatile_map_entry_base<T> &other_kv) const
 	{
 		return ss < other_kv.ss;
 		// return kv_pair[0] < other_kv.kv_pair[0];
 	}
 
-        // may be implement func below via operator override or something?
-	const buffer_view
-	key_view() const
-	{
-		return string_to_view(ss);
-                //return kv_pair[0].key_view();
-	}
 	const buffer_view
 	value_view() const
 	{
