@@ -17,7 +17,7 @@ pmem_kv::string_to_view(const char *s)
 }
 
 std::ostream &
-pmem_kv::operator<<(std::ostream &out, const pmem_kv::pmem_kv_entry2 &e)
+pmem_kv::operator<<(std::ostream &out, const pmem_kv::pmem_kv_entry3 &e)
 {
 	e.dump(out);
 	return out;
@@ -33,85 +33,35 @@ pmem_kv::operator<<(std::ostream &out, const pmem_kv::buffer_view &e)
 #endif
 
 
-pmem_kv::pmem_kv_entry2_ptr
-pmem_kv::pmem_kv_entry2::allocate(const pmem_kv::volatile_buffer &k,
-				  const pmem_kv::volatile_buffer &v)
+pmem_kv::pmem_kv_entry3_ptr
+pmem_kv::pmem_kv_entry3::allocate(PMemAllocator &alloc,
+			    const volatile_buffer &k,
+			    const volatile_buffer &v,
+                            bool log_alloc)
 {
-	pmem_kv_entry2_ptr res;
 	auto sz = k.length() + v.length();
-	size_t num_pages =
-		p2roundup(sz + HEADER_SIZE, PMEM_PAGE_SIZE) / PMEM_PAGE_SIZE;
-	res = pmem::obj::make_persistent<pmem_kv_entry2[]>(num_pages);
-	ceph_assert(res[0].key_size == 0);
-	ceph_assert(res[0].val_size == 0);
-	ceph_assert(res[0].allocated == 0);
-	res[0].allocated = num_pages * PMEM_PAGE_SIZE - HEADER_SIZE;
-	res[0].assign(k, v, false);
+	size_t to_alloc = p2roundup(sz + HEADER_SIZE, PMEM_PAGE_SIZE);
+	auto p = alloc.allocate(to_alloc, log_alloc);
+	ceph_assert(p != nullptr);
+	pmem_kv_entry3_ptr res(reinterpret_cast<pmem_kv_entry3*>(p));
+	res[0].allocated = to_alloc;
+	res[0].assign(k, v);
 	return res;
 }
 
-pmem_kv::pmem_kv_entry2_ptr
-pmem_kv::pmem_kv_entry2::allocate_atomic_volatile(pmem::obj::pool_base &pool,
-					 const pmem_kv::volatile_buffer &k,
-					 const pmem_kv::volatile_buffer &v)
-{
-	pmem_kv::pmem_kv_entry2_ptr res;
-	auto sz = k.length() + v.length();
-	size_t num_pages =
-		p2roundup(sz + HEADER_SIZE, PMEM_PAGE_SIZE) / PMEM_PAGE_SIZE;
-
-	pmem::obj::make_persistent_atomic<pmem_kv_entry2[]>(
-		pool, res, num_pages,
-		pmem::obj::allocation_flag_atomic(POBJ_XALLOC_ZERO));
-	ceph_assert(res[0].key_size == 0);
-	ceph_assert(res[0].val_size == 0);
-	ceph_assert(res[0].allocated == 0);
-        res[0].allocated = -num_pages * PMEM_PAGE_SIZE - HEADER_SIZE;
-        res[0].assign(k, v, false);
-
-        return res;
-}
-
 void
-pmem_kv::pmem_kv_entry2::assign(const pmem_kv::volatile_buffer &k,
-				const pmem_kv::volatile_buffer &v,
-                                bool need_snapshot)
+pmem_kv::pmem_kv_entry3::assign(const pmem_kv::volatile_buffer &k,
+				const pmem_kv::volatile_buffer &v)
 {
 	key_size = k.length();
 	val_size = v.length();
-	size_t k_v_size = key_size + val_size;
-	ceph_assert(get_allocated() >= k_v_size);
-	if (need_snapshot) {
-		pmemobj_tx_add_range_direct(data, k_v_size);
-	}
+	int64_t k_v_size = key_size + val_size;
+	ceph_assert(get_available() >= k_v_size);
 	k.copy_out(0, key_size, data);
 	if (val_size) {
 		v.copy_out(0, val_size, data + key_size);
 	}
 }
-
-/*bool
-pmem_kv::pmem_kv_entry2::can_assign_value(
-	const pmem_kv::volatile_buffer &v) const
-{
-	return get_allocated() >= key_size + v.length();
-}
-
-bool
-pmem_kv::pmem_kv_entry2::try_assign_value(const pmem_kv::volatile_buffer &v)
-{
-	bool res = false;
-	ceph_assert(key_size != 0);
-	if (get_allocated() >= key_size + v.length()) {
-		val_size = v.length();
-		if (val_size) {
-			pmemobj_tx_add_range_direct(data + key_size, val_size);
-			v.copy_out(0, val_size, data + key_size);
-		}
-		res = true;
-	}
-	return res;
-}*/
 
 size_t
 pmem_kv::volatile_buffer::get_hash() const
@@ -140,7 +90,7 @@ pmem_kv::volatile_buffer::get_hash() const
 				boost::get<std::string>(*this));
 		}
 		case PMemPages:
-		case PMemKVEntry2:
+		case PMemKVEntry3:
 		default:
 			ceph_assert(false);
 	}
@@ -162,16 +112,15 @@ pmem_kv::volatile_buffer::get_hash() const
 
 void
 pmem_kv::DB::commit_batch_set(
-	pmem::obj::pool_base &pool,
+	pmem::obj::pool<pmem_kv::root> &pool,
         batch *bp,
         size_t batch_count,
 	std::function<void(BatchTimes, const ceph::timespan &)> f)
 {
-	pmem::obj::transaction::run(pool, [&] {
-		for (size_t i = 0; i < batch_count; ++i) {
-			_commit_batch(bp[i], f);
-		}
-	});
+	for (size_t i = 0; i < batch_count; ++i) {
+		_commit_batch(bp[i], f);
+	}
+	flush();
 }
 
 void
@@ -221,14 +170,15 @@ pmem_kv::DB::_commit_batch(batch &b,
 				break;
 			}
 			case batch::SET_PREEXEC:
+			case batch::MERGE:
                         {
-				if (preproc_val.entry_ptr) {
-					preproc_val.entry_ptr->persist();
-					preproc_val.entry_ptr = nullptr;
+				if (preproc_val.entry_ptr != nullptr) {
+                                        auto kv = preproc_val.entry_ptr->kv_pair;
+					alloc.log_alloc(kv->as_byteptr(),
+							kv->get_allocated());
 				}
-
-                                preproc_val.kv_to_release.clear_and_dispose(Release());
-				break;
+				preproc_val.entry_ptr = nullptr;
+                                // fall through
 			}
 			case batch::REMOVE:
 			case batch::REMOVE_PREFIX:
@@ -236,33 +186,19 @@ pmem_kv::DB::_commit_batch(batch &b,
                         {
 				ceph_assert(preproc_val.entry_ptr == nullptr);
 				preproc_val.kv_to_release
-					.clear_and_dispose(Release());
+					.clear_and_dispose(Release(get_allocator()));
 				break;
 			}
-			case batch::MERGE:
-                        {
-				if (preproc_val.entry_ptr) {
-					preproc_val.entry_ptr->persist();
-					/*if (!preproc_val.vbuf.is_null()) {
-					        bool r = preproc_val.entry_ptr
-						        ->try_assign_value(preproc_val.vbuf);
-					        ceph_assert(r);
-                                        }*/
-					preproc_val.entry_ptr = nullptr;
-				}
-
-				preproc_val.kv_to_release.clear_and_dispose(
-					Release());
-				break;
-			}
+                        default:
+				ceph_assert(false);
 		}
 	}
 	LOG_TIME(COMMIT_BATCH_TIME);
+	b.ops.clear();
 }
 
 void
 pmem_kv::DB::submit_batch(
-	pmem::obj::pool_base &pool,
         batch &b,
         std::function<void(BatchTimes, const ceph::timespan &)> f)
 {
@@ -330,9 +266,11 @@ pmem_kv::DB::submit_batch(
 							    .get_current_key())) {
 						std::swap(entry_ptr->kv_pair,
 							  preexec_it->kv_pair);
+						preproc_val.release(entry_ptr);
+						// preserve existing entry
+						// point to log_allocation on it
 						preproc_val.entry_ptr =
 							&(*preexec_it);
-						preproc_val.release(entry_ptr);
 
 						LOG_TIME(SET_PREEXEC_EXISTED1_TIME);
 					} else {
@@ -354,9 +292,11 @@ pmem_kv::DB::submit_batch(
 					if (!ip.second) {
 						std::swap(ip.first->kv_pair,
 							  entry_ptr->kv_pair);
-						preproc_val.entry_ptr =
-							&(*ip.first);
 						preproc_val.release(entry_ptr);
+						// preserve exiisting entry
+                                                // point to log_allocation on it
+                                                preproc_val.entry_ptr =
+                                                        &(*ip.first);
 						LOG_TIME(BatchTimes(
 							SET_PREEXEC_EXISTED0_TIME));
 					} else {
@@ -446,10 +386,10 @@ pmem_kv::DB::submit_batch(
 				volatile_buffer new_v = _handle_merge(
 					key, preproc_val.vbuf, orig_bv);
 
-				//preproc_val.vbuf = volatile_buffer();
 				if (!present) {
-					auto v = entry::allocate_atomic_volatile(
-						pool, key, new_v);
+					auto v = entry::allocate(
+						get_allocator(), key, new_v,
+                                                false);
 					preproc_val.entry_ptr =
 						new volatile_map_entry(v);
 					kv_set.insert_commit(
@@ -457,36 +397,17 @@ pmem_kv::DB::submit_batch(
 						commit_data);
 					inc_op(key);
 				} else {
-					ceph_assert(preproc_val.entry_ptr ==
-						    nullptr);
-					auto new_kv_pair =
-						entry::allocate_atomic_volatile(
-						pool, key, new_v);
-
+                                        //FIXME minor: excessive new volatile_map_entry here
 					preproc_val.release(
 						new volatile_map_entry(
 							ip.first->kv_pair));
-
-                                        preproc_val.entry_ptr = &(*ip.first);
-					ip.first->kv_pair = new_kv_pair;
-				}
-				/*} else if (!ip.first->can_assign_value(new_v)) {
-					ceph_assert(preproc_val.entry_ptr ==
-						    nullptr);
-					auto new_kv_pair =
-						entry::allocate_atomic_volatile(
-						pool, key, new_v);
-
-					preproc_val.release(
-						new volatile_map_entry(
-							ip.first->kv_pair));
-
-                                        preproc_val.entry_ptr = &(*ip.first);
-					ip.first->kv_pair = new_kv_pair;
-				} else {
-					std::swap(preproc_val.vbuf, new_v);
+					ip.first->kv_pair = entry::allocate(
+						get_allocator(), key, new_v,
+                                                false);
+					// preserve existing entry
+					// point to log_allocation on it
 					preproc_val.entry_ptr = &(*ip.first);
-				}*/
+				}
 				LOG_TIME(MERGE_EXEC_TIME);
 
 				break;
@@ -497,8 +418,13 @@ pmem_kv::DB::submit_batch(
 }
 
 void
-pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
+pmem_kv::DB::test(pmem::obj::pool<pmem_kv::root> &pool, bool remove,
+                  uint64_t base, uint64_t count)
 {
+	std::cout << "start1" << std::endl;
+	create(pool, 1024 * 1024);
+	std::cout << "created1" << std::endl;
+
 	bool was_empty = kv_set.empty();
 	pmem_kv::volatile_buffer fake_key = string("fakeeee keyyyy");
 
@@ -514,8 +440,7 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 		ceph_assert(begin().at_end());
 		ceph_assert((*begin()).get() == nullptr);
 		std::cout << 3 << std::endl;
-	}
-	if (was_empty) {
+
 		// basic ops on a single key
 		batch batch(*this, pool, true);
 		pmem_kv::buffer_view k = string_to_view("some_key");
@@ -530,10 +455,9 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 		ceph_assert(size() == 1);
 		std::cout << 4 << std::endl;
 
-		auto p = get(fake_key);
+		p = get(fake_key);
 		ceph_assert(p.get() == nullptr);
 
-		batch.dispose();
 		std::cout << 4.5 << std::endl;
 
 		// read
@@ -566,7 +490,7 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 		ceph_assert(*it == nullptr);
 
 		// multi-chunk bufferlist + move semantics
-		{
+		/*{
 			std::cout << 59 << std::endl;
 			batch.dispose();
 			std::string kk("some key2");
@@ -605,8 +529,8 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 			ceph_assert(p[0].value_view().c_str()[GB + 1] == 0);
 			ceph_assert(p[0].value_view().c_str()[GB + 2] == '3');
 
-			erase(pool, kk);
-		}
+			erase(pool, kk, true);
+		}*/
 	}
 	if (was_empty) {
 		// basic ops on 3 keys
@@ -666,9 +590,7 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 		it = begin();
 		ceph_assert(!it.at_end());
 		while (!it.at_end()) {
-			batch.dispose();
 			batch.remove((*it)[0].key_view());
-			// std::cout << " removing " <<  **it << std::endl;
 			apply_batch(pool, batch);
 			++it;
 		}
@@ -679,17 +601,16 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 		ceph_assert(it.at_end());
 		ceph_assert(*it == nullptr);
 	}
+	size_t entries_per_tr = 1000;
 	std::cout << 8 << std::endl;
 	{
 		// bulk fill in batches of 10000 entries
-		size_t base = 100000;
-		size_t max_entries = base + 500000;
-		size_t entries_per_tr = 1000;
+		size_t max_entries = base + count;
 		if (was_empty) {
 			auto t0 = mono_clock::now();
-			ceph::timespan times[BatchTimes::MAX_TIMES] = {
+			ceph::timespan times[BatchTimes::MAX_TIMES + 1] = {
 				ceph::make_timespan(0)};
-			size_t counts[BatchTimes::MAX_TIMES] = {0};
+			size_t counts[BatchTimes::MAX_TIMES + 1] = {0};
 			for (size_t i = base; i < max_entries;
 			     i += entries_per_tr) {
 				if ((i % 100000) == 0) {
@@ -699,11 +620,15 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 				batch batch(*this, pool, true);
 
 				for (size_t j = 0; j < entries_per_tr; j++) {
+					auto t0 = mono_clock::now();
 					batch.set(std::move(stringify(i + j)),
 						  std::move(std::string(
 							  j + 1,
 							  (i / entries_per_tr) &
 								  0xff)));
+					times[MAX_TIMES] += mono_clock::now() - t0;
+					++counts[MAX_TIMES];
+
 				}
 
 				apply_batch(pool, batch, [&](DB::BatchTimes idx, const ceph::timespan& t) {
@@ -713,11 +638,13 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 			}
 			std::cout << "bulk completed in "
 				  << double((mono_clock::now() - t0).count()) / 1E9 << std::endl;
-			for (size_t i = 0; i < BatchTimes::MAX_TIMES;
+			for (size_t i = 0; i <= BatchTimes::MAX_TIMES;
 			     ++i) {
 				std::cout << i << " :" << counts[i] << " in "
 					  << double(times[i].count()) / 1E9 << std::endl;
 			}
+			std::cout << "Available =  " << get_free()
+				  << std::endl;
 		}
 		auto p = get(fake_key);
 		ceph_assert(p.get() == nullptr);
@@ -726,26 +653,27 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 		p = get(end_key);
 		ceph_assert(p.get() == nullptr);
 
-		std::string first_key("100000");
+		std::string first_key(stringify(base));
 		p = get(first_key);
 		ceph_assert(p.get() != nullptr);
 		ceph_assert(p == first());
 		ceph_assert(p[0].key() == first_key);
-		ceph_assert(p[0].value() == std::string(1, 100));
+		ceph_assert(p[0].value() == std::string(1,
+                        (base / entries_per_tr) & 0xff));
 
-		std::string second_key("100001");
+		std::string second_key(stringify(base+1));
 		p = get(second_key);
 		ceph_assert(p.get() != nullptr);
 		ceph_assert(p[0].key() == second_key);
-		ceph_assert(p[0].value() == std::string(2, 100));
-
+		ceph_assert(p[0].value() == std::string(2,
+                        (base / entries_per_tr) & 0xff));
 		{
 			// enumerating for
-			size_t offset = 200000;
-			auto it = lower_bound(string_to_view("200000"));
+			size_t offset = base + 100000;
+			auto it = lower_bound(string_to_view(stringify(offset)));
 			ceph_assert(!it.at_end());
 			size_t sz = offset;
-			while ((*it)[0].key_view() < string_to_view("300000")) {
+			while ((*it)[0].key_view() < string_to_view(stringify(base+200000))) {
 				auto p = *it;
 				++it;
 				if (p[0].key_view().length() < 6)
@@ -762,11 +690,12 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 	}
 
 	if (remove) {
+		auto base_str = stringify(base);
 		{
 			// remove by prefix
 			batch bat(*this, pool, true);
-			std::cout << "removing by prefix '3'" << std::endl;
-			bat.remove_by_prefix(string("3"));
+			std::cout << "removing by prefix " << char(base_str.at(0)+ 2) << std::endl;
+			bat.remove_by_prefix(string(1, char(base_str.at(0) + 2))); // 3 for base == 100000
 			auto size0 = size();
 			apply_batch(pool, bat);
 			std::cout << "removed " << size0 - size()
@@ -776,11 +705,15 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 		{
 			// remove range
 			batch bat(*this, pool, true);
-			std::cout << "removing range 450000-499999999"
+                        string start, end;
+			start = string(1, char(base_str.at(0) + 3)) + string("50000");
+			end = string(1, char(base_str.at(0) + 3)) + string("99999999");
+			std::cout << "removing range "
+                                  << start << "-" << end
 				  << std::endl;
 			bat.remove_range(
-				string("450000"),
-				string("499999999")); // end is intentionally
+				start,
+				end); // end is intentionally
 						      // larger
 			auto size0 = size();
 			apply_batch(pool, bat);
@@ -790,11 +723,15 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 		{
 			// remove range
 			batch bat(*this, pool, true);
-			std::cout << "removing range 410000-442999"
+			string start, end;
+			start = string(1, char(base_str.at(0) + 3)) + string("10000");
+			end = string(1, char(base_str.at(0) + 3)) + string("43000");
+			std::cout << "removing range "
+                                  << start << "-" << end
 				  << std::endl;
 			bat.remove_range(
-				string("410000"),
-				string("443000"));
+				start,
+				end);
 			auto size0 = size();
 			apply_batch(pool, bat);
 			std::cout << "removed " << size0 - size() << std::endl;
@@ -804,7 +741,9 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
                 size_t size0 = size();
 		iterator it = end();
                 --it;
-		ceph_assert((*it)[0].key() == "599999");
+		string k = string(1, char(base_str.at(0) + 4)) +
+			string("99999");
+		ceph_assert((*it)[0].key() == k);
 		size_t i = 0;
                 // reverse enumeration
 		while (i < 50000) {
@@ -847,76 +786,121 @@ pmem_kv::DB::test(pmem::obj::pool_base &pool, bool remove)
 		ceph_assert(size() == 0);
 		ceph_assert(begin().at_end());
 	}
+	shutdown();
 }
 
 void
-pmem_kv::DB::test2(pmem::obj::pool_base &pool)
+pmem_kv::DB::test2(pmem::obj::pool<pmem_kv::root> &pool)
 {
-	bool was_empty = kv_set.empty();
+	std::cout << "start" << std::endl;
+	create(pool, 1024 * 1024);
+	std::cout << "created" << std::endl;
 
-	if (was_empty) {
-                size_t num_pages = for_each<pmem_kv_entry2>(pool);
-		ceph_assert(num_pages == 0);
+	pmem_kv::volatile_buffer k0 = string("fake non-present key");
+	pmem_kv::volatile_buffer k1 = string("key1");
+	pmem_kv::volatile_buffer v1 = string("value1");
+	pmem_kv::volatile_buffer k2 = string("keykeykey2");
+	pmem_kv::volatile_buffer v2 = string("valueuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu2");
 
-                byte sample[PMEM_PAGE_SIZE * 3] = {0};
-                pmem_kv_entry2_ptr res, res2;
-		pmem::obj::make_persistent_atomic<pmem_kv_entry2[]>(
-			pool, res, 3,
-                        pmem::obj::allocation_flag_atomic(POBJ_XALLOC_ZERO));
-		pmem::obj::make_persistent_atomic<pmem_kv_entry2[]>(
-			pool, res2, 10);
+        insert(pool, k1, v1, false);
+	insert(pool, k2, v2, true);
 
-                ceph_assert(memcmp(res.get(), sample, PMEM_PAGE_SIZE * 3) == 0);
+        ceph_assert(size() == 2);
 
-		num_pages = for_each<pmem_kv_entry2>(pool);
-		std::cout << " num pages = " << num_pages << std::endl;
-		ceph_assert(num_pages != 0);
+	auto p = get(k0);
+	ceph_assert(p == nullptr);
 
-		for_each<pmem_kv_entry2>(pool,
-			[&](pmemoid& o) {
-				pmem_kv_entry2_ptr p = 
-					(entry*) pmemobj_direct(o);
-				pmem::obj::delete_persistent_atomic<pmem_kv_entry2[]>(
-					p, 0);
-			});
-		num_pages = for_each<pmem_kv_entry2>(pool);
-		ceph_assert(num_pages == 0);
-	}
+	p = get(k1);
+	ceph_assert(p != nullptr);
+	ceph_assert(p == first());
+	ceph_assert(k1 == p->key_view());
+	ceph_assert(v1 == p->value_view());
+
+	p = get(k2);
+	ceph_assert(p != nullptr);
+	ceph_assert(k2 == p->key_view());
+	ceph_assert(v2 == p->value_view());
+
+        shutdown();
+	std::cout << "shut down" << std::endl;
+	load_from_pool(pool);
+	std::cout << "loaded " << size() << std::endl;
+
+        ceph_assert(size() == 2);
+	p = get(k0);
+	ceph_assert(p == nullptr);
+
+	p = get(k1);
+	ceph_assert(p != nullptr);
+	ceph_assert(p == first());
+	ceph_assert(k1 == p->key_view());
+	ceph_assert(v1 == p->value_view());
+
+	p = get(k2);
+	ceph_assert(p != nullptr);
+	ceph_assert(k2 == p->key_view());
+	ceph_assert(v2 == p->value_view());
+	shutdown();
 }
 
 
 struct test3_data{
 	pmem::obj::p<uint64_t> cnt = 0;
-	pmem_kv::pmem_kv_entry2_ptr entry = nullptr;
+	pmem_kv::pmem_kv_entry3_ptr entry = nullptr;
 };
 
 void
-pmem_kv::DB::test3(pmem::obj::pool_base &pool)
+pmem_kv::DB::test3(pmem::obj::pool<pmem_kv::root> &pool)
 {
-	pmem::obj::persistent_ptr <test3_data> p = nullptr;
-	pmem::obj::make_persistent_atomic<test3_data>(
-		pool, p,
-		pmem::obj::allocation_flag_atomic(POBJ_XALLOC_ZERO));
+	load_from_pool(pool);
+
 	mono_clock::time_point t0 = mono_clock::now();
-        size_t count = 5000000;
-	for (size_t i = 0; i < count; ++i) {
-		pmem::obj::transaction::run(pool, [&] {
-			p->cnt++;
-		});
+        size_t count = 3000000;
+	string s0 = string(128, 'a');
+	for (size_t i = 0; i < count;) {
+		for (size_t j = 0; j < 1000; ++j) {
+			pmem_kv::volatile_buffer k = stringify(i);
+			pmem_kv::volatile_buffer v = s0 + stringify(i);
+			insert(pool, k, v, j == 999);
+                        ++i;
+		}
 	}
 
         auto t = double((mono_clock::now() - t0).count()) / 1E9;
-        std::cout << "test3 completed in "
-		  << t
-                  << " iops " << count / t
+        std::cout << "test3 insert completed in "
+		  << t << " "
+                  << count / t << " iops, "
+		  << alloc.get_flushes() << " allocator flushes "
+		  << get_free() << " available "
 		  << std::endl;
-	pmem::obj::delete_persistent_atomic<test3_data>(p);
+	t0 = mono_clock::now();
+	shutdown();
+        load_from_pool(pool);
+	t = double((mono_clock::now() - t0).count()) / 1E9;
+	std::cout << "test3 load completed in " << t << " iops " << count / t
+		  << " " << get_free() << " available "
+		  << std::endl;
+	//ceph_assert(size() == count + count0);
+	t0 = mono_clock::now();
+	for (size_t i = 0; i < count; ++i) {
+		pmem_kv::volatile_buffer k = stringify(i);
+		pmem_kv::volatile_buffer v = s0 + stringify(i);
+
+		auto p = get(k);
+		ceph_assert(p != nullptr);
+		ceph_assert(k == p->key_view());
+		ceph_assert(v == p->value_view());
+	}
+	t = double((mono_clock::now() - t0).count()) / 1E9;
+	std::cout << "test3 verify completed in " << t << " iops " << count / t
+		  << std::endl;
+	shutdown();
 }
 
 void
-pmem_kv::DB::test3_1(pmem::obj::pool_base &pool)
+pmem_kv::DB::test3_1(pmem::obj::pool<pmem_kv::root> &pool)
 {
-	pmem::obj::persistent_ptr<test3_data> p = nullptr;
+	/*pmem::obj::persistent_ptr<test3_data> p = nullptr;
 	pmem::obj::make_persistent_atomic<test3_data>(
 		pool, p, pmem::obj::allocation_flag_atomic(POBJ_XALLOC_ZERO));
 	mono_clock::time_point t0 = mono_clock::now();
@@ -942,13 +926,13 @@ pmem_kv::DB::test3_1(pmem::obj::pool_base &pool)
 		  << t
                   << " iops " << count / t
 		  << std::endl;
-	pmem::obj::delete_persistent_atomic<test3_data>(p);
+	pmem::obj::delete_persistent_atomic<test3_data>(p);*/
 }
 
 void
-pmem_kv::DB::test3_2(pmem::obj::pool_base &pool)
+pmem_kv::DB::test3_2(pmem::obj::pool<pmem_kv::root> &pool)
 {
-	pmem::obj::persistent_ptr<test3_data> p = nullptr;
+	/*pmem::obj::persistent_ptr<test3_data> p = nullptr;
 	pmem::obj::make_persistent_atomic<test3_data>(
 		pool, p, pmem::obj::allocation_flag_atomic(POBJ_XALLOC_ZERO));
 	mono_clock::time_point t0 = mono_clock::now();
@@ -974,22 +958,19 @@ pmem_kv::DB::test3_2(pmem::obj::pool_base &pool)
 		  << t
                   << " iops " << count / t
 		  << std::endl;
-	pmem::obj::delete_persistent_atomic<test3_data>(p);
+	pmem::obj::delete_persistent_atomic<test3_data>(p);*/
 }
 
-std::atomic_int running = 0;
+/*std::atomic_int running = 0;
 #include "common/Thread.h"
 #include <initializer_list>
 struct TestThread : public Thread {
-      pmem::obj::pool_base &pool;
+      pmem::obj::pool<pmem_kv::root> &pool;
       size_t count;
-      TestThread(pmem::obj::pool_base &_pool, size_t _count)
+      TestThread(pmem::obj::pool<pmem_kv::root> &_pool, size_t _count)
 	  : pool(_pool), count(_count)
       {
       }
-      /*TestThread(std::initializer_list<TestThread> l) : pool(l.pool), count(l.count)
-      {
-      }*/
       void *
       entry() override
       {
@@ -1021,39 +1002,12 @@ struct TestThread : public Thread {
 	      pmem::obj::delete_persistent_atomic<test3_data>(p);
 	      return NULL;
       }
-      /*void *
-      entry() override
-      {
-	      pmem::obj::persistent_ptr<test3_data> p = nullptr;
-	      pmem::obj::make_persistent_atomic<test3_data>(
-		      pool, p,
-		      pmem::obj::allocation_flag_atomic(POBJ_XALLOC_ZERO));
-	      const size_t sample_size = PMEM_PAGE_SIZE * 1;
-	      unsigned char sample[sample_size] = {0xff};
-	      for (size_t i = 0; i < count; ++i) {
-		      if (p->entry != nullptr) {
-			      pmem::obj::delete_persistent_atomic<
-				      pmem_kv::pmem_kv_entry2[]>(p->entry, 1);
-		      }
-		      pmem::obj::make_persistent_atomic<
-			      pmem_kv::pmem_kv_entry2[]>(
-			      pool, p->entry, sample_size / PMEM_PAGE_SIZE);
-
-		      pmem::obj::transaction::run(pool, [&] {
-			      pmem_memcpy_nodrain((void *)p->entry.get(),
-						  sample, sample_size);
-		      });
-	      }
-
-	      pmem::obj::delete_persistent_atomic<test3_data>(p);
-	      return NULL;
-      }*/
-};
+};*/
 
 void
-pmem_kv::DB::test3_3(pmem::obj::pool_base &pool)
+pmem_kv::DB::test3_3(pmem::obj::pool<pmem_kv::root> &pool)
 {
-        const size_t thread_count = 8;
+/*        const size_t thread_count = 8;
         const size_t ops_count = 5000000;
 	TestThread ths[thread_count] = { 
                 TestThread(pool, ops_count),
@@ -1064,50 +1018,6 @@ pmem_kv::DB::test3_3(pmem::obj::pool_base &pool)
                 TestThread(pool, ops_count),
 		TestThread(pool, ops_count),
 		TestThread(pool, ops_count),
-		/*TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-                TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),*/
-                /*TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),*/
-
-                /*TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-                TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-                TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-                TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),*/
-
-                /*TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-                TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count),
-		TestThread(pool, ops_count)*/
         };
 
         mono_clock::time_point t0 = mono_clock::now();
@@ -1121,5 +1031,5 @@ pmem_kv::DB::test3_3(pmem::obj::pool_base &pool)
 	std::cout << "test3_3 completed in "
 		  << t
                   << " iops " << thread_count * ops_count / t
-		  << std::endl;
+		  << std::endl;*/
 }

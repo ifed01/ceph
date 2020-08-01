@@ -7,7 +7,6 @@
 #define dout_prefix *_dout << "pmemdb: "
 
 const char *pmem_pool_name = "pmemkv";
-const uint64_t pmem_pool_size = 64 * (uint64_t)1024 * 1024 * 1024;
 
 std::string
 PMemKeyValueDB::make_key(const std::string &prefix, const std::string &key)
@@ -136,7 +135,7 @@ int
 PMemKeyValueDB::open(std::ostream &out, const std::string &cfs)
 {
 	try {
-		pool = pmem::obj::pool<root>::open(path, pmem_pool_name);
+		pool = pmem::obj::pool<pmem_kv::root>::open(path, pmem_pool_name);
 		load_from_pool(pool);
 		read_only = false;
 		opened = true;
@@ -153,8 +152,13 @@ PMemKeyValueDB::create_and_open(std::ostream &out, const std::string &cfs)
 {
 	try {
 		::unlink(path.c_str());
-		pool = pmem::obj::pool<root>::create(
+		//pmem_pool_usable_size,
+                //FIXME: mmap main data
+		pool = pmem::obj::pool<pmem_kv::root>::create(
 			path, pmem_pool_name, pmem_pool_size, S_IRWXU);
+		pool.root()->init_allocations(pool,
+                                  pmem_alloc_log_size);
+		//allocator.init_add_free(0, pmem_pool_usable_size);
 		read_only = false;
 		opened = true;
 	} catch (...) {
@@ -169,7 +173,8 @@ int
 PMemKeyValueDB::open_read_only(std::ostream &out, const std::string &cfs)
 {
 	try {
-		pool = pmem::obj::pool<root>::open(path, pmem_pool_name);
+		pool = pmem::obj::pool<pmem_kv::root>::open(path,
+							    pmem_pool_name);
 		load_from_pool(pool);
 		read_only = true;
 		opened = true;
@@ -317,7 +322,7 @@ PMemKeyValueDB::_submit_transaction(pmem_kv::DB::batch &b)
 {
 	utime_t start = ceph_clock_now();
 
-	submit_batch(pool, b, [&](DB::BatchTimes idx, const ceph::timespan &t) {
+	submit_batch(b, [&](DB::BatchTimes idx, const ceph::timespan &t) {
 		_log_latency(idx, t);
 	});
 	logger->tinc(l_pmemkv_submit_latency, ceph_clock_now() - start);

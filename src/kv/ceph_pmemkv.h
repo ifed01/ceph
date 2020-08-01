@@ -2,6 +2,7 @@
 
 #include <libpmemobj++/pool.hpp>
 #include "kv/KeyValueDB.h"
+#include "pmemkv_types.h"
 #include "pmemkv.h"
 
 enum { l_pmemkv_first = 754300,
@@ -58,6 +59,10 @@ class PMemKeyValueDB : public KeyValueDB, protected pmem_kv::DB
         size_t cur_batch = 0;
         size_t ops_count = 0;
 
+        const uint64_t pmem_pool_size = 65 * (uint64_t)1024 * 1024 * 1024;
+        const uint64_t pmem_pool_usable_size = 64 * (uint64_t)1024 * 1024 * 1024;
+        const uint64_t pmem_alloc_log_size = 512 * (uint64_t)1024 * 1024;
+
 	void _log_latency(DB::BatchTimes idx,
 			  const ceph::timespan &t);
 
@@ -71,7 +76,7 @@ protected:
 		      const pmem_kv::buffer_view &orig_value) override;
 
 public:
-	pmem::obj::pool<root> pool;
+	pmem::obj::pool<pmem_kv::root> pool;
 
 	static std::string make_key(const std::string &prefix,
 				    const std::string &key);
@@ -87,7 +92,14 @@ public:
                              string *prefix,
 			     string *key);
        
-        PMemKeyValueDB(CephContext *c, const std::string &_path) : cct(c), path(_path)
+        PMemKeyValueDB(CephContext *c, const std::string &_path)
+                : cct(c),
+                  path(_path)/*,
+                  allocator(cct,
+                          pmem_pool_usable_size,
+                          pmem_kv::PMEM_PAGE_SIZE,
+                          0, //FIXME minor: cap max_mem
+                          "pmem hybrid allocator")*/
 	{
 	}
 	~PMemKeyValueDB()

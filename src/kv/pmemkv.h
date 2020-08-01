@@ -27,9 +27,8 @@
 #include <shared_mutex>
 #include <stdexcept>
 #include <string>
-
-const size_t PMEM_UNIT_SIZE = 0x100;
-const size_t PMEM_PAGE_SIZE = 0x100;
+#include "pmemkv_types.h"
+#include "pmemkv_alloc.h"
 
 namespace pmem_kv
 {
@@ -44,10 +43,6 @@ struct std::hash<pmem_kv::volatile_buffer>;
 
 namespace pmem_kv
 {
-using byte = std::string::value_type;
-using byte_array = byte[];
-using byte_array_ptr = pmem::obj::persistent_ptr<byte_array>;
-
 struct buffer_view;
 std::ostream &operator<<(std::ostream &out, const buffer_view &sv);
 const buffer_view string_to_view(const std::string &s);
@@ -89,7 +84,7 @@ public:
 	{
 		return size;
 	}
-	const byte *
+	const byte*
 	c_str() const
 	{
 		return data;
@@ -151,8 +146,6 @@ public:
 	{
 		ceph_assert(data != nullptr);
 		ceph_assert(o + len <= size);
-		// memcpy(dest, data + o, len);
-		// pmem_memcpy_nodrain(dest, data + o, len);
 		pmem_memcpy(dest, data + o, len,
 			    PMEMOBJ_F_MEM_NOFLUSH | PMEMOBJ_F_MEM_NODRAIN);
 	}
@@ -168,32 +161,15 @@ private:
 	size_t size = 0;
 };
 
-struct pmem_page {
-	byte b[PMEM_PAGE_SIZE];
-
-	inline byte *
-	data()
-	{
-		return b;
-	}
-	inline const byte *
-	data() const
-	{
-		return b;
-	}
-};
-
-using pmem_page_ptr = pmem::obj::persistent_ptr<pmem_page[]>;
-using pmem_pages_t = std::pair<uint32_t, pmem_page_ptr>;
-
-class pmem_kv_entry2;
-using pmem_kv_entry2_ptr = pmem::obj::persistent_ptr<pmem_kv_entry2[]>;
-
 class volatile_buffer;
-class pmem_kv_entry2 {
-	pmem::obj::p<int32_t> allocated = 0;
-	pmem::obj::p<uint32_t> key_size = 0;
-	pmem::obj::p<uint32_t> val_size = 0;
+
+class pmem_kv_entry3;
+using pmem_kv_entry3_ptr = dummy_ptr<pmem_kv_entry3>;
+
+class pmem_kv_entry3 {
+	int64_t allocated = 0;
+	uint32_t key_size = 0;
+	uint32_t val_size = 0;
 
 	enum { HEADER_SIZE =
 		       sizeof(key_size) + sizeof(val_size) + sizeof(allocated),
@@ -201,51 +177,37 @@ class pmem_kv_entry2 {
 	byte data[MAX_PAGE0_SIZE];
 
 public:
-	static pmem_kv_entry2_ptr allocate(const volatile_buffer &k,
-					   const volatile_buffer &v);
-
-	static pmem_kv_entry2_ptr
-	allocate_atomic_volatile(pmem::obj::pool_base &pool,
-				 const volatile_buffer &k,
-				 const volatile_buffer &v);
-
-	static void
-	release(pmem_kv_entry2_ptr p)
+	static pmem_kv_entry3_ptr
+	allocate(PMemAllocator &alloc,
+		 const volatile_buffer &k,
+		 const volatile_buffer &v,
+                 bool log_alloc = true);
+	inline static void release(PMemAllocator &alloc, pmem_kv_entry3_ptr ptr)
 	{
-		pmem::obj::delete_persistent<pmem_kv_entry2[]>(
-			p.get(),
-			p2roundup<uint32_t>(p[0].allocated, PMEM_PAGE_SIZE));
+		alloc.release(ptr->as_byteptr(), ptr->get_allocated(), true);
 	}
-	static void
-	release_atomic_volatile(pmem_kv_entry2_ptr p)
+	inline static void
+	release_volatile(PMemAllocator &alloc, pmem_kv_entry3_ptr ptr)
 	{
-		pmem::obj::delete_persistent_atomic<pmem_kv_entry2[]>(
-			p, p2roundup<uint32_t>(p[0].allocated, PMEM_PAGE_SIZE));
+		alloc.release(ptr->as_byteptr(), ptr->get_allocated(), false);
 	}
-	uint32_t
+
+	int64_t
 	get_allocated() const
 	{
-		return (uint32_t)std::abs(allocated);
+		return allocated;
 	}
-	bool
-	is_persistent() const
+	int64_t
+	get_available() const
 	{
-		return allocated >= 0;
+		return allocated > HEADER_SIZE ? allocated - HEADER_SIZE: 0;
 	}
-	inline void
-	persist()
-	{
-		if (allocated < 0) {
-			allocated = -allocated;
-		}
-	}
+	const byte *as_byteptr() const {
+		return reinterpret_cast<const byte*>(this);
+        }
 
-	void assign(const volatile_buffer &k, const volatile_buffer &v,
-		    bool need_snapshot = true);
-	/*inline bool
-	can_assign_value(const pmem_kv::volatile_buffer &v) const;
+        void assign(const volatile_buffer &k, const volatile_buffer &v);
 
-	bool try_assign_value(const volatile_buffer &v);*/
 	void
 	dump(std::ostream &out) const
 	{
@@ -274,19 +236,19 @@ public:
 		return value_view().to_str();
 	}
 	inline bool
-	operator<(const pmem_kv_entry2 &other_kv) const
+	operator<(const pmem_kv_entry3 &other_kv) const
 	{
 		return key_view() < other_kv.key_view();
 	}
 };
-std::ostream &operator<<(std::ostream &out, const pmem_kv_entry2 &e);
+std::ostream &operator<<(std::ostream &out, const pmem_kv_entry3 &e);
 
 using volatile_buffer_base =
 	boost::variant<void *, buffer_view, bufferlist, std::string,
-		       pmem_pages_t, pmem_kv_entry2_ptr>;
+		       pmem_pages_t, pmem_kv_entry3_ptr>;
 
 class volatile_buffer : public volatile_buffer_base {
-	enum { Null, BufferView, BufferList, String, PMemPages, PMemKVEntry2 };
+	enum { Null, BufferView, BufferList, String, PMemPages, PMemKVEntry3 };
 
 public:
 	volatile_buffer() : volatile_buffer_base((void *)nullptr)
@@ -310,7 +272,7 @@ public:
 	volatile_buffer(const pmem_pages_t &_pp) : volatile_buffer_base(_pp)
 	{
 	}
-	volatile_buffer(const pmem_kv_entry2_ptr &_pp)
+	volatile_buffer(const pmem_kv_entry3_ptr &_pp)
 	    : volatile_buffer_base(_pp)
 	{
 	}
@@ -349,9 +311,9 @@ public:
 			case PMemPages: {
 				return boost::get<pmem_pages_t>(*this).first;
 			}
-			case PMemKVEntry2: {
-				return boost::get<pmem_kv_entry2_ptr>(*this)[0]
-					.get_allocated();
+			case PMemKVEntry3: {
+				return boost::get<pmem_kv_entry3_ptr>(*this)[0]
+					.get_available();
 			}
 			default:
 				ceph_assert(false);
@@ -369,6 +331,36 @@ public:
 	{
 		reinterpret_cast<volatile_buffer_base *>(this)->swap(other);
 	}
+
+        /*byte&
+	at(size_t pos) const
+	{
+		switch (which()) {
+			case Null: {
+                                ceph_assert(false);
+				return 0;
+			}
+			case BufferView: {
+                                auto &self_bv = boost::get<buffer_view>(*this);
+                                return self_bv.at(pos);
+			}
+			case BufferList: {
+				auto &bl = boost::get<bufferlist>(*this);
+                                ceph_assert(false); //FIXME: to implement
+                                return 0;
+			}
+			case String: {
+				auto &self_str = boost::get<std::string>(*this);
+                                return self_str.at(pos);
+			}
+			case PMemPages: // FIXME minor: to implement?
+			case PMemKVEntry3:
+			default:
+				ceph_assert(false);
+		}
+		return false;
+	} */
+
 	bool
 	operator<(const buffer_view &other) const
 	{
@@ -404,7 +396,7 @@ public:
 					       *this)) < other;
 			}
 			case PMemPages: // FIXME minor: to implement
-			case PMemKVEntry2:
+			case PMemKVEntry3:
 			default:
 				ceph_assert(false);
 		}
@@ -445,7 +437,7 @@ public:
 					       *this)) <= other;
 			}
 			case PMemPages: // FIXME minor: to implement
-			case PMemKVEntry2:
+			case PMemKVEntry3:
 			default:
 				ceph_assert(false);
 		}
@@ -496,7 +488,7 @@ public:
 					       *this)) == other;
 			}
 			case PMemPages: // FIXME minor: to implement
-			case PMemKVEntry2:
+			case PMemKVEntry3:
 			default:
 				ceph_assert(false);
 		}
@@ -551,49 +543,10 @@ public:
 				break;
 			}
 			case PMemPages: // FIXME minor: to implement
-			case PMemKVEntry2:
+			case PMemKVEntry3:
 			default:
 				ceph_assert(false);
 		}
-	}
-	pmem_pages_t
-	take_pmem_pages_away()
-	{
-		switch (which()) {
-			case PMemPages: {
-				auto &p = boost::get<pmem_pages_t>(*this);
-				pmem_pages_t res(0, NULL);
-				p.swap(res);
-				return res;
-			}
-			case Null:
-			case BufferView:
-			case BufferList:
-			case String:
-			default:
-				break;
-		}
-		return pmem_pages_t(0, nullptr);
-	}
-	pmem_kv_entry2_ptr
-	take_pmem_kv_entry_away()
-	{
-		switch (which()) {
-			case PMemKVEntry2: {
-				auto &p = boost::get<pmem_kv_entry2_ptr>(*this);
-				pmem_kv_entry2_ptr res = p;
-				p = nullptr;
-				return res;
-			}
-			case Null:
-			case BufferView:
-			case BufferList:
-			case String:
-			case PMemPages:
-			default:
-				break;
-		}
-		return nullptr;
 	}
 	void
 	split(char separator, std::string *prefix, std::string *tail) const
@@ -676,7 +629,7 @@ public:
 				break;
 			}
 			case PMemPages: // FIXME minor: to implement?
-			case PMemKVEntry2:
+			case PMemKVEntry3:
 			default:
 				ceph_assert(false);
 		}
@@ -701,7 +654,7 @@ public:
 			}
 			case Null:
 			case PMemPages: // FIXME minor: to implement?
-			case PMemKVEntry2:
+			case PMemKVEntry3:
 			default:
 				ceph_assert(false);
 		}
@@ -755,7 +708,7 @@ public:
 					: false;
 			}
 			case PMemPages: // FIXME minor: to implement?
-			case PMemKVEntry2:
+			case PMemKVEntry3:
 			default:
 				ceph_assert(false);
 		}
@@ -792,12 +745,12 @@ struct volatile_map_entry_base
 		return kv_pair[0].value_view();
 	}
 
-	inline void
+	/*inline void
 	persist()
 	{
 		kv_pair[0].persist();
 	}
-	/*inline bool
+	inline bool
         can_assign_value(const pmem_kv::volatile_buffer &v) const
 	{
 		return kv_pair[0].can_assign_value(v);
@@ -848,8 +801,8 @@ public:
 private:
 	friend class iterator;
 
-	using entry = pmem_kv_entry2;
-	using entry_ptr = pmem_kv_entry2_ptr;
+	using entry = pmem_kv_entry3;
+	using entry_ptr = pmem_kv_entry3_ptr;
 
 	using volatile_map_entry = volatile_map_entry_base<entry_ptr>;
 
@@ -862,14 +815,11 @@ private:
 
 	typedef boost::intrusive::set<
 		volatile_map_entry,
-                kv_set_t_option
-		/*boost::intrusive::member_hook<
-			volatile_map_entry, boost::intrusive::any_member_hook<>,
-			&volatile_map_entry::_hook>*/>
-		kv_set_t;
+                kv_set_t_option> kv_set_t;
 	kv_set_t kv_set;
 	enum { BUCKET_COUNT = 16386 };
 	uint64_t op_seq[BUCKET_COUNT] = {0};
+        PMemAllocator alloc;
 
 	ceph::shared_mutex general_mutex = ceph::make_shared_mutex("DB");
 
@@ -883,32 +833,41 @@ private:
 
         // to be called within a transaction
 	struct Release {
+                Release(PMemAllocator &_alloc) : alloc(_alloc)
+		{
+		}
 		void
 		operator()(volatile_map_entry *e)
 		{
 			if (e) {
 				if (e->kv_pair) {
-					entry::release(e->kv_pair);
+					entry::release(alloc, e->kv_pair);
 				}
 				delete e;
 			}
 		}
+        private:
+		PMemAllocator &alloc;
 	};
-	struct ReleaseAtomic {
+
+	struct ReleaseVolatile {
+		ReleaseVolatile(PMemAllocator &_alloc) : alloc(_alloc)
+		{
+		}
 		void
 		operator()(volatile_map_entry *e)
 		{
 			if (e) {
 				if (e->kv_pair) {
-					// delete_persistent_atomic does
-					// exactly the same call to
-					// pmemobj_free. Hence using it
-					// directly
-					pmemobj_free(e->kv_pair.raw_ptr());
+					entry::release_volatile(alloc,
+                                                                e->kv_pair);
 				}
 				delete e;
 			}
 		}
+
+	private:
+		PMemAllocator &alloc;
 	};
 
 	struct Compare {
@@ -965,11 +924,6 @@ private:
 	using iterator_imp = DB::kv_set_t::iterator;
 
 public:
-        struct root {
-                pmem::obj::p<bool> restart;
-                pmem::obj::p<uint64_t> dummy;
-        };
-
 	class iterator {
 		friend class DB;
 
@@ -1236,8 +1190,8 @@ public:
 				        &volatile_map_entry::_hook>>
 				kv_list_t_option;
                         typedef boost::intrusive::list<
-			volatile_map_entry,
-                        kv_list_t_option>
+			        volatile_map_entry,
+                                kv_list_t_option>
 			kv_list_t;
                         kv_list_t kv_to_release;
 
@@ -1278,38 +1232,6 @@ public:
 		bool preexec_mode = false;
 		bool prelookup_mode = false;
 
-		static pmem_pages_t
-		allocate_pmem_pages_and_copyin(pmem::obj::pool_base &pool,
-					       const volatile_buffer &v)
-		{
-			pmem_pages_t res;
-			auto sz = v.length();
-			sz = p2roundup(sz, PMEM_PAGE_SIZE);
-			res.first = sz;
-			pmem::obj::make_persistent_atomic<pmem_page[]>(
-				pool, res.second, sz / PMEM_PAGE_SIZE,
-				pmem::obj::allocation_flag_atomic(
-					POBJ_XALLOC_ZERO));
-			// FIXME minor: check for alloc errors
-			ceph_assert(res.second);
-			v.copy_out(
-				0, v.length(),
-				res.second[0]
-					.data()); // FIXME: adjust by one byte
-						  // to mark uncommitted pages
-			return res;
-		}
-		static pmem_kv_entry2_ptr
-		allocate_pmem_kv_and_copyin(pmem::obj::pool_base &pool,
-					    const volatile_buffer &k,
-					    const volatile_buffer &v)
-		{
-			pmem_kv_entry2_ptr res;
-			res = pmem_kv_entry2::allocate_atomic_volatile(pool, k,
-								       v);
-			return res;
-		}
-
 	public:
 		batch()
 		{
@@ -1326,7 +1248,7 @@ public:
 		}
 		~batch()
 		{
-			dispose();
+			ceph_assert(ops.empty());
 		}
 		void
 		swap(batch &other)
@@ -1341,11 +1263,13 @@ public:
 		void
 		set(const volatile_buffer &key, const volatile_buffer &val)
 		{
+			/*std::cout << __func__ << "1 " << key.length() << " "
+				  << val.length() << std::endl;*/
 			if (preexec_mode) {
 				ceph_assert(kv);
 				ceph_assert(pool);
-				auto pp = allocate_pmem_kv_and_copyin(*pool, key,
-								      val);
+				auto pp = entry::allocate(kv->get_allocator(),
+                                                          key, val, false);
                                 iterator it;
 				if (prelookup_mode) {
 					it = kv->lower_bound(key);
@@ -1360,11 +1284,13 @@ public:
 		void
 		set(volatile_buffer &&key, volatile_buffer &&val)
 		{
+			/*std::cout << __func__ << "2 " << key.length() << " "
+				  << val.length() << std::endl;*/
 			if (preexec_mode) {
 				ceph_assert(kv);
 				ceph_assert(pool);
-				auto pp = allocate_pmem_kv_and_copyin(*pool, key,
-								      val);
+				auto pp = entry::allocate(kv->get_allocator(),
+							  key, val, false);
 				iterator it;
 				if (prelookup_mode) {
 					it = kv->lower_bound(key);
@@ -1379,11 +1305,13 @@ public:
 		void
 		set(volatile_buffer &&key, const volatile_buffer &val)
 		{
+			/*std::cout << __func__ << "3 " << key.length() << " "
+				  << val.length() << std::endl;*/
 			if (preexec_mode) {
 				ceph_assert(kv);
 				ceph_assert(pool);
-				auto pp = allocate_pmem_kv_and_copyin(*pool, key,
-								      val);
+				auto pp = entry::allocate(kv->get_allocator(),
+							  key, val, false);
 				iterator it;
 				if (prelookup_mode) {
 					it = kv->lower_bound(key);
@@ -1399,11 +1327,13 @@ public:
 		void
 		set(const volatile_buffer &key, volatile_buffer &&val)
 		{
+			/*std::cout << __func__ << "4 " << key.length() << " "
+				  << val.length() << std::endl;*/
 			if (preexec_mode) {
 				ceph_assert(kv);
 				ceph_assert(pool);
-				auto pp = allocate_pmem_kv_and_copyin(*pool, key,
-								      val);
+				auto pp = entry::allocate(kv->get_allocator(),
+							  key, val, false);
 				iterator it;
 				if (prelookup_mode) {
 					it = kv->lower_bound(key);
@@ -1466,20 +1396,20 @@ public:
 		{
 			ops.emplace_back(MERGE, key, val);
 		}
+                //
+                // disposes ops in unsubmitted(!) batch
+                //
 		void
-		dispose()
+		dispose_volatile()
 		{
 			for (auto &o : ops) {
 				auto& pp = std::get<2>(o);
-				ReleaseAtomic()(pp.entry_ptr);
-                                pp.kv_to_release.clear_and_dispose(ReleaseAtomic());
+				ReleaseVolatile(kv->get_allocator())(pp.entry_ptr);
+				pp.kv_to_release.clear_and_dispose(
+					ReleaseVolatile(kv->get_allocator()));
 			}
 			ops.clear();
 		}
-		void clear()
-                {
-                        ops.clear();
-                }
                 size_t
 		get_ops_count() const
 		{
@@ -1492,7 +1422,7 @@ public:
 	}
 	virtual ~DB()
 	{
-		kv_set.clear_and_dispose(DisposeVolatile());
+		shutdown();
 	}
 
 	uint64_t
@@ -1500,109 +1430,122 @@ public:
 	{
 		return op_seq[hash % BUCKET_COUNT];
 	}
-	template <class T>
-	size_t
-	for_each(pmem::obj::pool_base &pool,
-		 std::function<void(pmemoid &)> fn = nullptr)
-	{
-		ceph_assert(kv_set.empty());
-		std::lock_guard l(general_mutex);
-		size_t entries = 0;
-		auto type_num = pmem::detail::type_num<T>();
-		auto o = POBJ_FIRST_TYPE_NUM(pool.handle(), type_num);
-		while (!OID_IS_NULL(o)) {
-			++entries;
-			if ((entries % 100000) == 0) {
-				std::cout << "Loading units " << entries
-					  << std::endl;
-			}
+	PMemAllocator &
+	get_allocator() {
+                return alloc;
+        }
 
-			auto _o = o;
-			o = POBJ_NEXT_TYPE_NUM(o);
-			if (fn) {
-				fn(_o);
-			}
-		}
-		return entries;
+        void
+	create(pmem::obj::pool<pmem_kv::root> &pool,
+	       uint64_t log_size)
+	{
+		alloc.create(pool, log_size);
 	}
 
 	void
-	load_from_pool(pmem::obj::pool_base &pool)
+	load_from_pool(pmem::obj::pool<pmem_kv::root> &pool)
 	{
 		ceph_assert(kv_set.empty());
-		size_t entries = 0;
-		for_each<pmem_kv_entry2>(pool, [&](pmemoid &o) {
-			++entries;
-			if ((entries % 100000) == 0) {
-				std::cout << "Loading " << entries << std::endl;
-			}
-			entry_ptr kv_ptr((entry *)pmemobj_direct(
-				o)); // FIXME minor: in fact we just
-				     // need the ability to create
-				     // persistent_ptr from PMEMoid not
-				     // from void*
-			if (!kv_ptr[0].is_persistent()) {
-				entry::release_atomic_volatile(kv_ptr);
-			} else {
-				kv_set.insert(*new volatile_map_entry(kv_ptr));
-			}
-		});
+		alloc.load(pool,
+                        [&](byte* ptr) {
+			        ceph_assert(ptr != nullptr);
+			        entry_ptr kv_ptr(reinterpret_cast<entry*>(ptr));
+				kv_set.insert(*new volatile_map_entry(
+					kv_ptr));
+                        });
 	}
 
-	void
-	insert(pmem::obj::pool_base &pool, const volatile_buffer &k,
-	       const volatile_buffer &v)
+        void
+	shutdown()
+	{
+		alloc.shutdown();
+		kv_set.clear_and_dispose(DisposeVolatile());
+	}
+
+        void
+	insert(pmem::obj::pool<pmem_kv::root> &pool,
+               const volatile_buffer &k,
+	       const volatile_buffer &v,
+               bool persist = true)
 	{
 		ceph_assert(k.length() != 0);
 		ceph_assert(!v.is_null());
-		std::lock_guard l(general_mutex);
-		pmem::obj::transaction::run(pool, [&] {
-			auto it = kv_set.find(k, Compare());
-			if (it == kv_set.end()) {
-				auto kv_ptr = entry::allocate(k, v);
-				kv_set.insert(*new volatile_map_entry(kv_ptr));
+		entry_ptr kv_ptr = entry::allocate(alloc, k, v, true);
+		ceph_assert(kv_ptr);
+		{
+		        std::lock_guard l(general_mutex);
+
+			kv_set_t::insert_commit_data commit_data;
+			auto ip = kv_set.insert_check(k, Compare(),
+						      commit_data);
+			if (!ip.second) {
+				std::swap(ip.first->kv_pair, kv_ptr);
 			} else {
-				it->kv_pair[0].assign(k, v);
+				kv_set.insert_commit(
+					*new volatile_map_entry(kv_ptr),
+					commit_data);
+				kv_ptr = nullptr;
 			}
-		});
+                }
+		if (kv_ptr) {
+			entry::release(alloc, kv_ptr);
+		}
+		if (persist) {
+			flush();
+		}
 	}
 	void
-	erase(pmem::obj::pool_base &pool, const volatile_buffer &k)
+	erase(pmem::obj::pool<pmem_kv::root> &pool,
+              const volatile_buffer &k,
+	      bool persist = true)
 	{
 		ceph_assert(k.length() != 0);
-		std::lock_guard l(general_mutex);
-		pmem::obj::transaction::run(pool, [&] {
-			auto it = kv_set.find(k, Compare());
-			if (it != kv_set.end()) {
-				entry::release(it->kv_pair);
-				kv_set.erase_and_dispose(it,
-                                        DisposeVolatile());
-			}
-		});
+		entry_ptr kv_ptr = nullptr;
+		{
+	              std::lock_guard l(general_mutex);
+	              auto it = kv_set.find(k, Compare());
+	              if (it != kv_set.end()) {
+		              kv_ptr = it->kv_pair;
+		              kv_set.erase_and_dispose(it,
+                                      DisposeVolatile());
+	              }
+                }
+		if (kv_ptr != nullptr) {
+		        entry::release(alloc, kv_ptr);
+		        if (persist) {
+			        flush();
+                        }
+                }
+	}
+	void
+	flush()
+	{
+		alloc.commit();
 	}
 
+
 	void
-	submit_batch(pmem::obj::pool_base &pool, batch &b,
+	submit_batch(batch &b,
 		    std::function<void(BatchTimes, const ceph::timespan &)>
 			    f = nullptr);
 
         void
-	commit_batch_set(pmem::obj::pool_base &pool, batch *bp, size_t batch_count,
+	commit_batch_set(pmem::obj::pool<pmem_kv::root> &pool, batch *bp, size_t batch_count,
 		    std::function<void(BatchTimes, const ceph::timespan &)> f =
 			    nullptr);
 	void
-	commit_batch(pmem::obj::pool_base &pool, batch &b,
+	commit_batch(pmem::obj::pool<pmem_kv::root> &pool, batch &b,
 		    std::function<void(BatchTimes, const ceph::timespan &)> f =
 			    nullptr)
 	{
 		commit_batch_set(pool, &b, 1, f);
 	}
 	void
-	apply_batch(pmem::obj::pool_base &pool, batch &b,
+	apply_batch(pmem::obj::pool<pmem_kv::root> &pool, batch &b,
 		     std::function<void(BatchTimes, const ceph::timespan &)> f =
 			     nullptr)
 	{
-		submit_batch(pool, b, f);
+		submit_batch(b, f);
 		commit_batch(pool, b, f);
 	}
 
@@ -1630,7 +1573,7 @@ public:
 	get(const volatile_buffer &key)
 	{
 		std::shared_lock l(general_mutex);
-		entry_ptr ret;
+		entry_ptr ret = nullptr;
 		auto it = kv_set.find(key, Compare());
 		if (it != kv_set.end()) {
 			ret = it->kv_pair;
@@ -1644,6 +1587,12 @@ public:
 		std::shared_lock l(general_mutex);
 		return kv_set.size();
 	}
+
+        inline size_t
+	get_free() const
+	{
+	        return alloc.get_free();
+        }
 
 	iterator
 	begin()
@@ -1676,14 +1625,15 @@ public:
 		return iterator(*this, key, iterator::EXACT_MATCH);
 	}
 
-	void test(pmem::obj::pool_base &pool, bool remove = true);
-	void test2(pmem::obj::pool_base &pool);
-	void test3(pmem::obj::pool_base &pool);
-	void test3_1(pmem::obj::pool_base &pool);
-	void test3_2(pmem::obj::pool_base &pool);
-	void test3_3(pmem::obj::pool_base &pool);
+	void test(pmem::obj::pool<pmem_kv::root> &pool, bool remove,
+		  uint64_t base, uint64_t count);
+	void test2(pmem::obj::pool<pmem_kv::root> &pool);
+	void test3(pmem::obj::pool<pmem_kv::root> &pool);
+	void test3_1(pmem::obj::pool<pmem_kv::root> &pool);
+	void test3_2(pmem::obj::pool<pmem_kv::root> &pool);
+	void test3_3(pmem::obj::pool<pmem_kv::root> &pool);
 
-		private:
+private:
 	void
 	_commit_batch(batch &b,
 		      std::function<void(BatchTimes, const ceph::timespan &)> f);
