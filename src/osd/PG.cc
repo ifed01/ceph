@@ -3826,7 +3826,9 @@ void PG::C_DeleteMore::complete(int r) {
   delete this;
 }
 
-void PG::do_delete_work(ObjectStore::Transaction &t)
+void PG::do_delete_work(ObjectStore::Transaction &t,
+                        ceph::mono_clock::time_point start,
+                        ghobject_t* _next)
 {
   dout(10) << __func__ << dendl;
 
@@ -3861,7 +3863,15 @@ void PG::do_delete_work(ObjectStore::Transaction &t)
   vector<ghobject_t> olist;
   int max = std::min(osd->store->get_ideal_list_max(),
 		     (int)cct->_conf->osd_target_transaction_size);
+
+  //max = 128;
   ghobject_t next;
+  if (_next) {
+    next = *_next;
+  }
+
+  //dout(0) << __func__ << " " << max << dendl;
+
   osd->store->collection_list(
     ch,
     next,
@@ -3870,6 +3880,22 @@ void PG::do_delete_work(ObjectStore::Transaction &t)
     &olist,
     &next);
   dout(20) << __func__ << " " << olist << dendl;
+
+  if (_next) {
+    // make sure we've removed everything
+    // by one more listing from the beginning
+    if (*_next != ghobject_t() && olist.empty()) {
+      next = ghobject_t();
+      osd->store->collection_list(
+        ch,
+        next,
+        ghobject_t::get_max(),
+        max,
+        &olist,
+        &next);
+    }
+    *_next = next;
+  }
 
   OSDriver::OSTransaction _t(osdriver.get_transaction(&t));
   int64_t num = 0;
@@ -3893,7 +3919,9 @@ void PG::do_delete_work(ObjectStore::Transaction &t)
     Context *fin = new C_DeleteMore(this, get_osdmap_epoch());
     t.register_on_commit(fin);
   } else {
-    dout(20) << __func__ << " finished" << dendl;
+    dout(0) << __func__ << " finished in "
+      << ceph::mono_clock::now() - start
+      << dendl;
     if (cct->_conf->osd_inject_failure_on_pg_removal) {
       _exit(1);
     }

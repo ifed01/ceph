@@ -6283,7 +6283,11 @@ PeeringState::Deleting::Deleting(my_context ctx)
   : my_base(ctx),
     NamedState(context< PeeringMachine >().state_history, "Started/ToDelete/Deleting")
 {
+  start = ceph::mono_clock::now();
   context< PeeringMachine >().log_enter(state_name);
+
+  psdout(0) << __func__ << " Deleting::ctor" << dendl;
+
   DECLARE_LOCALS;
   ps->deleting = true;
   ObjectStore::Transaction &t = context<PeeringMachine>().get_cur_transaction();
@@ -6303,13 +6307,15 @@ PeeringState::Deleting::Deleting(my_context ctx)
 boost::statechart::result PeeringState::Deleting::react(
   const DeleteSome& evt)
 {
+  psdout(0) << __func__ << " Deleting::react" << dendl;
   DECLARE_LOCALS;
-  pl->do_delete_work(context<PeeringMachine>().get_cur_transaction());
+  pl->do_delete_work(context<PeeringMachine>().get_cur_transaction(), start, &next);
   return discard_event();
 }
 
 void PeeringState::Deleting::exit()
 {
+  psdout(0) << __func__ << " Deleting::exit" << dendl;
   context< PeeringMachine >().log_exit(state_name, enter_time);
   DECLARE_LOCALS;
   ps->deleting = false;
