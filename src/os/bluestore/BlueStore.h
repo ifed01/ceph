@@ -1220,7 +1220,7 @@ public:
     std::array<std::pair<ghobject_t, ceph::mono_clock::time_point>, 64> dumped_onodes;
 
     virtual void _pin(Onode* o) = 0;
-    virtual void _unpin(Onode* o) = 0;
+    virtual void _unpin(Onode* o, bool cache) = 0;
 
   public:
     OnodeCacheShard(CephContext* cct) : CacheShard(cct) {}
@@ -1236,10 +1236,16 @@ public:
       }
     }
 
-    void unpin(Onode* o, std::function<bool()> validator) {
+    enum {
+      UNPIN_SKIP,
+      UNPIN_PROCEED_CACHING,
+      UNPIN_PROCEED_TRIM,
+    };
+    void unpin(Onode* o, std::function<int()> validator) {
       std::lock_guard l(lock);
-      if (validator()) {
-        _unpin(o);
+      int r = validator();
+      if (r == UNPIN_PROCEED_CACHING || r == UNPIN_PROCEED_TRIM) {
+        _unpin(o, r == UNPIN_PROCEED_TRIM);
       }
     }
 
