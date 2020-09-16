@@ -1077,7 +1077,6 @@ public:
     boost::intrusive::list_member_hook<> lru_item;
 
     bluestore_onode_t onode;  ///< metadata stored as value in kv store
-    bool exists;              ///< true if object logically exists
     bool cached;              ///< Onode is logically in the cache
                               /// (it can be pinned and hence physically out
                               /// of it at the moment though)
@@ -1099,7 +1098,6 @@ public:
 	c(c),
 	oid(o),
 	key(k),
-	exists(false),
         cached(false),
         pinned(false),
 	extent_map(this) {
@@ -1110,7 +1108,6 @@ public:
       c(c),
       oid(o),
       key(k),
-      exists(false),
       cached(false),
       pinned(false),
       extent_map(this) {
@@ -1121,7 +1118,6 @@ public:
       c(c),
       oid(o),
       key(k),
-      exists(false),
       cached(false),
       pinned(false),
       extent_map(this) {
@@ -1665,6 +1661,9 @@ public:
       delete deferred_txn;
     }
 
+    void register_on_commit(Context* ctx) {
+      oncommits.push_back(ctx);
+    }
     void write_onode(OnodeRef &o) {
       onodes.insert(o);
     }
@@ -2399,7 +2398,7 @@ private:
   int _init_alloc(std::map<uint64_t, uint64_t> *zone_adjustments);
   void _post_init_alloc(const std::map<uint64_t, uint64_t>& zone_adjustments);
   void _close_alloc();
-  int _open_collections();
+  int _open_collections(bool allow_removal);
   void _fsck_collections(int64_t* errors);
   void _close_collections();
 
@@ -3278,11 +3277,13 @@ private:
 		   CollectionRef& c,
 		   OnodeRef o,
 		   uint64_t offset,
-		   std::set<SharedBlob*> *maybe_unshared_blobs=0);
+		   std::set<SharedBlob*> *maybe_unshared_blobs=0,
+                   bool reclaim_mode = false);
   int _truncate(TransContext *txc,
 		CollectionRef& c,
 		OnodeRef& o,
-		uint64_t offset);
+		uint64_t offset,
+                bool reclaim_mode = false);
   int _remove(TransContext *txc,
 	      CollectionRef& c,
 	      OnodeRef& o);
@@ -3378,6 +3379,8 @@ private:
   { std::make_tuple(0ul, 0ul, 0ul) };
 
   inline bool _use_rotational_settings();
+  inline bool _use_db_rotational_settings();
+
 
 public:
   struct sb_info_t {
@@ -3719,7 +3722,7 @@ public:
   };
 
 public:
-  void fix_per_pool_omap(KeyValueDB *db, int);
+  void fix_per_pool_omap(KeyValueDB *db, int val);
   bool remove_key(KeyValueDB *db, const std::string& prefix, const std::string& key);
   bool fix_shared_blob(KeyValueDB *db,
 		         uint64_t sbid,
