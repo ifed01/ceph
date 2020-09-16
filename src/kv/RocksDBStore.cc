@@ -2013,7 +2013,7 @@ void RocksDBStore::compact_thread_entry()
             << pretty_binary_string(start)
             << dendl;
         } else {
-          dout(20) << __func__ << " rm range "
+          dout(20) << __func__ << " rm first range "
             << prefix << " "
             << pretty_binary_string(start) << "-"
             << pretty_binary_string(end)
