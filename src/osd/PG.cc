@@ -7092,9 +7092,9 @@ struct C_DeleteMore : public Context {
   }
 };
 
-void PG::_delete_some(ObjectStore::Transaction *t)
+void PG::_delete_some(ObjectStore::Transaction *t, ghobject_t* _next)
 {
-  dout(10) << __func__ << dendl;
+  dout(10) << __func__ << " " << (_next ? *_next : ghobject_t()) << dendl;
 
   {
     float osd_delete_sleep = osd->osd->get_osd_delete_sleep();
@@ -7129,6 +7129,9 @@ void PG::_delete_some(ObjectStore::Transaction *t)
   int max = std::min(osd->store->get_ideal_list_max(),
 		     (int)cct->_conf->osd_target_transaction_size);
   ghobject_t next;
+  if (_next) {
+    next = *_next;
+  }
   osd->store->collection_list(
     ch,
     next,
@@ -7137,6 +7140,12 @@ void PG::_delete_some(ObjectStore::Transaction *t)
     &olist,
     &next);
   dout(20) << __func__ << " " << olist << dendl;
+  if (_next) {
+    *_next = next;
+    //FIXME: A bit paranoic but one should also check for new entries in the list
+    // when the whole list is traversed using 'next' pos.
+    //
+  }
 
   OSDriver::OSTransaction _t(osdriver.get_transaction(t));
   int64_t num = 0;
@@ -9251,7 +9260,7 @@ boost::statechart::result PG::RecoveryState::Deleting::react(
   const DeleteSome& evt)
 {
   PG *pg = context< RecoveryMachine >().pg;
-  pg->_delete_some(context<RecoveryMachine>().get_cur_transaction());
+  pg->_delete_some(context<RecoveryMachine>().get_cur_transaction(), &next);
   return discard_event();
 }
 
