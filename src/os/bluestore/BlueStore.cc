@@ -11522,6 +11522,18 @@ int BlueStore::_collection_list(
   return 0;
 }
 
+int BlueStore::collection_bulk_remove_lock(CollectionHandle& c_)
+{
+  Collection* c = static_cast<Collection*>(c_.get());
+  c->flush();
+  c->bulk_rm_locked = true;
+
+  dout(10) << __func__ << " " << c->cid
+    << " locked for removal"
+    << dendl;
+  return 0;
+}
+
 int BlueStore::omap_get(
   CollectionHandle &c_,    ///< [in] Collection containing oid
   const ghobject_t &oid,   ///< [in] Object containing omap
@@ -13819,6 +13831,23 @@ void BlueStore::_txc_add_transaction(TransContext *txc, Transaction *t)
       txc->osd_pool_id = pgid.pool();
     }
 
+    if (!!c && c->bulk_rm_locked &&
+        op->op != Transaction::OP_RMCOLL &&
+        op->op != Transaction::OP_ZERO &&
+        op->op != Transaction::OP_TRUNCATE &&
+        op->op != Transaction::OP_REMOVE &&
+        op->op != Transaction::OP_RECLAIM_SPACE &&
+        op->op != Transaction::OP_OMAP_SETKEYS && // needed for pglog updates
+        op->op != Transaction::OP_OMAP_RMKEYS &&
+        op->op != Transaction::OP_OMAP_RMKEYRANGE) {
+
+      derr << __func__ << " collection " << c->cid
+                       << " locked for removal, op not permitted " << op
+                       << dendl;
+      r = -EPERM;
+      goto endop;
+    }
+
     switch (op->op) {
     case Transaction::OP_RMCOLL:
       {
@@ -13904,210 +13933,211 @@ void BlueStore::_txc_add_transaction(TransContext *txc, Transaction *t)
       ceph_abort_msg("unexpected error");
     }
 
-    // these operations implicity create the object
-    bool create = false;
-    if (op->op == Transaction::OP_TOUCH ||
-	op->op == Transaction::OP_CREATE ||
-	op->op == Transaction::OP_WRITE ||
-	op->op == Transaction::OP_ZERO) {
-      create = true;
-    }
-
-    // object operations
-    std::unique_lock l(c->lock);
-    OnodeRef &o = ovec[op->oid];
-    if (!o) {
-      ghobject_t oid = i.get_oid(op->oid);
-      o = c->get_onode(oid, create, op->op == Transaction::OP_CREATE);
-    }
-    if (!create && (!o || !o->onode.exists())) {
-      dout(10) << __func__ << " op " << op->op << " got ENOENT on "
-	       << i.get_oid(op->oid) << dendl;
-      r = -ENOENT;
-      goto endop;
-    }
-
-    switch (op->op) {
-    case Transaction::OP_CREATE:
-    case Transaction::OP_TOUCH:
-      r = _touch(txc, c, o);
-      break;
-
-    case Transaction::OP_WRITE:
-      {
-        uint64_t off = op->off;
-        uint64_t len = op->len;
-	uint32_t fadvise_flags = i.get_fadvise_flags();
-        bufferlist bl;
-        i.decode_bl(bl);
-	r = _write(txc, c, o, off, len, bl, fadvise_flags);
+    {
+      // these operations implicity create the object
+      bool create = false;
+      if (op->op == Transaction::OP_TOUCH ||
+        op->op == Transaction::OP_CREATE ||
+        op->op == Transaction::OP_WRITE ||
+        op->op == Transaction::OP_ZERO) {
+        create = true;
       }
-      break;
-
-    case Transaction::OP_ZERO:
-      {
-        uint64_t off = op->off;
-        uint64_t len = op->len;
-	r = _zero(txc, c, o, off, len);
+      // object operations
+      std::unique_lock l(c->lock);
+      OnodeRef &o = ovec[op->oid];
+      if (!o) {
+        ghobject_t oid = i.get_oid(op->oid);
+        o = c->get_onode(oid, create, op->op == Transaction::OP_CREATE);
       }
-      break;
-
-    case Transaction::OP_TRIMCACHE:
-      {
-        // deprecated, no-op
+      if (!create && (!o || !o->onode.exists())) {
+        dout(10) << __func__ << " op " << op->op << " got ENOENT on "
+	         << i.get_oid(op->oid) << dendl;
+        r = -ENOENT;
+        goto endop;
       }
-      break;
 
-    case Transaction::OP_TRUNCATE:
-      {
-        uint64_t off = op->off;
-	r = _truncate(txc, c, o, off);
-      }
-      break;
+      switch (op->op) {
+      case Transaction::OP_CREATE:
+      case Transaction::OP_TOUCH:
+        r = _touch(txc, c, o);
+        break;
 
-    case Transaction::OP_REMOVE:
-      {
-	r = _remove(txc, c, o);
-      }
-      break;
+      case Transaction::OP_WRITE:
+        {
+          uint64_t off = op->off;
+          uint64_t len = op->len;
+	  uint32_t fadvise_flags = i.get_fadvise_flags();
+          bufferlist bl;
+          i.decode_bl(bl);
+	  r = _write(txc, c, o, off, len, bl, fadvise_flags);
+        }
+        break;
 
-    case Transaction::OP_SETATTR:
-      {
-        string name = i.decode_string();
-        bufferptr bp;
-        i.decode_bp(bp);
-	r = _setattr(txc, c, o, name, bp);
-      }
-      break;
+      case Transaction::OP_ZERO:
+        {
+          uint64_t off = op->off;
+          uint64_t len = op->len;
+	  r = _zero(txc, c, o, off, len);
+        }
+        break;
 
-    case Transaction::OP_SETATTRS:
-      {
-        map<string, bufferptr> aset;
-        i.decode_attrset(aset);
-	r = _setattrs(txc, c, o, aset);
-      }
-      break;
+      case Transaction::OP_TRIMCACHE:
+        {
+          // deprecated, no-op
+        }
+        break;
 
-    case Transaction::OP_RMATTR:
-      {
-	string name = i.decode_string();
-	r = _rmattr(txc, c, o, name);
-      }
-      break;
+      case Transaction::OP_TRUNCATE:
+        {
+          uint64_t off = op->off;
+	  r = _truncate(txc, c, o, off);
+        }
+        break;
 
-    case Transaction::OP_RMATTRS:
-      {
-	r = _rmattrs(txc, c, o);
-      }
-      break;
+      case Transaction::OP_REMOVE:
+        {
+	  r = _remove(txc, c, o);
+        }
+        break;
 
-    case Transaction::OP_CLONE:
-      {
-	OnodeRef& no = ovec[op->dest_oid];
-	if (!no) {
-          const ghobject_t& noid = i.get_oid(op->dest_oid);
-	  no = c->get_onode(noid, true);
-	}
-	r = _clone(txc, c, o, no);
-      }
-      break;
+      case Transaction::OP_SETATTR:
+        {
+          string name = i.decode_string();
+          bufferptr bp;
+          i.decode_bp(bp);
+	  r = _setattr(txc, c, o, name, bp);
+        }
+        break;
 
-    case Transaction::OP_CLONERANGE:
-      ceph_abort_msg("deprecated");
-      break;
+      case Transaction::OP_SETATTRS:
+        {
+          map<string, bufferptr> aset;
+          i.decode_attrset(aset);
+	  r = _setattrs(txc, c, o, aset);
+        }
+        break;
 
-    case Transaction::OP_CLONERANGE2:
-      {
-	OnodeRef& no = ovec[op->dest_oid];
-	if (!no) {
+      case Transaction::OP_RMATTR:
+        {
+	  string name = i.decode_string();
+	  r = _rmattr(txc, c, o, name);
+        }
+        break;
+
+      case Transaction::OP_RMATTRS:
+        {
+	  r = _rmattrs(txc, c, o);
+        }
+        break;
+
+      case Transaction::OP_CLONE:
+        {
+	  OnodeRef& no = ovec[op->dest_oid];
+	  if (!no) {
+            const ghobject_t& noid = i.get_oid(op->dest_oid);
+	    no = c->get_onode(noid, true);
+	  }
+	  r = _clone(txc, c, o, no);
+        }
+        break;
+
+      case Transaction::OP_CLONERANGE:
+        ceph_abort_msg("deprecated");
+        break;
+
+      case Transaction::OP_CLONERANGE2:
+        {
+	  OnodeRef& no = ovec[op->dest_oid];
+	  if (!no) {
+	    const ghobject_t& noid = i.get_oid(op->dest_oid);
+	    no = c->get_onode(noid, true);
+	  }
+          uint64_t srcoff = op->off;
+          uint64_t len = op->len;
+          uint64_t dstoff = op->dest_off;
+	  r = _clone_range(txc, c, o, no, srcoff, len, dstoff);
+        }
+        break;
+
+      case Transaction::OP_COLL_ADD:
+        ceph_abort_msg("not implemented");
+        break;
+
+      case Transaction::OP_COLL_REMOVE:
+        ceph_abort_msg("not implemented");
+        break;
+
+      case Transaction::OP_COLL_MOVE:
+        ceph_abort_msg("deprecated");
+        break;
+
+      case Transaction::OP_COLL_MOVE_RENAME:
+      case Transaction::OP_TRY_RENAME:
+        {
+	  ceph_assert(op->cid == op->dest_cid);
 	  const ghobject_t& noid = i.get_oid(op->dest_oid);
-	  no = c->get_onode(noid, true);
-	}
-        uint64_t srcoff = op->off;
-        uint64_t len = op->len;
-        uint64_t dstoff = op->dest_off;
-	r = _clone_range(txc, c, o, no, srcoff, len, dstoff);
-      }
-      break;
+	  OnodeRef& no = ovec[op->dest_oid];
+	  if (!no) {
+	    no = c->get_onode(noid, false);
+	  }
+	  r = _rename(txc, c, o, no, noid);
+        }
+        break;
 
-    case Transaction::OP_COLL_ADD:
-      ceph_abort_msg("not implemented");
-      break;
+      case Transaction::OP_OMAP_CLEAR:
+        {
+	  r = _omap_clear(txc, c, o);
+        }
+        break;
+      case Transaction::OP_OMAP_SETKEYS:
+        {
+	  bufferlist aset_bl;
+          i.decode_attrset_bl(&aset_bl);
+	  r = _omap_setkeys(txc, c, o, aset_bl);
+        }
+        break;
+      case Transaction::OP_OMAP_RMKEYS:
+        {
+	  bufferlist keys_bl;
+          i.decode_keyset_bl(&keys_bl);
+	  r = _omap_rmkeys(txc, c, o, keys_bl);
+        }
+        break;
+      case Transaction::OP_OMAP_RMKEYRANGE:
+        {
+          string first, last;
+          first = i.decode_string();
+          last = i.decode_string();
+	  r = _omap_rmkey_range(txc, c, o, first, last);
+        }
+        break;
+      case Transaction::OP_OMAP_SETHEADER:
+        {
+          bufferlist bl;
+          i.decode_bl(bl);
+	  r = _omap_setheader(txc, c, o, bl);
+        }
+        break;
 
-    case Transaction::OP_COLL_REMOVE:
-      ceph_abort_msg("not implemented");
-      break;
-
-    case Transaction::OP_COLL_MOVE:
-      ceph_abort_msg("deprecated");
-      break;
-
-    case Transaction::OP_COLL_MOVE_RENAME:
-    case Transaction::OP_TRY_RENAME:
-      {
-	ceph_assert(op->cid == op->dest_cid);
-	const ghobject_t& noid = i.get_oid(op->dest_oid);
-	OnodeRef& no = ovec[op->dest_oid];
-	if (!no) {
-	  no = c->get_onode(noid, false);
-	}
-	r = _rename(txc, c, o, no, noid);
+      case Transaction::OP_SETALLOCHINT:
+        {
+	  r = _set_alloc_hint(txc, c, o,
+			      op->expected_object_size,
+			      op->expected_write_size,
+			      op->hint);
+        }
+        break;
+      case Transaction::OP_RECLAIM_SPACE:
+        {
+	  r = _truncate(txc, c, o, 0, true);
+        }
+        break;
+      default:
+        derr << __func__ << " bad op " << op->op << dendl;
+        ceph_abort();
+        break;
       }
-      break;
-
-    case Transaction::OP_OMAP_CLEAR:
-      {
-	r = _omap_clear(txc, c, o);
-      }
-      break;
-    case Transaction::OP_OMAP_SETKEYS:
-      {
-	bufferlist aset_bl;
-        i.decode_attrset_bl(&aset_bl);
-	r = _omap_setkeys(txc, c, o, aset_bl);
-      }
-      break;
-    case Transaction::OP_OMAP_RMKEYS:
-      {
-	bufferlist keys_bl;
-        i.decode_keyset_bl(&keys_bl);
-	r = _omap_rmkeys(txc, c, o, keys_bl);
-      }
-      break;
-    case Transaction::OP_OMAP_RMKEYRANGE:
-      {
-        string first, last;
-        first = i.decode_string();
-        last = i.decode_string();
-	r = _omap_rmkey_range(txc, c, o, first, last);
-      }
-      break;
-    case Transaction::OP_OMAP_SETHEADER:
-      {
-        bufferlist bl;
-        i.decode_bl(bl);
-	r = _omap_setheader(txc, c, o, bl);
-      }
-      break;
-
-    case Transaction::OP_SETALLOCHINT:
-      {
-	r = _set_alloc_hint(txc, c, o,
-			    op->expected_object_size,
-			    op->expected_write_size,
-			    op->hint);
-      }
-      break;
-    case Transaction::OP_RECLAIM_SPACE:
-      {
-	r = _truncate(txc, c, o, 0, true);
-      }
-      break;
-
-    default:
-      derr << __func__ << " bad op " << op->op << dendl;
-      ceph_abort();
-    }
+    } // lock scope
 
   endop:
     if (r < 0) {
