@@ -2068,13 +2068,13 @@ void RocksDBStore::compact_thread_entry()
             combine_strings(merged_range->prefix, merged_range->start),
             combine_strings(merged_range->prefix, merged_range->end));
         }
-        compact_queue_clone.pop_front();
       } else if (start.empty() && end.empty()) {
         // will do full compact after the queue is processed
         global_compact = true;
-      } else {
+      } else if(!global_compact) {
         compact_range(start, end); // start & eend already have prefix embedded
       } // if( remove) .. else
+      compact_queue_clone.pop_front();
     } // while (!compact_queue_clone.empty())
     if (global_compact) {
       compact();
