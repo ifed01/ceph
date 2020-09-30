@@ -762,6 +762,8 @@ OPTION(osd_failsafe_full_ratio, OPT_FLOAT) // what % full makes an OSD "full" (f
 OPTION(osd_fast_shutdown, OPT_BOOL)
 OPTION(osd_fast_fail_on_connection_refused, OPT_BOOL) // immediately mark OSDs as down once they refuse to accept connections
 
+OPTION(osd_delete_via_reclaim, OPT_BOOL)
+
 OPTION(osd_pg_object_context_cache_count, OPT_INT)
 OPTION(osd_tracing, OPT_BOOL) // true if LTTng-UST tracepoints should be enabled
 OPTION(osd_function_tracing, OPT_BOOL) // true if function instrumentation should use LTTng
@@ -770,6 +772,7 @@ OPTION(osd_fast_info, OPT_BOOL) // use fast info attr, if we can
 
 // determines whether PGLog::check() compares written out log to stored log
 OPTION(osd_debug_pg_log_writeout, OPT_BOOL)
+
 OPTION(osd_loop_before_reset_tphandle, OPT_U32) // Max number of loop before we reset thread-pool's handle
 OPTION(osd_max_snap_prune_intervals_per_epoch, OPT_U64) // Max number of snap intervals to report to mgr in pg_stat_t
 

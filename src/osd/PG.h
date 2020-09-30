@@ -487,6 +487,9 @@ public:
 
   ghobject_t do_delete_work(ObjectStore::Transaction &t,
     ghobject_t _next) override;
+  bool can_do_reclaim() override;
+  ghobject_t do_reclaim_work(ObjectStore::Transaction& t,
+    ghobject_t _next) override;
 
   void clear_ready_to_merge() override;
   void set_not_ready_to_merge_target(pg_t pgid, pg_t src) override;
@@ -594,7 +597,12 @@ public:
   struct C_DeleteMore : public Context {
     PGRef pg;
     epoch_t epoch;
-    C_DeleteMore(PG *p, epoch_t e) : pg(p), epoch(e) {}
+    int perf_counter;
+    ceph::mono_clock::time_point start;
+    C_DeleteMore(PG *p, epoch_t e, int pc) : pg(p), epoch(e),
+                                     perf_counter(pc),
+                                     start(ceph::mono_clock::now()) {
+    }
     void finish(int r) override {
       ceph_abort();
     }
@@ -1141,6 +1149,8 @@ protected:
 
   // pg on-disk state
   void do_pending_flush();
+
+  void do_remove_collection(ObjectStore::Transaction& t);
 
 public:
   virtual void prepare_write(

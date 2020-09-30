@@ -6718,14 +6718,20 @@ PeeringState::Deleting::Deleting(my_context ctx)
   ps->dirty_info = true;
 
   pl->on_removal(t);
+  do_reclaim = pl->can_do_reclaim();
 }
 
 boost::statechart::result PeeringState::Deleting::react(
   const DeleteSome& evt)
 {
   DECLARE_LOCALS;
-  next = pl->do_delete_work(context<PeeringMachine>().get_cur_transaction(),
-    next);
+  if (do_reclaim) {
+    next = pl->do_reclaim_work(context<PeeringMachine>().get_cur_transaction(),
+      next);
+  } else {
+    next = pl->do_delete_work(context<PeeringMachine>().get_cur_transaction(),
+      next);
+  }
   return discard_event();
 }
 
@@ -6735,6 +6741,12 @@ void PeeringState::Deleting::exit()
   DECLARE_LOCALS;
   ps->deleting = false;
   pl->cancel_local_background_io_reservation();
+  if (do_reclaim) {
+    pl->get_perf_logger().tinc(l_osd_pg_reclaim_lat, mono_clock::now() - start);
+  } else {
+  }
+  pl->get_perf_logger().dec(l_osd_pg_removing);
+  pl->get_perf_logger().tinc(l_osd_pg_remove_lat, mono_clock::now() - start);
   psdout(20) << "Deleting::" << __func__ << this <<" finished in "
            << ceph::mono_clock::now() - start
            << dendl;

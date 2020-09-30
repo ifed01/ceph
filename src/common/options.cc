@@ -3649,6 +3649,15 @@ std::vector<Option> get_global_options() {
     .set_default(1)
     .set_description("Time in seconds to sleep before next removal transaction when data is on HDD and journal is on SSD"),
 
+    Option("osd_delete_via_reclaim", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
+    .set_default(true)
+    .set_description("When deleting PG do space reclamation first then invoke bulk metadata removal from KV. "
+      "Available for KV residing on SSD drive only"),
+
+    Option("osd_reclaim_sleep", Option::TYPE_FLOAT, Option::LEVEL_ADVANCED)
+    .set_default(0.1)
+    .set_description("Time in seconds to sleep before next reclaiming transaction"),
+
     Option("osd_failsafe_full_ratio", Option::TYPE_FLOAT, Option::LEVEL_ADVANCED)
     .set_default(.97)
     .set_description(""),

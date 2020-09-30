@@ -10624,6 +10624,18 @@ out:
 
 int BlueStore::collection_bulk_remove_lock(CollectionHandle& c_)
 {
+  if (!db->is_async_remove_supported()) {
+    dout(10) << __func__
+             << " bulk removal not supported in KV"
+             << dendl;
+    return -ENOTSUP;
+  }
+  if (_use_rotational_settings()) {
+    dout(10) << __func__
+             << " bulk removal not supported for KV on a spinner drive"
+             << dendl;
+    return -ENOTSUP;
+  }
   Collection* c = static_cast<Collection*>(c_.get());
   c->flush();
   c->bulk_rm_locked = true;

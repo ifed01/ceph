@@ -380,6 +380,13 @@ public:
     virtual ghobject_t do_delete_work(ObjectStore::Transaction &t,
       ghobject_t _next) = 0;
 
+    virtual bool can_do_reclaim() {
+      return false;
+    }
+    virtual ghobject_t do_reclaim_work(ObjectStore::Transaction& t,
+      ghobject_t _next) {
+      ceph_assert(false); // not implemented
+    }
     // ======================= PG Merge =========================
     virtual void clear_ready_to_merge() = 0;
     virtual void set_not_ready_to_merge_target(pg_t pgid, pg_t src) = 0;
@@ -1245,6 +1252,7 @@ public:
       > reactions;
     ghobject_t next;
     ceph::mono_clock::time_point start;
+    bool do_reclaim = false;
     explicit Deleting(my_context ctx);
     boost::statechart::result react(const DeleteSome &evt);
     void exit();
