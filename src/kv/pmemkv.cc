@@ -911,6 +911,43 @@ pmem_kv::DB::test3(pmem::obj::pool_base &pool)
                   << " iops " << count / t
 		  << std::endl;
 	pmem::obj::delete_persistent_atomic<test3_data>(p);
+
+	t0 = mono_clock::now();
+	count = 3000000;
+	string s0 = string(128, 'a');
+	for (size_t i = 0; i < count;) {
+		for (size_t j = 0; j < 1000; ++j) {
+			pmem_kv::volatile_buffer k = stringify(i);
+			pmem_kv::volatile_buffer v = s0 + stringify(i);
+			insert(pool, k, v);
+			++i;
+		}
+	}
+        t = double((mono_clock::now() - t0).count()) / 1E9;
+        std::cout << "test3 insert completed in "
+		  << t << " "
+		  << count / t << " iops, "
+		  << std::endl;
+        size_t i = 0;
+	auto it = begin();
+	while (!it.at_end()) {
+		size_t entries_per_tr = 1000;
+		batch batch(*this, pool, true);
+		if ((i % 100000) == 0) {
+			std::cout << "removing " << i << " \""
+				  << (*it)[0].key() << "\""
+				  << std::endl;
+		}
+		for (size_t j = 0; j < entries_per_tr; j++) {
+			batch.remove((*it)[0].key_view());
+			++it;
+			++i;
+		}
+		apply_batch(pool, batch);
+	}
+	std::cout << "removed " << i << std::endl;
+	ceph_assert(size() == 0);
+	ceph_assert(begin().at_end());
 }
 
 void
