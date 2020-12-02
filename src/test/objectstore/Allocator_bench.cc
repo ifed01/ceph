@@ -60,11 +60,13 @@ class AllocTracker
   uint64_t head = 0;
   uint64_t tail = 0;
   uint64_t size = 0;
+  uint64_t capacity = 0;
+  uint64_t alloc_unit = 0;
   boost::uniform_int<> u1;
 
 public:
-  AllocTracker(uint64_t capacity, uint64_t alloc_unit)
-    : u1(0, capacity)
+  AllocTracker(uint64_t _capacity, uint64_t au)
+    : capacity(_capacity), alloc_unit(au), u1(0, capacity)
   {
     ceph_assert(alloc_unit >= 0x100);
     ceph_assert(capacity <= (uint64_t(1) << 48)); // we use 5 octets (bytes 1 - 5) to store
@@ -88,6 +90,16 @@ public:
     ceph_assert((len & 0xff) == 0);
     ceph_assert((offs & 0xff) == 0);
     ceph_assert((offs & 0xffff000000000000) == 0);
+    if (!(len != 0) || !(offs + len <= capacity) || !((offs + len) % alloc_unit == 0)) {
+      std::cout << "is_valid_io assertion for " << std::hex
+                << offs << "~" << len
+                << " capacity/alloc_unit: "
+                << capacity << "/" << alloc_unit
+                << std::hex << std::endl;
+    }
+    ceph_assert(len != 0);
+    ceph_assert(offs + len <= capacity);
+    ceph_assert((offs + len) % alloc_unit == 0);
 
     if (head + 1 == tail)
       return false;
@@ -223,6 +235,117 @@ TEST_P(AllocTest, test_alloc_bench)
   dump_mempools();
 }
 
+TEST_P(AllocTest, test_alloc_bench2)
+{
+  uint64_t capacity = uint64_t(16) << 30; //16G
+  uint64_t alloc_unit = 4096;
+  PExtentVector allocated, tmp;
+  AllocTracker at(capacity, alloc_unit);
+
+  init_alloc(capacity, alloc_unit);
+  alloc->init_add_free(0, capacity);
+
+  gen_type rng(time(NULL));
+  boost::uniform_int<> u1(0, 10); // 4K-4M
+  boost::uniform_int<> u2(0, 4);
+  const size_t alloc_mul_max = 2;
+  size_t alloc_mul = alloc_mul_max; //Can be 0..2 this will extend the u1 range to 4K .. 16M
+  bool bulk_release = false;
+
+  utime_t start = ceph_clock_now();
+
+  uint64_t prev_gb = uint64_t(1) << 63;
+  auto prev_t = ceph_clock_now();
+  size_t long_allocs = 0;
+  for (uint64_t i = 0; i < capacity * 1024; )
+
+  {
+    auto mul0 = (u1(rng) + alloc_mul);
+    uint32_t want = alloc_unit << mul0;
+    auto mul = u2(rng);
+    want +=  (mul & 1) ? mul * alloc_unit : 0; // make want non-2^n aligned half of the time
+
+    tmp.clear();
+    auto alloc_unit_cur = alloc_unit;
+    if (mul && !(mul & 1) && ((want % alloc_unit) == 0)) {
+      alloc_unit_cur *= mul; // *= (2 or 4)
+      if (alloc_unit_cur > want) {
+        alloc_unit_cur = want;
+      }
+      if (alloc_unit_cur != alloc_unit) {
+        ++long_allocs;
+      }
+    }
+    auto r = alloc->allocate(want, alloc_unit_cur, 0, 0, &tmp);
+    if (r < want) {
+      bulk_release = true;
+    }
+    i += r;
+
+    for (auto a : tmp) {
+      at.push(a.offset, a.length);
+    }
+
+    uint64_t released = 0;
+    uint64_t want_release;
+
+    if (bulk_release) {
+      want_release = capacity / 4;
+    } else {
+      want_release = alloc_unit <<
+        (u1(rng) + alloc_mul_max - alloc_mul); // trying to either do more allocations or more releases
+    }
+
+    do {
+      uint64_t o = 0;
+      uint32_t l = 0;
+      interval_set<uint64_t> release_set;
+      if (!at.pop_random(rng, &o, &l, bulk_release ? alloc_unit : want_release - released)) {
+        break;
+      }
+      release_set.insert(o, l);
+      alloc->release(release_set);
+      released += l;
+    } while (released < want_release);
+
+    if (bulk_release) {
+      released = 0;
+      want_release = capacity / 8;
+      // another one loop in bulk release mode to cleanup some continous chunks as well
+      do {
+        uint64_t o = 0;
+        uint32_t l = 0;
+        interval_set<uint64_t> release_set;
+        if (!at.pop_random(rng, &o, &l, want_release - released)) {
+          break;
+        }
+        release_set.insert(o, l);
+        alloc->release(release_set);
+        released += l;
+      } while (released < want_release);
+    }
+    bulk_release = false;
+
+    if (prev_gb != (i >> 30)) {
+      std::cout << "alloc " << (i >> 20) << " mb of "
+        << (capacity >> 20)
+        << " iteration " << 1 + i / capacity
+        << " avail " << (alloc->get_free() >> 20) << " MB"
+        << " frag " << alloc->get_fragmentation()
+        << " alloc_bytes " << mempool::bluestore_alloc::allocated_bytes()
+        << " dur " << ceph_clock_now() - prev_t
+        << " long allocs " << long_allocs
+        << std::endl;
+      prev_gb = i >> 30;
+      prev_t = ceph_clock_now();
+      long_allocs = 0;
+    }
+  }
+  std::cout << "Executed in " << ceph_clock_now() - start << std::endl;
+  std::cout << "Avail " << alloc->get_free() / _1m << " MB" << std::endl;
+  dump_mempools();
+}
+
 void AllocTest::doOverwriteTest(uint64_t capacity, uint64_t prefill,
   uint64_t overwrite)
 {
@@ -298,7 +421,6 @@ void AllocTest::doOverwriteTest(uint64_t capacity, uint64_t prefill,
   }
   std::cout<<"Executed in "<< ceph_clock_now() - start << std::endl;
   std::cout<<"Avail "<< alloc->get_free() / _1m << " MB" << std::endl;
-
   dump_mempools();
 }
 
