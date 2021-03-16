@@ -16,6 +16,7 @@ if(WITH_BLUESTORE)
     bluestore/BlueRocksEnv.cc
     bluestore/BlueStore.cc
     bluestore/simple_bitmap.cc
+    bluestore/BlueStoreWAL.cc
     bluestore/bluestore_types.cc
     bluestore/fastbmap_allocator_impl.cc
     bluestore/FreelistManager.cc

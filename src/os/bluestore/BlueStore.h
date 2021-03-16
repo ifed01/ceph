@@ -61,6 +61,8 @@ class Allocator;
 class FreelistManager;
 class BlueStoreRepairer;
 class SimpleBitmap;
+class BluestoreWAL;
+
 //#define DEBUG_CACHE
 //#define DEBUG_DEFERRED
 
@@ -85,6 +87,7 @@ enum {
   l_bluestore_state_prepare_lat,
   l_bluestore_state_aio_wait_lat,
   l_bluestore_state_io_done_lat,
+  l_bluestore_state_going_wal_lat,
   l_bluestore_state_kv_queued_lat,
   l_bluestore_state_kv_committing_lat,
   l_bluestore_state_kv_done_lat,
@@ -102,6 +105,7 @@ enum {
   //****************************************
   l_bluestore_throttle_lat,
   l_bluestore_submit_lat,
+  l_bluestore_wal_commit_lat,
   l_bluestore_txc,
   //****************************************
 
@@ -1703,6 +1707,7 @@ private:
       STATE_PREPARE,
       STATE_AIO_WAIT,
       STATE_IO_DONE,
+      STATE_GOING_WAL,
       STATE_KV_QUEUED,     // queued for kv_sync_thread submission
       STATE_KV_SUBMITTED,  // submitted to kv; not yet synced
       STATE_KV_DONE,
@@ -1718,6 +1723,7 @@ private:
       case STATE_PREPARE: return "prepare";
       case STATE_AIO_WAIT: return "aio_wait";
       case STATE_IO_DONE: return "io_done";
+      case STATE_GOING_WAL: return "going_wal";
       case STATE_KV_QUEUED: return "kv_queued";
       case STATE_KV_SUBMITTED: return "kv_submitted";
       case STATE_KV_DONE: return "kv_done";
@@ -1736,6 +1742,7 @@ private:
       case l_bluestore_state_prepare_lat: return "prepare";
       case l_bluestore_state_aio_wait_lat: return "aio_wait";
       case l_bluestore_state_io_done_lat: return "io_done";
+      case l_bluestore_state_going_wal_lat: return "going_wal";
       case l_bluestore_state_kv_queued_lat: return "kv_queued";
       case l_bluestore_state_kv_committing_lat: return "kv_committing";
       case l_bluestore_state_kv_done_lat: return "kv_done";
@@ -1803,6 +1810,7 @@ private:
     uint64_t last_nid = 0;     ///< if non-zero, highest new nid we allocated
     uint64_t last_blobid = 0;  ///< if non-zero, highest new blobid we allocated
 
+    uint64_t wal_seq = 0;      ///< WAL seq to return back once txc is committed
 #if defined(WITH_LTTNG)
     bool tracing = false;
 #endif
@@ -2201,6 +2209,7 @@ private:
   // --------------------------------------------------------
   // members
 private:
+  BluestoreWAL* wal = nullptr;
   BlueFS *bluefs = nullptr;
   bluefs_layout_t bluefs_layout;
   utime_t next_dump_on_bluefs_alloc_failure;
@@ -2656,6 +2665,8 @@ private:
 	       bool to_repair_db=false,
 	       bool read_only = false);
   void _close_db();
+  int _open_wal();
+  void _close_wal();
   int _open_fm(KeyValueDB::Transaction t,
                bool read_only,
                bool db_avail,
@@ -2718,11 +2729,20 @@ private:
   void _txc_add_transaction(TransContext *txc, Transaction *t);
   void _txc_calc_cost(TransContext *txc);
   void _txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t);
+  void _txc_queue_kv(TransContext *txc);
   void _txc_state_proc(TransContext *txc);
   void _txc_aio_submit(TransContext *txc);
+
 public:
   void txc_aio_finish(void *p) {
     _txc_state_proc(static_cast<TransContext*>(p));
+  }
+  void txc_wal_finish(uint64_t seq, void* p) {
+    TransContext* txc = static_cast<TransContext*>(p);
+    txc->wal_seq = seq;
+    //OpSequencer *osr = txc->osr.get();
+    //std::lock_guard l(osr->qlock);
+    _txc_state_proc(txc);
   }
 private:
   void _txc_finish_io(TransContext *txc);
