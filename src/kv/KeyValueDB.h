@@ -132,6 +132,13 @@ public:
     ) { ceph_abort_msg("Not implemented"); }
 
     virtual ~TransactionImpl() {}
+    // This assumes transaction is valid during
+    // the life of the out buffer .
+    // Hence no need to copy transaction data
+    // if possible
+    virtual void get_as_bytes(bufferlist* out) {
+      ceph_assert(false); // unsupported
+    }
   };
   typedef std::shared_ptr< TransactionImpl > Transaction;
 

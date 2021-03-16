@@ -4909,6 +4909,14 @@ options:
   flags:
   - create
   with_legacy: true
+- name: bluestore_wal
+  type: bool
+  level: dev
+  desc: Enables additional write-ahead log at BlueStore level which should improve writing requests latency.
+  default: false
+  flags:
+  - create
+  with_legacy: true
 - name: bluestore_allocator
   type: str
   level: advanced

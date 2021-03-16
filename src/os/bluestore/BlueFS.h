@@ -401,6 +401,8 @@ private:
   }
   std::atomic<int64_t> cooldown_deadline = 0;
 
+  PExtentVector extra;
+
   class SocketHook;
   SocketHook* asok_hook = nullptr;
   // used to trigger zeros into read (debug / verify)
@@ -425,6 +427,10 @@ private:
 
   unsigned _get_slow_device_id() {
     return bdev[BDEV_SLOW] ? BDEV_SLOW : BDEV_DB;
+  }
+  unsigned _get_fastest_device_id() {
+    return bdev[BDEV_WAL] ? BDEV_WAL :
+           bdev[BDEV_DB] ? BDEV_DB : BDEV_SLOW;
   }
   const char* get_device_name(unsigned id);
   int _allocate(uint8_t bdev, uint64_t len,
@@ -632,9 +638,18 @@ public:
 
   int add_block_device(unsigned bdev, const std::string& path, bool trim,
                        uint64_t reserved,
+                       BlockDevice::aio_callback_t cb = nullptr,
+                       void *cbpriv = nullptr,
 		       bluefs_shared_alloc_context_t* _shared_alloc = nullptr);
   bool bdev_support_label(unsigned id);
   uint64_t get_block_device_size(unsigned bdev) const;
+
+  int64_t get_extra(
+    uint64_t want,
+    uint64_t min_want,
+    uint64_t unit,
+    BlockDevice **dev,
+    PExtentVector *res);
 
   // handler for discard event
   void handle_discard(unsigned dev, interval_set<uint64_t>& to_release);

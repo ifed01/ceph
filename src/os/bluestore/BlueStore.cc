@@ -28,6 +28,7 @@
 #include "include/cpp-btree/btree_set.h"
 
 #include "BlueStore.h"
+#include "BlueStoreWAL.h"
 #include "bluestore_common.h"
 #include "simple_bitmap.h"
 #include "os/kv.h"
@@ -5047,6 +5048,9 @@ void BlueStore::_init_logger()
   b.add_time_avg(l_bluestore_state_io_done_lat, "state_io_done_lat",
 		 "Average io_done state latency",
 		 "sidl", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_state_going_wal_lat, "state_going_wal_lat",
+		 "Average going wal state latency",
+		 "sgwl", PerfCountersBuilder::PRIO_USEFUL);
   b.add_time_avg(l_bluestore_state_kv_queued_lat, "state_kv_queued_lat",
 		"Average kv_queued state latency",
 		"skql", PerfCountersBuilder::PRIO_USEFUL);
@@ -5081,6 +5085,9 @@ void BlueStore::_init_logger()
   b.add_time_avg(l_bluestore_submit_lat, "txc_submit_lat",
 		 "Average submit latency",
 		 "s_l", PerfCountersBuilder::PRIO_CRITICAL);
+  b.add_time_avg(l_bluestore_wal_commit_lat, "wal_commit_lat",
+		 "Average commit latency through WAL",
+		 "wc_l", PerfCountersBuilder::PRIO_CRITICAL);
   b.add_time_avg(l_bluestore_commit_lat, "txc_commit_lat",
 		 "Average commit latency",
 		 "c_l", PerfCountersBuilder::PRIO_CRITICAL);
@@ -5600,6 +5607,43 @@ void BlueStore::_close_bdev()
   bdev->close();
   delete bdev;
   bdev = NULL;
+}
+
+int BlueStore::_open_wal()
+{
+  if (cct->_conf->bluestore_wal) {
+    ceph_assert(!wal);
+    PExtentVector extents;
+    BlockDevice *bdev = nullptr;
+    uint64_t want = 1ull << 31; //2GB, FIXME: make configurable, NB: 4+GB needs additional handling since allocator is hard capped 
+
+    uint64_t got = bluefs->get_extra(
+      want,
+      want / 2,  //FIXME: this is not mandatory, we can configure minimal amount as well
+      BluestoreWAL::DEF_PAGE_SIZE,
+      &bdev,
+      &extents);
+    ceph_assert(bdev);
+    ceph_assert(got > 0);
+    wal = new BluestoreWAL(
+      cct,
+      bdev,
+      fsid);
+    for (auto& p : extents) {
+      dout(0) << p << dendl;
+      ceph_assert(p.length &&
+        (p.length % BluestoreWAL::DEF_PAGE_SIZE) == 0);
+      wal->init_add_pages(p.offset, p.length);
+    }
+  }
+  return 0;
+}
+void BlueStore::_close_wal()
+{
+  if (wal) {
+    wal->shutdown();
+    delete wal;
+  }
 }
 
 int BlueStore::_open_fm(KeyValueDB::Transaction t,
@@ -6182,7 +6226,9 @@ int BlueStore::_minimal_open_bluefs(bool create)
     r = bluefs->add_block_device(
       BlueFS::BDEV_DB, bfn,
       create && cct->_conf->bdev_enable_discard,
-      SUPER_RESERVED);
+      SUPER_RESERVED,
+      aio_cb,
+      static_cast<void*>(this));
     if (r < 0) {
       derr << __func__ << " add block device(" << bfn << ") returned: "
             << cpp_strerror(r) << dendl;
@@ -6220,6 +6266,8 @@ int BlueStore::_minimal_open_bluefs(bool create)
   // never trim here
   r = bluefs->add_block_device(bluefs_layout.shared_bdev, bfn, false,
                                0, // no need to provide valid 'reserved' for shared dev
+                               aio_cb,
+                               static_cast<void*>(this),
                                &shared_alloc);
   if (r < 0) {
     derr << __func__ << " add block device(" << bfn << ") returned: "
@@ -6231,7 +6279,9 @@ int BlueStore::_minimal_open_bluefs(bool create)
   if (::stat(bfn.c_str(), &st) == 0) {
     r = bluefs->add_block_device(BlueFS::BDEV_WAL, bfn,
 				 create && cct->_conf->bdev_enable_discard,
-                                 BDEV_LABEL_BLOCK_SIZE);
+                                 BDEV_LABEL_BLOCK_SIZE,
+                                 aio_cb,
+                                 static_cast<void*>(this));
     if (r < 0) {
       derr << __func__ << " add block device(" << bfn << ") returned: "
 	    << cpp_strerror(r) << dendl;
@@ -6756,6 +6806,7 @@ void BlueStore::_close_db()
            << " per_pool=" << per_pool_stat_collection
            << " pool stats=" << osd_pools.size()
            << dendl;
+  _close_wal();
   bool do_destage = !db_was_opened_read_only && need_to_destage_allocation_file;
   if (do_destage && is_statfs_recoverable()) {
     auto t = db->get_transaction();
@@ -7742,6 +7793,13 @@ int BlueStore::_mount()
     }
   });
 
+  r = _open_wal();
+  auto close_wal = make_scope_guard([&] {
+    if (!mounted) {
+      _close_wal();
+    }
+  });
+
   r = _upgrade_super();
   if (r < 0) {
     return r;
@@ -7826,6 +7884,7 @@ int BlueStore::umount()
     }
     dout(20) << __func__ << " closing" << dendl;
   }
+  _close_wal();
   _close_db_and_around();
   // disable fsck on fast-shutdown
   if (cct->_conf->bluestore_fsck_on_umount && !m_fast_shutdown) {
@@ -12586,6 +12645,51 @@ void BlueStore::_txc_update_store_statfs(TransContext *txc)
   txc->statfs_delta.reset();
 }
 
+void BlueStore::_txc_queue_kv(TransContext *txc)
+{
+  txc->set_state(TransContext::STATE_KV_QUEUED);
+  if (cct->_conf->bluestore_sync_submit_transaction) {
+    if (txc->last_nid >= nid_max ||
+      txc->last_blobid >= blobid_max) {
+      dout(20) << __func__
+               << " last_{nid,blobid} exceeds max, submit via kv thread"
+               << dendl;
+    } else if (txc->osr->kv_committing_serially) {
+      dout(20) << __func__ << " prior txc submitted via kv thread, us too"
+               << dendl;
+      // note: this is starvation-prone.  once we have a txc in a busy
+      // sequencer that is committing serially it is possible to keep
+      // submitting new transactions fast enough that we get stuck doing
+      // so.  the alternative is to block here... fixme?
+    } else if (txc->osr->txc_with_unstable_io) {
+      dout(20) << __func__ << " prior txc(s) with unstable ios "
+               << txc->osr->txc_with_unstable_io.load() << dendl;
+    } else if (cct->_conf->bluestore_debug_randomize_serial_transaction &&
+               rand() % cct->_conf->bluestore_debug_randomize_serial_transaction
+                 == 0) {
+      dout(20) << __func__ << " DEBUG randomly forcing submit via kv thread"
+               << dendl;
+    } else {
+      _txc_apply_kv(txc, true);
+    }
+  }
+  {
+    std::lock_guard l(kv_lock);
+    kv_queue.push_back(txc);
+    if (!kv_sync_in_progress) {
+      kv_sync_in_progress = true;
+      kv_cond.notify_one();
+    }
+    if (txc->get_state() != TransContext::STATE_KV_SUBMITTED) {
+      kv_queue_unsubmitted.push_back(txc);
+      ++txc->osr->kv_committing_serially;
+    }
+    if (txc->had_ios)
+      kv_ios++;
+    kv_throttle_costs += txc->cost;
+  }
+}
+
 void BlueStore::_txc_state_proc(TransContext *txc)
 {
   while (true) {
@@ -12626,47 +12730,32 @@ void BlueStore::_txc_state_proc(TransContext *txc)
       if (txc->had_ios) {
 	++txc->osr->txc_with_unstable_io;
       }
+
       throttle.log_state_latency(*txc, logger, l_bluestore_state_io_done_lat);
-      txc->set_state(TransContext::STATE_KV_QUEUED);
-      if (cct->_conf->bluestore_sync_submit_transaction) {
-	if (txc->last_nid >= nid_max ||
-	    txc->last_blobid >= blobid_max) {
-	  dout(20) << __func__
-		   << " last_{nid,blobid} exceeds max, submit via kv thread"
-		   << dendl;
-	} else if (txc->osr->kv_committing_serially) {
-	  dout(20) << __func__ << " prior txc submitted via kv thread, us too"
-		   << dendl;
-	  // note: this is starvation-prone.  once we have a txc in a busy
-	  // sequencer that is committing serially it is possible to keep
-	  // submitting new transactions fast enough that we get stuck doing
-	  // so.  the alternative is to block here... fixme?
-	} else if (txc->osr->txc_with_unstable_io) {
-	  dout(20) << __func__ << " prior txc(s) with unstable ios "
-		   << txc->osr->txc_with_unstable_io.load() << dendl;
-	} else if (cct->_conf->bluestore_debug_randomize_serial_transaction &&
-		   rand() % cct->_conf->bluestore_debug_randomize_serial_transaction
-		   == 0) {
-	  dout(20) << __func__ << " DEBUG randomly forcing submit via kv thread"
-		   << dendl;
-	} else {
-	  _txc_apply_kv(txc, true);
-	}
+      if (wal) {
+	txc->set_state(TransContext::STATE_GOING_WAL);
+        bufferlist bl;
+        txc->t->get_as_bytes(&bl);
+        wal->submit(txc, bl);
+      } else {
+        _txc_queue_kv(txc);
       }
+      return;
+    case TransContext::STATE_GOING_WAL:
+      ceph_assert(wal); // paranoic
       {
-	std::lock_guard l(kv_lock);
-	kv_queue.push_back(txc);
-	if (!kv_sync_in_progress) {
-	  kv_sync_in_progress = true;
-	  kv_cond.notify_one();
-	}
-	if (txc->get_state() != TransContext::STATE_KV_SUBMITTED) {
-	  kv_queue_unsubmitted.push_back(txc);
-	  ++txc->osr->kv_committing_serially;
-	}
-	if (txc->had_ios)
-	  kv_ios++;
-	kv_throttle_costs += txc->cost;
+        OpSequencer *osr = txc->osr.get();
+        //FIXME: std::lock_guard l(osr->qlock);
+        if (txc->ch->commit_queue) {
+          txc->ch->commit_queue->queue(txc->oncommits);
+        } else {
+          finisher.queue(txc->oncommits);
+        }
+      }
+      throttle.log_state_latency(*txc, logger, l_bluestore_state_going_wal_lat);
+      logger->tinc(l_bluestore_wal_commit_lat, mono_clock::now() - txc->start);
+      {
+        _txc_queue_kv(txc);
       }
       return;
     case TransContext::STATE_KV_SUBMITTED:
@@ -12920,15 +13009,21 @@ void BlueStore::_txc_committed_kv(TransContext *txc)
 {
   dout(20) << __func__ << " txc " << txc << dendl;
   throttle.complete_kv(*txc);
+
   {
-    std::lock_guard l(txc->osr->qlock);
-    txc->set_state(TransContext::STATE_KV_DONE);
-    if (txc->ch->commit_queue) {
-      txc->ch->commit_queue->queue(txc->oncommits);
+    if (wal) {
+      wal->submitted(txc->wal_seq, *db);
     } else {
-      finisher.queue(txc->oncommits);
+      std::lock_guard l(txc->osr->qlock);
+      txc->set_state(TransContext::STATE_KV_DONE);
+      if (txc->ch->commit_queue) {
+        txc->ch->commit_queue->queue(txc->oncommits);
+      } else {
+        finisher.queue(txc->oncommits);
+      }
     }
   }
+
   throttle.log_state_latency(*txc, logger, l_bluestore_state_kv_committing_lat);
   log_latency_fn(
     __func__,

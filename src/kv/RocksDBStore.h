@@ -327,6 +327,7 @@ public:
       const std::string& prefix,
       const std::string& k,
       const ceph::bufferlist &bl) override;
+    void get_as_bytes(bufferlist* out) override;
   };
 
   KeyValueDB::Transaction get_transaction() override {

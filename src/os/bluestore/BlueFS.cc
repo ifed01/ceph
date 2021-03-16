@@ -422,13 +422,15 @@ void BlueFS::_update_logger_stats()
 
 int BlueFS::add_block_device(unsigned id, const string& path, bool trim,
                              uint64_t reserved,
+                             BlockDevice::aio_callback_t cb,
+                             void* cbpriv,
                              bluefs_shared_alloc_context_t* _shared_alloc)
 {
   dout(10) << __func__ << " bdev " << id << " path " << path << " "
            << reserved << dendl;
   ceph_assert(id < bdev.size());
   ceph_assert(bdev[id] == NULL);
-  BlockDevice *b = BlockDevice::create(cct, path, NULL, NULL,
+  BlockDevice *b = BlockDevice::create(cct, path, cb, cbpriv,
 				       discard_cb[id], static_cast<void*>(this));
   block_reserved[id] = reserved;
   if (_shared_alloc) {
@@ -470,6 +472,36 @@ uint64_t BlueFS::get_block_device_size(unsigned id) const
   if (id < bdev.size() && bdev[id])
     return bdev[id]->get_size();
   return 0;
+}
+
+int64_t BlueFS::get_extra(
+    uint64_t want,
+    uint64_t min_want,
+    uint64_t unit,
+    BlockDevice **dev,
+    PExtentVector *extents)
+{
+    int64_t got = 0;
+    if (extra.empty()) {
+      unsigned id = _get_fastest_device_id();
+      ceph_assert(bdev[id]);
+      *dev = bdev[id];
+
+      ceph_assert((want % unit) == 0);
+      ceph_assert((unit % alloc_size[id]) == 0);
+
+      got = alloc[id]->allocate(want, unit, 0, extents);
+      if (got > 0 && (uint64_t)got < min_want) {
+        alloc[id]->release(*extents);
+        got = 0;
+      }
+      if (got > 0) {
+        extra = *extents;
+      }
+    } else {
+      ceph_assert(false); //unsupported and unexpected for now
+    }
+    return got;
 }
 
 void BlueFS::handle_discard(unsigned id, interval_set<uint64_t>& to_release)
