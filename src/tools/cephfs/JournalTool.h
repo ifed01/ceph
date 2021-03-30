@@ -51,7 +51,7 @@ class JournalTool : public MDSUtility
 
     // Journal operations
     int journal_inspect();
-    int journal_export(std::string const &path, bool import, bool force);
+    int journal_export(std::string const &path, bool import, bool force, bool do_dump);
     int journal_reset(bool hard);
 
     // Header operations

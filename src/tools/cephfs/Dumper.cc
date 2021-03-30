@@ -133,8 +133,10 @@ int Dumper::dump(const char *dump_file)
     if (seeked == (off64_t)-1) {
       r = errno;
       derr << "Error " << r << " (" << cpp_strerror(r) << ") seeking to 0x" << std::hex << start << std::dec << dendl;
-      ::close(fd);
-      return r;
+      derr << "Will dump at current offset instead" << dendl;
+
+      //::close(fd);
+      //return r;
     }
 
 

@@ -47,6 +47,7 @@ void JournalTool::usage()
     << "      inspect\n"
     << "      import <path> [--force]\n"
     << "      export <path>\n"
+    << "      export_fast <path>\n"
     << "      reset [--force]\n"
     << "  cephfs-journal-tool [options] header <get|set <field> <value>\n"
     << "    <field>: [trimmed_pos|expire_pos|write_pos|pool_id]"
@@ -205,7 +206,7 @@ int JournalTool::main_journal(std::vector<const char*> &argv)
   std::string command = argv[0];
   if (command == "inspect") {
     return journal_inspect();
-  } else if (command == "export" || command == "import") {
+  } else if (command == "export" || command == "import" || command == "export_fast") {
     bool force = false;
     if (argv.size() >= 2) {
       std::string const path = argv[1];
@@ -217,7 +218,7 @@ int JournalTool::main_journal(std::vector<const char*> &argv)
           return -EINVAL;
         }
       }
-      return journal_export(path, command == "import", force);
+      return journal_export(path, command == "import", force, command == "export");
     } else {
       derr << "Missing path" << dendl;
       return -EINVAL;
@@ -574,12 +575,12 @@ int JournalTool::journal_inspect()
  * back to manually listing RADOS objects and extracting them, which
  * they can do with the ``rados`` CLI.
  */
-int JournalTool::journal_export(std::string const &path, bool import, bool force)
+int JournalTool::journal_export(std::string const &path, bool import, bool force, bool do_scan)
 {
   int r = 0;
   JournalScanner js(input, rank);
 
-  if (!import) {
+  if (!import && do_scan) {
     /*
      * If doing an export, first check that the header is valid and
      * no objects are missing before trying to dump
