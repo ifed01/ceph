@@ -691,6 +691,21 @@ public:
 
   // Call into me from MDS::ms_dispatch
   bool ms_dispatch(const cref_t<Message> &m);
+private:
+  int debug_dump_snap_diff(Formatter* f,
+    bool recursive,
+    const std::string& path,
+    inodeno_t ino,
+    CachedStackStringStream& css);
+
+  int dump_snap_diff(Formatter* f,
+    bool recursive,
+    const std::string& path,
+    inodeno_t ino,
+    const SnapInfo* siA,
+    const SnapInfo* siB,
+    CachedStackStringStream& css);
+
 };
 
 #endif // MDS_RANK_H_

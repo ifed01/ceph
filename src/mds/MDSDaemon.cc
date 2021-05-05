@@ -340,6 +340,20 @@ void MDSDaemon::set_up_admin_socket()
                                      asok_hook,
                                      "dump snapshots");
   ceph_assert(r == 0);
+  r = admin_socket->register_command("diff snaps name=snapA,type=CephString,req=true "
+				       "name=snapB,type=CephString,req=true "
+				       "name=recursive,type=CephInt,req=true "
+                                       "name=from,type=CephInt,req=false "
+				       "name=from_path,type=CephString,req=false ",
+				     asok_hook,
+				     "makes a diff for two snapshots");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command("debug diff snaps name=recursive,type=CephInt,req=true "
+    "name=from,type=CephInt,req=true "
+    "name=from_path,type=CephString,req=false ",
+    asok_hook,
+    "debug dump for diff snaps");
+  ceph_assert(r == 0);
   r = admin_socket->register_command("session ls "
 				     "name=cap_dump,type=CephBool,req=false "
 		                     "name=filters,type=CephString,n=N,req=false ",
@@ -430,7 +444,8 @@ void MDSDaemon::set_up_admin_socket()
                                      "List the opening files and their caps");
   ceph_assert(r == 0);
   r = admin_socket->register_command("dump inode "
-                                     "name=number,type=CephInt,req=true",
+                                     "name=number,type=CephInt,req=true "
+                                     "name=snapno,type=CephInt,req=false",
 				     asok_hook,
 				     "dump inode by inode number");
   ceph_assert(r == 0);

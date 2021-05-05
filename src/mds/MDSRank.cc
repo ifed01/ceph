@@ -2514,6 +2514,377 @@ void MDSRank::handle_mds_failure(mds_rank_t who)
   scrubstack->handle_mds_failure(who);
 }
 
+class C_MDS_SnapDiffProceed : public MDSInternalContext {
+  MDCache* cache;
+public:
+  C_MDS_SnapDiffProceed(MDCache* c) :
+    MDSInternalContext(c->mds), cache(c) {}
+  void finish(int r) override
+  {
+  }
+};
+
+class C_MDS_SnapDiffProceedWithDirFetch : public MDSInternalContext {
+  MDCache* cache;
+  inodeno_t ino;
+public:
+  C_MDS_SnapDiffProceedWithDirFetch(MDCache* c, inodeno_t _ino) :
+    MDSInternalContext(c->mds), cache(c), ino(_ino) {}
+  void finish(int r) override
+  {
+    auto* inode = cache->get_inode(ino);
+    ceph_assert(inode);
+
+    bool is_dir = inode->is_dir();
+    if (is_dir) {
+      // to be implemented via (or similar to) Server::try_open_auth_dirfrag or even Server::handle_client_readdir
+      // FIXME: check whether frag_t is properly used
+      CDir* dir = inode->get_or_open_dirfrag(cache, frag_t());
+      ceph_assert(dir);
+      if (!dir->is_complete()) {
+        dir->fetch(new C_MDS_SnapDiffProceed(cache), true);
+      }
+    }
+  }
+};
+
+string build_full_path(const string& path, const string& name) {
+  string full_path(path);
+  if (!path.empty() && path.back() != '/') {
+    full_path += '/';
+  }
+  full_path += name;
+  return full_path;
+}
+
+int MDSRankDispatcher::debug_dump_snap_diff(Formatter* f,
+  bool recursive,
+  const std::string& path,
+  inodeno_t ino,
+  CachedStackStringStream& css)
+{
+  //FIXME: is is possible we need snap no different from CEPH_NOSNAP
+  // e.g. if snapshot root has been removed? Is the latter possible?
+  CInode* inode0 = mdcache->get_inode(vinodeno_t(ino, CEPH_NOSNAP));
+  if (!inode0) {
+    *css << "inode isn't in the cache - reloading, try again, ino:" << ino << std::endl;
+    // need de instance!!!
+    //mdcache->open_remote_dentry(de, false /*FIXME: is this right?*/,
+    //  new C_MDS_SnapDiffProceedWithDirFetch(mdcache, ino));
+    return -EAGAIN;
+    //mdcache->open_remote_dentry(de, true /*FIXME*/, new C_MDS_SnapDiffProceed(mdcache));
+  } else if (!inode0->is_dir()) {
+    *css << "inode doesn't have any dirfrags, not a folder?" << std::endl;
+    return -ENOTDIR;
+  }
+
+  CDir* dir = inode0->get_or_open_dirfrag(mdcache, frag_t());
+  if (!dir) {
+    *css << "no dir opened" << std::endl;
+    return -EFAULT;
+  } else if (!dir->is_complete()) {
+    *css << " dir is incomplete, fetching, try again, ino:" << ino << std::endl;
+    dir->fetch(new C_MDS_SnapDiffProceed(mdcache), true);
+    return -EAGAIN;
+  }
+
+  size_t dirfrags = inode0->get_num_dirfrags();
+  dout(0) << __func__ << " " << *inode0 << " " << dirfrags << dendl;
+
+  int ret = 0;
+  if (dirfrags) {
+    //FIXME minor: makes a copy
+    std::vector<CDir*> frags = inode0->get_dirfrags();
+
+    std::stringstream ss;
+    /*
+    const CInode::old_inode_map_const_ptr& old_inodes = inode0->get_old_inodes();
+    ss << " dir frags:" << dirfrags
+      << " first dir frag num head entries:" << frags[0]->get_num_head_items()
+      << " first dir frag num head null entries:" << frags[0]->get_num_head_null()
+      << " first dir frag num snap entries:" << frags[0]->get_num_snap_items()
+      << " first dir frag num snap null entries:" << frags[0]->get_num_snap_null()
+      << " old inodes: " << old_inodes->size();
+
+    f->dump_string("frags", ss.str());*/
+
+    f->open_array_section("subentries");
+    for (size_t fr = 0; fr < frags.size(); fr++) {
+      auto it = frags[fr]->begin();
+      auto e = frags[fr]->end();
+
+      while (it != e) {
+        CDentry* de = it->second;
+        std::string name(de->get_name());
+        std::stringstream ss;
+
+        CDentry::linkage_t* dnl = de->get_linkage();
+        CInode* inode = de->get_linkage()->inode;
+        if (!inode) {
+          //FIXME: may be use MDCache::get_dentry_inode??
+          inode = mdcache->get_inode(dnl->get_remote_ino());
+          if (inode) {
+            de->link_remote(dnl, inode);
+          }
+        }
+        if (inode) {
+          auto cur_ino = inode->ino();
+          auto mtime = inode->get_inode()->mtime;
+          if (inode->is_dir()) {
+            string full_path(build_full_path(path, name));
+            CDir* dir = inode->get_or_open_dirfrag(mdcache, frag_t());
+            ceph_assert(dir);
+            string fetching;
+            string mode;
+            if (!dir->is_complete()) {
+              dir->fetch(new C_MDS_SnapDiffProceed(mdcache), true);
+              fetching = " fetching";
+            }
+            ss << full_path << " " << de->first << "/" << de->last
+               << " dir mtime " << mtime
+               << " ino " << cur_ino << "("
+               << cur_ino.val << ")"
+               << fetching;
+            f->dump_string("name", ss.str());
+
+            if (recursive) {
+              int r = debug_dump_snap_diff(f, recursive, full_path, inode->ino(), css);
+              if (r < 0 && ret == 0)
+                ret = r;
+            }
+          } else {
+            string full_path(build_full_path(path, name));
+            ss << full_path << " " << de->first << "/" << de->last
+               << " file mtime " << mtime
+               << " ino " << cur_ino << "("
+               << cur_ino.val << ")";
+            f->dump_string("name", ss.str());
+          }
+        } else if (dnl->get_remote_ino()) {
+          string full_path(build_full_path(path, name));
+          auto cur_ino = dnl->get_remote_ino();
+          if (dnl->remote_d_type == DT_DIR && !recursive) {
+            ss << full_path << " " << de->first << "/" << de->last
+              << " file ino " << cur_ino << "("
+              << cur_ino.val << ")"
+              << " loading";
+            f->dump_string("name", ss.str());
+          } else {
+            *css << "file inode isn't in the cache - reloading, try again, ino:"
+              << cur_ino << std::endl;
+            ret = -EAGAIN;
+          }
+          mdcache->open_remote_dentry(de, false /*FIXME: is this right?*/,
+            new C_MDS_SnapDiffProceedWithDirFetch(mdcache, dnl->get_remote_ino()));
+        }
+        ++it;
+      }
+    }
+    f->close_section();
+  }
+  return ret;
+}
+
+int MDSRankDispatcher::dump_snap_diff(Formatter* f,
+  bool recursive,
+  const std::string& path,
+  inodeno_t ino,
+  const SnapInfo* siA,
+  const SnapInfo* siB,
+  CachedStackStringStream& css)
+{
+  //FIXME: is is possible we need snap no different from CEPH_NOSNAP
+  // e.g. if snapshot root has been removed? Is the latter possible?
+  CInode* inode0 = mdcache->get_inode(vinodeno_t(ino, CEPH_NOSNAP));
+  if (!inode0) {
+    *css << "inode isn't in the cache - reloading, try again, ino:" << ino << std::endl;
+    // need de instance!!!
+    //mdcache->open_remote_dentry(de, false /*FIXME: is this right?*/,
+    //  new C_MDS_SnapDiffProceedWithDirFetch(mdcache, ino));
+    return -EAGAIN;
+    //mdcache->open_remote_dentry(de, true /*FIXME*/, new C_MDS_SnapDiffProceed(mdcache));
+  } else if (!inode0->is_dir()) {
+    *css << "inode doesn't have any dirfrags, not a folder?" << std::endl;
+    return -ENOTDIR;
+  }
+
+  CDir* dir = inode0->get_or_open_dirfrag(mdcache, frag_t());
+  if (!dir) {
+    *css << "no dir opened" << std::endl;
+    return -EFAULT;
+  } else if (!dir->is_complete()) {
+    *css << " dir is incomplete, fetching, try again, ino:" << ino << std::endl;
+    dir->fetch(new C_MDS_SnapDiffProceed(mdcache), true);
+    return -EAGAIN;
+  }
+
+  size_t dirfrags = inode0->get_num_dirfrags();
+  dout(0) << __func__ << " " << *inode0 << " " << dirfrags << dendl;
+
+  int ret = 0;
+  if (dirfrags) {
+    //FIXME minor: makes a copy
+    std::stringstream ss;
+    std::vector<CDir*> frags = inode0->get_dirfrags();
+
+    typedef std::unordered_map<std::string, CInode*>  entries_map_t;
+    entries_map_t entriesA, entriesB;
+
+    f->open_array_section("subentries");
+    for (size_t fr = 0; fr < frags.size(); fr++) {
+      auto it = frags[fr]->begin();
+      auto e = frags[fr]->end();
+
+      while (it != e) {
+        CDentry* de = it->second;
+        std::string name(de->get_name());
+        std::stringstream ss;
+
+        if (siA->snapid > de->last || siB->snapid < de->first) {
+          dout(5) << __func__ << " skipping unrelated " << name << " "
+            << de->first << "/" << de->last << dendl;
+          ++it;
+          continue;
+        }
+
+        CDentry::linkage_t* dnl = de->get_linkage();
+        CInode* inode = de->get_linkage()->inode;
+        if (!inode) {
+          //FIXME: may be use MDCache::get_dentry_inode??
+          inode = mdcache->get_inode(dnl->get_remote_ino());
+          if (inode) {
+            de->link_remote(dnl, inode);
+          }
+        }
+        if (inode) {
+          auto cur_ino = inode->ino();
+          auto mtime = inode->get_inode()->mtime;
+          if (inode->is_dir()) {
+            if (siA->snapid < de->first && siB->snapid > de->last) {
+              dout(5) << __func__ << " skipping inner " << name << " "
+                << de->first << "/" << de->last << dendl;
+              ++it;
+              continue;
+            }
+
+            string full_path(build_full_path(path, name));
+            CDir* dir = inode->get_or_open_dirfrag(mdcache, frag_t());
+            ceph_assert(dir);
+            string fetching;
+            string mode;
+            if (!dir->is_complete()) {
+              dir->fetch(new C_MDS_SnapDiffProceed(mdcache), true);
+              fetching = " fetching";
+            }
+            if (siA->snapid >= de->first && siB->snapid <= de->last) {
+              // maybe modified
+              mode = "<chg>";
+            } else if (siA->snapid >= de->first && siA->snapid <= de->last) {
+              // dir deleted
+              mode = "<del>";
+            } else if (siB->snapid >= de->first && siB->snapid <= de->last) {
+              // dir new
+              mode = "<new>";
+            } else {
+              // shouldn't get here
+              ceph_assert(false);
+            }
+            ss << full_path << " " << de->first << "/" << de->last
+              << " " << mode
+              << " dir ino " << cur_ino << "("
+              << cur_ino.val << ")"
+              << fetching;
+            f->dump_string("name", ss.str());
+
+            if (recursive) {
+              int r = dump_snap_diff(f, recursive, full_path, inode->ino(), siA, siB, css);
+              if (r < 0 && ret == 0)
+                ret = r;
+            }
+          } else {
+            bool isA = false;
+            if (siA->snapid >= de->first && siB->snapid <= de->last) {
+              dout(5) << __func__ << " skipping unchanged " << name << " "
+                << de->first << "/" << de->last << dendl;
+              ++it;
+              continue;
+            } else if (siA->snapid < de->first && siB->snapid > de->last) {
+              dout(5) << __func__ << " skipping inner modification " << name << " "
+                << de->first << "/" << de->last << dendl;
+              ++it;
+              continue;
+            } else if (siA->snapid >= de->first && siA->snapid <= de->last) {
+              isA = true;
+            } else {
+              ceph_assert(siB->snapid >= de->first && siB->snapid <= de->last);
+            }
+
+            auto& entries_my = isA ? entriesA : entriesB;
+            auto& entries_other = isA ? entriesB : entriesA;
+            auto it = entries_other.find(name);
+            if (it == entries_other.end()) {
+              entries_my.emplace(name, inode);
+            } else {
+              if (mtime != it->second->get_inode()->mtime) {
+                string full_path(build_full_path(path, name));
+                ss << full_path
+                   << " <chg> file"
+                   << " ino " << cur_ino << "("
+                   << cur_ino.val << ")";
+                f->dump_string("name", ss.str());
+              }
+              entries_other.erase(it);
+            }
+          }
+        } else if (dnl->get_remote_ino()) {
+          string full_path(build_full_path(path, name));
+          auto cur_ino = dnl->get_remote_ino();
+          if (dnl->remote_d_type == DT_DIR && !recursive) {
+            ss << full_path << " " << de->first << "/" << de->last
+               << " " << "dir"
+               //<< " mtime " << mtime
+               << " ino " << cur_ino << "("
+               << cur_ino.val << ")"
+               << " loading";
+            f->dump_string("name", ss.str());
+          } else {
+            *css << "file inode isn't in the cache - reloading, try again, ino:"
+                 << cur_ino << std::endl;
+            ret = -EAGAIN;
+          }
+          mdcache->open_remote_dentry(de, false /*FIXME: is this right?*/,
+            new C_MDS_SnapDiffProceedWithDirFetch(mdcache, dnl->get_remote_ino()));
+        }
+        ++it;
+      }
+    }
+    if (ret == 0) {
+      for (auto it = entriesA.begin(); it != entriesA.end(); ++it) {
+        string full_path(build_full_path(path, it->first));
+        auto cur_ino = it->second->ino();
+        ss << full_path // << " " << de->first << "/" << de->last;
+           << " <del> file"
+           << " ino " << cur_ino << "("
+           << cur_ino.val << ")";
+        f->dump_string("name", ss.str());
+        ss.str("");
+      }
+      for (auto it = entriesB.begin(); it != entriesB.end(); ++it) {
+        string full_path(build_full_path(path, it->first));
+        auto cur_ino = it->second->ino();
+        ss << full_path // << " " << de->first << "/" << de->last;
+           << " <new> file"
+           << " ino " << cur_ino << "("
+           << cur_ino.val << ")";
+        f->dump_string("name", ss.str());
+        ss.str("");
+      }
+    }
+    f->close_section();
+  }
+  return ret;
+}
+
 void MDSRankDispatcher::handle_asok_command(
   std::string_view command,
   const cmdmap_t& cmdmap,
@@ -2775,6 +3146,154 @@ void MDSRankDispatcher::handle_asok_command(
       }
     } else {
       r = snapclient->dump_cache(f);
+    }
+  } else if (command == "debug diff snaps") {
+    std::lock_guard l(mds_lock);
+
+    int64_t recursive = 0;
+    cmd_getval(cmdmap, "recursive", recursive);
+
+    int64_t ino_from;
+    cmd_getval(cmdmap, "from", ino_from);
+
+    string from_path;
+    cmd_getval(cmdmap, "from_path", from_path);
+
+    auto ino(ino_from);
+
+    CInode* inode0 = mdcache->get_inode(vinodeno_t(ino, CEPH_NOSNAP));
+    if (!inode0) {
+      *css << "root inode isn't in the cache, ino:" << ino << std::endl;
+      r = -EAGAIN;
+    } else {
+      {
+        set<snapid_t> snaps;
+        snapclient->get_snaps(snaps);
+
+        f->open_array_section("snaps");
+        for (auto& sid : snaps) {
+          std::stringstream ss;
+          auto* si = snapclient->get_snap_info(sid);
+          ss << *si;
+          f->dump_string("name", ss.str());
+        }
+        f->close_section();
+      }
+
+      f->open_object_section("diff");
+      std::stringstream ss;
+
+      string path;
+      if(from_path.empty()) {
+        inode0->make_path_string(path);
+      } else {
+        path = from_path;
+      }
+
+      ss << ino;
+      f->dump_string("from:", ss.str());
+      ss.str("");
+
+      ss << path;
+      f->dump_string("from_path:", ss.str());
+      ss.str("");
+
+      f->open_array_section("entries");
+      r = debug_dump_snap_diff(f, recursive, path, ino, css);
+      f->close_section();
+    }
+  } else if (command == "diff snaps") {
+    std::lock_guard l(mds_lock);
+    string sA, sB;
+    cmd_getval(cmdmap, "snapA", sA);
+    cmd_getval(cmdmap, "snapB", sB);
+
+    int64_t ino_from;
+    bool got = cmd_getval(cmdmap, "from", ino_from);
+    if (!got) {
+      ino_from = 0;
+    }
+    string from_path;
+    cmd_getval(cmdmap, "from_path", from_path);
+
+    int64_t recursive = 0;
+    cmd_getval(cmdmap, "recursive", recursive);
+
+    set<snapid_t> snaps;
+    const SnapInfo* siA = nullptr;
+    const SnapInfo* siB = nullptr;
+    snapclient->get_snaps(snaps);
+
+    dout(0) << __func__ << " " << snaps.size()
+            << " " << sA
+            << " " << sB
+            << dendl;
+
+    for (auto& sid : snaps) {
+      auto* si = snapclient->get_snap_info(sid);
+      ceph_assert(si);
+      if (si->name == sA) {
+        siA = si;
+      } else if (si->name == sB) {
+        siB = si;
+      }
+      if (siA && siB) {
+        break;
+      }
+    }
+    if (!siA || !siB) {
+      r = -EINVAL;
+      *css << "Snapshots not found";
+    } else if (siA->ino != siB->ino) {
+      r = -EINVAL;
+      *css << "Ino A:" << siA->ino << "'s root is different root from the one for Ino B:" << siB->ino;
+    } else {
+      // make sure A goes before B
+      if (siA->snapid > siB->snapid) {
+        std::swap(siA, siB);
+      }
+
+      auto ino(ino_from ? inodeno_t(ino_from) : siA->ino);
+
+      CInode* inode0 = mdcache->get_inode(vinodeno_t(ino, CEPH_NOSNAP));
+      if (!inode0) {
+        *css << "root inode isn't in the cache, ino:" << ino << std::endl;
+        r = -EAGAIN;
+      } else {
+        f->open_object_section("diff");
+        std::stringstream ss;
+
+        ss << siA->ino;
+        f->dump_string("root ino:", ss.str());
+        ss.str("");
+
+        ss << *siA;
+        f->dump_string("snapA", ss.str());
+        ss.str("");
+
+        ss << *siB;
+        f->dump_string("snapB", ss.str());
+        ss.str("");
+
+        string path;
+        if(from_path.empty()) {
+          inode0->make_path_string(path);
+        } else {
+          path = from_path;
+        }
+
+        ss << ino;
+        f->dump_string("from:", ss.str());
+        ss.str("");
+
+        ss << path;
+        f->dump_string("from_path:", ss.str());
+        ss.str("");
+
+        f->open_array_section("entries");
+        r = dump_snap_diff(f, recursive, path, ino, siA, siB, css);
+        f->close_section();
+      }
     }
   } else if (command == "force_readonly") {
     std::lock_guard l(mds_lock);
@@ -3209,14 +3728,18 @@ void MDSRank::command_openfiles_ls(Formatter *f)
 void MDSRank::command_dump_inode(Formatter *f, const cmdmap_t &cmdmap, std::ostream &ss)
 {
   std::lock_guard l(mds_lock);
-  int64_t number;
+  int64_t number, snapno;
   bool got = cmd_getval(cmdmap, "number", number);
   if (!got) {
     ss << "missing inode number";
     return;
   }
-  
-  bool success = mdcache->dump_inode(f, number);
+  got = cmd_getval(cmdmap, "snapno", snapno);
+  if (!got) {
+    snapno = CEPH_NOSNAP;
+  }
+
+  bool success = mdcache->dump_inode(f, number, snapno);
   if (!success) {
     ss << "dump inode failed, wrong inode number or the inode is not cached";
   }
