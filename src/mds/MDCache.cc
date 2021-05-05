@@ -9189,8 +9189,7 @@ void MDCache::open_ino(inodeno_t ino, int64_t pool, MDSContext* fin,
 		       mds_rank_t auth_hint)
 {
   dout(10) << "open_ino " << ino << " pool " << pool << " want_replica "
-	   << want_replica << dendl;
-
+	  << want_replica << dendl;
   auto it = opening_inodes.find(ino);
   if (it != opening_inodes.end()) {
     open_ino_info_t& info = it->second;
@@ -12584,10 +12583,11 @@ int MDCache::dump_cache(std::string_view fn, Formatter *f, double timeout)
     }
   }
 
-  auto dump_func = [fd, f](CInode *in) {
+  auto dump_func = [fd, f](snapid_t snapid, CInode *in) {
     int r;
     if (f) {
       f->open_object_section("inode");
+      f->dump_int("snapid", snapid);
       in->dump(f, CInode::DUMP_DEFAULT | CInode::DUMP_DIRFRAGS);
       f->close_section();
       return 1;
@@ -12623,7 +12623,7 @@ int MDCache::dump_cache(std::string_view fn, Formatter *f, double timeout)
   auto start = mono_clock::now();
   int64_t count = 0;
   for (auto &p : inode_map) {
-    r = dump_func(p.second);
+    r = dump_func(CEPH_NOSNAP, p.second);
     if (r < 0)
       goto out;
     if (!(++count % 1000) &&
@@ -12634,7 +12634,7 @@ int MDCache::dump_cache(std::string_view fn, Formatter *f, double timeout)
     }
   }
   for (auto &p : snap_inode_map) {
-    r = dump_func(p.second);
+    r = dump_func(p.first.snapid, p.second);
     if (r < 0)
       goto out;
     if (!(++count % 1000) &&
@@ -13197,8 +13197,8 @@ void MDCache::clear_dirty_bits_for_stray(CInode* diri) {
   }
 }
 
-bool MDCache::dump_inode(Formatter *f, uint64_t number) {
-  CInode *in = get_inode(number);
+bool MDCache::dump_inode(Formatter *f, uint64_t number, int64_t snapno) {
+  CInode *in = get_inode(number, snapno);
   if (!in) {
     return false;
   }
