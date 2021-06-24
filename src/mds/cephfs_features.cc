@@ -25,6 +25,7 @@ static const std::array feature_names
   "alternate_name",
   "notify_session_state",
   "op_getvxattr",
+  "snap_diff",
 };
 static_assert(feature_names.size() == CEPHFS_FEATURE_MAX + 1);
 

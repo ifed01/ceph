@@ -103,4 +103,21 @@ struct sr_t {
 WRITE_CLASS_ENCODER(sr_t)
 
 class MDCache;
+
+// Filename prefix to indicate removed entries in snapdiff request results.
+// Applies to snapdiff requests issued as regular FS operations against
+// fake snapdiff subfoloders under /.snap only.
+// The rationale is to extend regular directory listing report to
+// show removed entries for snapdiff resutls.
+//
+// E.g. to compare snapshots named snap1 and snap2 one can issue:
+// >ls -l /mnt/mycephfs/dir0/.snap/.~diff=snap1.~diff=snap2
+// which would return something like that:
+//total 8
+//-rw-r--r-- 1 root root  3 Jul 19 16:40 b
+//-rw-r--r-- 1 root root  3 Jul 19 16:40 ~c
+//
+// which means file c was present in snap1 but it has been removed in snap2.
+//
+#define SNAPDIFF_RM_INDICATOR '~'
 #endif
