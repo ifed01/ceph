@@ -2253,9 +2253,15 @@ void Server::set_trace_dist(const ref_t<MClientReply> &reply,
   mds_rank_t whoami = mds->get_nodeid();
   Session *session = mdr->session;
   snapid_t snapid = mdr->snapid;
+  if (mdr->is_snapid_diff) {
+    snapid = mdr->snapid_diff_effective;
+  } else if (snapid < CEPH_MAXSNAP && snapid >= 100000000ull) {
+    snapid = snapid - 100000000ull;
+  }
+
   utime_t now = ceph_clock_now();
 
-  dout(20) << "set_trace_dist snapid " << snapid << dendl;
+  dout(10) << "set_trace_dist snapid " << snapid << dendl;
 
   // realm
   if (snapid == CEPH_NOSNAP) {
@@ -4550,9 +4556,17 @@ void Server::handle_client_readdir(MDRequestRef& mdr)
   string offset_str = req->get_path2();
 
   __u32 offset_hash = 0;
-  if (!offset_str.empty())
+  if (!offset_str.empty()) {
+    if (mdr->is_snapid_diff && offset_str[0] == '~') {
+      /*
+      auto e = offset_str.find_last_of('~');
+      ceph_assert(e != std::string::npos);
+      offset_str = offset_str.substr(1, e - 1);
+      */
+      offset_str = offset_str.substr(1);
+    }
     offset_hash = ceph_frag_value(diri->hash_dentry_name(offset_str));
-  else
+  } else
     offset_hash = (__u32)req->head.args.readdir.offset_hash;
 
   dout(10) << " frag " << fg << " offset '" << offset_str << "'"
@@ -4572,7 +4586,6 @@ void Server::handle_client_readdir(MDRequestRef& mdr)
       offset_str.clear();
       newfg = diri->dirfragtree[fg.value()];
     }
-    dout(10) << " adjust frag " << fg << " -> " << newfg << " " << diri->dirfragtree << dendl;
     fg = newfg;
   }
   
@@ -4604,11 +4617,32 @@ void Server::handle_client_readdir(MDRequestRef& mdr)
   utime_t now = ceph_clock_now();
   mdr->set_mds_stamp(now);
 
+  dout(10) << "snapid " << mdr->snapid
+           << " is_diff " << mdr->is_snapid_diff
+	   << " snapid_diff_other " << mdr->snapid_diff_other
+	   << dendl;
+
+
+  SnapRealm* realm = diri->find_snaprealm();
+  if (mdr->is_snapid_diff) {
+    if (!mdr->session->info.has_feature(CEPHFS_FEATURE_SNAP_DIFF)) {
+      dout(7) << "old client cannot issue snap diff requests " << dendl;
+      respond_to_request(mdr, -CEPHFS_EOPNOTSUPP);
+      return;
+    }
+    _readdir_diff(
+      now,
+      mdr,
+      diri,
+      dir,
+      realm,
+      req_flags,
+      offset_str,
+      offset_hash);
+    return;
+  }
+
   snapid_t snapid = mdr->snapid;
-  dout(10) << "snapid " << snapid << dendl;
-
-  SnapRealm *realm = diri->find_snaprealm();
-
   unsigned max = req->head.args.readdir.max_entries;
   if (!max)
     max = dir->get_num_any();  // whatever, something big.
@@ -4710,13 +4744,13 @@ void Server::handle_client_readdir(MDRequestRef& mdr)
     unsigned start_len = dnbl.length();
 
     // dentry
-    dout(12) << "including    dn " << *dn << dendl;
+    dout(0) << "including    dn " << *dn << dendl;
     encode(dn->get_name(), dnbl);
     int lease_mask = dnl->is_primary() ? CEPH_LEASE_PRIMARY_LINK : 0;
     mds->locker->issue_client_lease(dn, mdr, lease_mask, now, dnbl);
 
     // inode
-    dout(12) << "including inode " << *in << dendl;
+    dout(0) << "including inode " << *in << dendl;
     int r = in->encode_inodestat(dnbl, mdr->session, realm, snapid, bytes_left - (int)dnbl.length());
     if (r < 0) {
       // chop off dn->name, lease
@@ -10174,8 +10208,16 @@ void Server::handle_client_lssnap(MDRequestRef& mdr)
 
   __u64 last_snapid = 0;
   string offset_str = req->get_path2();
-  if (!offset_str.empty())
-    last_snapid = realm->resolve_snapname(offset_str, diri->ino());
+  if (!offset_str.empty()) {
+    auto [snapid, is_diff_dummy, snapid_other_dummy] = realm->resolve_snapname(offset_str, diri->ino());
+    last_snapid = snapid;
+  }
+
+  dout(0) << "lssnap on " << *diri << " "
+	  << max_entries << " "
+	  << max_bytes << " "
+	  << offset_str
+	  << dendl;
 
   //Empty DirStat
   bufferlist dirbl;
@@ -10188,7 +10230,7 @@ void Server::handle_client_lssnap(MDRequestRef& mdr)
   bufferlist dnbl;
   auto p = infomap.upper_bound(last_snapid);
   for (; p != infomap.end() && num < max_entries; ++p) {
-    dout(10) << p->first << " -> " << *p->second << dendl;
+    dout(0) << p->first << " -> " << *p->second << dendl;
 
     // actual
     string snap_name;
@@ -10201,9 +10243,10 @@ void Server::handle_client_lssnap(MDRequestRef& mdr)
     if (int(start_len + snap_name.length() + sizeof(__u32) + sizeof(LeaseStat)) > max_bytes)
       break;
 
-    encode(snap_name, dnbl);
     //infinite lease
     LeaseStat e(CEPH_LEASE_VALID, -1, 0);
+
+    encode(snap_name, dnbl);
     mds->locker->encode_lease(dnbl, mdr->session->info, e);
     dout(20) << "encode_infinite_lease" << dendl;
 
@@ -10215,6 +10258,21 @@ void Server::handle_client_lssnap(MDRequestRef& mdr)
       break;
     }
     ++num;
+
+    /*snap_name.insert(0, 1, '.');
+    snap_name += ".~diff";
+    encode(snap_name, dnbl);
+    mds->locker->encode_lease(dnbl, mdr->session->info, e);
+    dout(20) << "encode_infinite_lease" << dendl;
+
+    r = diri->encode_inodestat(dnbl, mdr->session, realm, p->first, max_bytes - (int)dnbl.length());
+    if (r < 0) {
+      bufferlist keep;
+      keep.substr_of(dnbl, 0, start_len);
+      dnbl.swap(keep);
+      break;
+    }
+    ++num;*/
   }
 
   encode(num, dirbl);
@@ -10469,7 +10527,11 @@ void Server::handle_client_rmsnap(MDRequestRef& mdr)
     respond_to_request(mdr, -CEPHFS_ENOENT);
     return;
   }
-  snapid_t snapid = diri->snaprealm->resolve_snapname(snapname, diri->ino());
+  auto [snapid, is_diff, snapid_other_dummy] = diri->snaprealm->resolve_snapname(snapname, diri->ino());
+  if (is_diff) {
+    respond_to_request(mdr, -CEPHFS_EROFS);
+    return;
+  }
   dout(10) << " snapname " << snapname << " is " << snapid << dendl;
 
   if (!(mdr->locking_state & MutationImpl::ALL_LOCKED)) {
@@ -10612,7 +10674,12 @@ void Server::handle_client_renamesnap(MDRequestRef& mdr)
     return;
   }
 
-  snapid_t snapid = diri->snaprealm->resolve_snapname(srcname, diri->ino());
+  auto [snapid, is_diff, snapid_other_dummy] = diri->snaprealm->resolve_snapname(srcname, diri->ino());
+  if (is_diff) {
+    respond_to_request(mdr, -CEPHFS_EROFS);
+    return;
+  }
+
   dout(10) << " snapname " << srcname << " is " << snapid << dendl;
 
   // lock snap
@@ -10709,4 +10776,332 @@ void Server::dump_reconnect_status(Formatter *f) const
   f->open_object_section("reconnect_status");
   f->dump_stream("client_reconnect_gather") << client_reconnect_gather;
   f->close_section();
+}
+
+void Server::_readdir_diff(
+  utime_t now,
+  MDRequestRef& mdr,
+  CInode* diri,
+  CDir* dir,
+  SnapRealm* realm,
+  unsigned req_flags,
+  const string& offset_str,
+  uint32_t offset_hash)
+{
+  const cref_t<MClientRequest>& req = mdr->client_request;
+  Session* session = mds->get_session(req);
+  client_t client = req->get_source().num();
+
+  snapid_t snapid = mdr->snapid - 100000000ull;
+  snapid_t snapid_before = mdr->snapid_diff_other - 100000000ull;
+  if (snapid < snapid_before) {
+    std::swap(snapid, snapid_before);
+  }
+
+  unsigned max = req->head.args.readdir.max_entries;
+  if (!max)
+    max = dir->get_num_any();  // whatever, something big.
+  unsigned max_bytes = req->head.args.readdir.max_bytes;
+  if (!max_bytes)
+    // make sure at least one item can be encoded
+    max_bytes = (512 << 10) + g_conf()->mds_max_xattr_pairs_size;
+
+  // start final blob
+  bufferlist dirbl;
+  DirStat ds;
+  ds.frag = dir->get_frag();
+  ds.auth = dir->get_dir_auth().first;
+  if (dir->is_auth() && !forward_all_requests_to_auth)
+    dir->get_dist_spec(ds.dist, mds->get_nodeid());
+
+  dir->encode_dirstat(dirbl, mdr->session->info, ds);
+
+  // count bytes available.
+  //  this isn't perfect, but we should capture the main variable/unbounded size items!
+  int front_bytes = dirbl.length() + sizeof(__u32) + sizeof(__u8) * 2;
+  int bytes_left = max_bytes - front_bytes;
+  bytes_left -= realm->get_snap_trace().length();
+
+  // build dir contents
+  bufferlist dnbl;
+  __u32 numfiles = 0;
+  bool start = !offset_hash && offset_str.empty();
+  // skip all dns < dentry_key_t(snapid, offset_str, offset_hash)
+  dentry_key_t skip_key(snapid_before, offset_str.c_str(), offset_hash);
+  auto it = start ? dir->begin() : dir->lower_bound(skip_key);
+  bool end = (it == dir->end());
+
+
+  CDentry* dn_before = nullptr;
+  CInode* in_before = nullptr;
+  int lease_mask_before = 0;
+
+  utime_t mtime_before;
+
+  for (; !end && numfiles < max; end = (it == dir->end())) {
+    CDentry* dn = it->second;
+    dout(0) << ">>>" << it->first << "->" << dn->get_name() << dendl;
+    ++it;
+    if (dn->state_test(CDentry::STATE_PURGING))
+      continue;
+
+    bool dnp = dn->use_projected(client, mdr);
+    dout(0) << __func__ << " use projected: " << dnp << " dn " << *dn << dendl;
+    CDentry::linkage_t* dnl = dnp ? dn->get_projected_linkage() : dn->get_linkage();
+
+    if (dnl->is_null())
+      continue;
+
+    if (dn->last < snapid_before || dn->first > snapid) {
+      dout(20) << "skipping non-overlapping snap " << *dn << dendl;
+      continue;
+    }
+
+    if (!start) {
+      dentry_key_t offset_key(dn->last, offset_str.c_str(), offset_hash);
+      //FIXME: is greater or equal valid condition, shouldn't it be just greater?
+      if (!(offset_key < dn->key()))
+	continue;
+    }
+
+    CInode* in = dnl->get_inode();
+
+    if (in && in->ino() == CEPH_INO_CEPH)
+      continue;
+
+    // remote link?
+    // better for the MDS to do the work, if we think the client will stat any of these files.
+    if (dnl->is_remote() && !in) {
+      in = mdcache->get_inode(dnl->get_remote_ino());
+      dout(0) << __func__ << " remote in: " << in << " ino " << std::hex << dnl->get_remote_ino() << std::dec << dendl;
+      if (in) {
+	dn->link_remote(dnl, in);
+      } else if (dn->state_test(CDentry::STATE_BADREMOTEINO)) {
+	dout(10) << "skipping bad remote ino on " << *dn << dendl;
+	continue;
+      } else {
+	// touch everything i _do_ have
+	for (auto& p : *dir) {
+	  if (!p.second->get_linkage()->is_null())
+	    mdcache->lru.lru_touch(p.second);
+	}
+
+	// already issued caps and leases, reply immediately.
+	if (dnbl.length() > 0) {
+	  mdcache->open_remote_dentry(dn, dnp, new C_MDSInternalNoop);
+	  dout(10) << " open remote dentry after caps were issued, stopping at "
+	    << dnbl.length() << " < " << bytes_left << dendl;
+	  break;
+	}
+
+	mds->locker->drop_locks(mdr.get());
+	mdr->drop_local_auth_pins();
+
+	dout(0) << __func__ << " open remote dentry: " << dendl;
+
+	mdcache->open_remote_dentry(dn, dnp, new C_MDS_RetryRequest(mdcache, mdr));
+	return;
+      }
+    }
+    ceph_assert(in);
+    int lease_mask = dnl->is_primary() ? CEPH_LEASE_PRIMARY_LINK : 0;
+
+    // dentry
+    auto effective_snapid = snapid;
+    std::string name;
+    //auto cur_ino = in->ino();
+    utime_t mtime = in->get_inode()->mtime;
+
+    if (in->is_dir()) {
+      if (snapid_before < dn->first && dn->last < snapid ) {
+	  dout(5) << __func__ << " skipping inner " << dn->get_name() << " "
+	    << dn->first << "/" << dn->last << dendl;
+	  continue;
+      } else if (dn->first <= snapid_before && dn->last < snapid) {
+	// dir deleted
+	name.append(1, '~');
+	dout(5) << __func__ << " deleted dir " << dn->get_name() << " "
+	  << dn->first << "/" << dn->last << dendl;
+	effective_snapid = dn->last;
+	name.append(dn->get_name());
+	/*/name.append(1, '~');
+	stringstream ss;
+	ss << effective_snapid;
+	name.append(ss.str());*/
+	//effective_snapid = snapid_before;
+      }	else {
+	//FIXME: escape starting tildas(~) if any
+	name.append(dn->get_name());
+      }
+    } else {
+      name = dn->get_name();
+      if (snapid_before >= dn->first && snapid <= dn->last) {
+	dout(5) << __func__ << " skipping unchanged " << name << " "
+	  << dn->first << "/" << dn->last << dendl;
+	continue;
+      } else if (snapid_before < dn->first && snapid > dn->last) {
+	dout(5) << __func__ << " skipping inner modification " << name << " "
+	  << dn->first << "/" << dn->last << dendl;
+	continue;
+      }
+      string_view name_before = dn_before ? dn_before->get_name() : string();
+      if (snapid_before >= dn->first && snapid_before <= dn->last) {
+	if (dn_before && name != name_before) {
+	  string name("~");
+	  name.append(name_before);
+	  dout(5) << __func__ << " deleted1 " << name_before << " "
+	    << dn_before->first << "/" << dn_before->last << dendl;
+	  effective_snapid = dn_before->last;
+	  /*name.append(1, '~');
+	  stringstream ss;
+	  ss << effective_snapid;
+	  name.append(ss.str());*/
+
+	  //_include_readdir_diff(now, mdr, dn_before, dnbl);
+	  int r = _include_into_readdir_diff(now, mdr, realm, lease_mask_before,
+	    effective_snapid, name, dn_before, in_before, bytes_left, dnbl);
+	  dn_before = nullptr;
+	  in_before = nullptr;
+	  lease_mask_before = 0;
+	  if (r < 0) {
+	    //FIXME
+	    break;
+	  }
+	  numfiles++;
+	}
+	dout(5) << __func__ << " dn_before " << name << " "
+	  << dn->first << "/" << dn->last << dendl;
+	dn_before = dn;
+	in_before = in;
+	lease_mask_before = lease_mask;
+	mtime_before = mtime;
+	continue;
+      } else {
+	if (dn_before && name == name_before) {
+	  if (mtime == mtime_before) {
+	    dout(5) << __func__ << " timestamp not changed " << name << " "
+	      << dn->first << "/" << dn->last << dendl;
+	    in_before = nullptr;
+	    dn_before = nullptr;
+	    lease_mask_before = 0;
+	    continue;
+	  } else {
+	    dn_before = nullptr;
+	    in_before = nullptr;
+	    lease_mask_before = 0;
+	    dout(5) << __func__ << " timestamp changed " << name << " "
+	      << dn->first << "/" << dn->last
+	      << " " << mtime_before << " vs. " << mtime
+	      << dendl;
+	  }
+	}
+	dout(5) << __func__ << " new1 " << name << " "
+	  << dn->first << "/" << dn->last
+	  << dendl;
+	ceph_assert(snapid >= dn->first && snapid <= dn->last);
+      }
+    }
+    int r = _include_into_readdir_diff(now, mdr, realm, lease_mask,
+      effective_snapid, name, dn, in, bytes_left, dnbl);
+    if (r < 0) {
+      //FIXME
+      break;
+    }
+    numfiles++;
+  }
+  if (dn_before) {
+    string name("~");
+    name.append(dn_before->get_name());
+    dout(5) << __func__ << " deleted3 " << dn_before->get_name() << " "
+      << dn_before->first << "/" << dn_before->last << dendl;
+    auto effective_snapid = dn_before->last;
+    /*name.append(1, '~');
+    stringstream ss;
+    ss << effective_snapid;
+    name.append(ss.str());*/
+
+    //_include_readdir_diff(now, mdr, dn_before, dnbl);
+    int r = _include_into_readdir_diff(now, mdr, realm, lease_mask_before,
+      effective_snapid, name, dn_before, in_before, bytes_left, dnbl);
+    dn_before = nullptr;
+    in_before = nullptr;
+    lease_mask_before = 0;
+    if (r < 0) {
+      //FIXME
+    }
+    numfiles++;
+  }
+
+  session->touch_readdir_cap(numfiles);
+
+  __u16 flags = CEPH_READDIR_SNAPDIFF;
+  if (end) {
+    flags |= CEPH_READDIR_FRAG_END;
+    if (start)
+      flags |= CEPH_READDIR_FRAG_COMPLETE; // FIXME: what purpose does this serve
+  }
+  // client only understand END and COMPLETE flags ?
+  /*if (req_flags & CEPH_READDIR_REPLY_BITFLAGS) {
+    flags |= CEPH_READDIR_HASH_ORDER | CEPH_READDIR_OFFSET_HASH;
+  }*/
+
+  // finish final blob
+  encode(numfiles, dirbl);
+  encode(flags, dirbl);
+  dirbl.claim_append(dnbl);
+
+  // yay, reply
+  dout(10) << "reply to " << *req << " readdir num=" << numfiles
+    << " bytes=" << dirbl.length()
+    << " start=" << (int)start
+    << " end=" << (int)end
+    << dendl;
+  mdr->reply_extra_bl = dirbl;
+
+  // bump popularity.  NOTE: this doesn't quite capture it.
+  mds->balancer->hit_dir(dir, META_POP_IRD, -1, numfiles);
+
+  // reply
+  mdr->tracei = diri;
+  respond_to_request(mdr, 0);
+}
+
+int Server::_include_into_readdir_diff(
+  utime_t now,
+  MDRequestRef& mdr,
+  SnapRealm* realm,
+  int lease_mask,
+  snapid_t snapid,
+  const std::string& name,
+  CDentry* dn,
+  CInode* in,
+  int bytes_left,
+  bufferlist& dnbl)
+{
+  if ((int)(dnbl.length() + dn->get_name().length() + sizeof(__u32) + sizeof(LeaseStat)) > bytes_left) {
+    dout(10) << " ran out of room, stopping at " << dnbl.length() << " < " << bytes_left << dendl;
+    return -ENOSPC;
+  }
+
+  unsigned start_len = dnbl.length();
+
+  dout(0) << "including    dn " << *dn << " as " << name << dendl;
+  encode(name, dnbl);
+  mds->locker->issue_client_lease(dn, mdr, lease_mask, now, dnbl);
+
+  // inode
+  dout(0) << "including inode " << *in << " effective snapid " << snapid << dendl;
+  int r = in->encode_inodestat(dnbl, mdr->session, realm, snapid, bytes_left - (int)dnbl.length());
+  if (r < 0) {
+    // chop off dn->name, lease
+    dout(10) << " ran out of room, stopping at " << start_len << " < " << bytes_left << dendl;
+    bufferlist keep;
+    keep.substr_of(dnbl, 0, start_len);
+    dnbl.swap(keep);
+    return r;
+  }
+
+  // touch dn
+  mdcache->lru.lru_touch(dn);
+  return 0;
 }

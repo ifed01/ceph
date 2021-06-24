@@ -81,7 +81,7 @@ public:
 
 ostream& operator<<(ostream& out, const CDir& dir)
 {
-  out << "[dir " << dir.dirfrag() << " " << dir.get_path() << "/"
+  out << "[dir " << dir.dirfrag() << " " << dir.ino() << " " << dir.get_path() << "/"
       << " [" << dir.first << ",head]";
   if (dir.is_auth()) {
     out << " auth";
@@ -1526,7 +1526,7 @@ void CDir::fetch(MDSContext *c, bool ignore_authpinnability)
 
 void CDir::fetch(MDSContext *c, std::string_view want_dn, bool ignore_authpinnability)
 {
-  dout(10) << "fetch on " << *this << dendl;
+  dout(10) << "fetch on " << *this << " " << want_dn << dendl;
   
   ceph_assert(is_auth());
   ceph_assert(!is_complete());
@@ -1584,6 +1584,9 @@ void CDir::fetch(MDSContext *c, std::string_view want_dn, bool ignore_authpinnab
 void CDir::fetch(MDSContext *c, const std::set<dentry_key_t>& keys)
 {
   dout(10) << "fetch " << keys.size() << " keys on " << *this << dendl;
+  for (auto dentry : keys) {
+    dout(0) << dentry << dendl;
+  }
 
   ceph_assert(is_auth());
   ceph_assert(!is_complete());

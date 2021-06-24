@@ -416,6 +416,12 @@ struct MDRequestImpl : public MutationImpl {
   CInode *in[2] = {};
   CDentry *straydn = nullptr;
   snapid_t snapid = CEPH_NOSNAP;
+  // whether snap diff entry is referred by snapid above
+  bool is_snapid_diff = false;
+  // which snapid to compare against if snapid_diff is true
+  snapid_t snapid_diff_other = CEPH_NOSNAP;
+  // actual snapid of the target inode
+  snapid_t snapid_diff_effective = CEPH_NOSNAP;
 
   CInode *tracei = nullptr;
   CDentry *tracedn = nullptr;

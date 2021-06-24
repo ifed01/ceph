@@ -1259,7 +1259,7 @@ void Client::insert_readdir_results(MetaRequest *request, MetaSession *session, 
       dlease.decode(p, features);
       InodeStat ist(p, features);
 
-      ldout(cct, 15) << "" << i << ": '" << dname << "'" << dendl;
+      ldout(cct, 15) << "" << i << ": '" << dname << "' " << dendl;
 
       Inode *in = add_update_inode(&ist, request->sent_stamp, session,
 				   request->perms);
@@ -1552,7 +1552,8 @@ mds_rank_t Client::choose_target_mds(MetaRequest *req, Inode** phash_diri)
     if (in->snapid != CEPH_NOSNAP) {
       ldout(cct, 10) << __func__ << " " << *in << " is snapped, using nonsnap parent" << dendl;
       while (in->snapid != CEPH_NOSNAP) {
-        if (in->snapid == CEPH_SNAPDIR)
+	ldout(cct, 10) << __func__ << " " << *in << " " << dendl;
+	if (in->snapid == CEPH_SNAPDIR)
 	  in = in->snapdir_parent.get();
         else if (!in->dentries.empty())
           /* In most cases there will only be one dentry, so getting it
@@ -7834,7 +7835,7 @@ int Client::lstat(const char *relpath, struct stat *stbuf,
 
 int Client::fill_stat(Inode *in, struct stat *st, frag_info_t *dirstat, nest_info_t *rstat)
 {
-  ldout(cct, 10) << __func__ << " on " << in->ino << " snap/dev" << in->snapid
+  ldout(cct, 10) << __func__ << " on " << in->ino << " snap/dev " << in->snapid
 	   << " mode 0" << oct << in->mode << dec
 	   << " mtime " << in->mtime << " ctime " << in->ctime << dendl;
   memset(st, 0, sizeof(struct stat));
@@ -8627,6 +8628,7 @@ int Client::_readdir_cache_cb(dir_result_t *dirp, add_dirent_cb_t cb, void *p,
   ceph_assert(ceph_mutex_is_locked_by_me(client_lock));
   ldout(cct, 10) << __func__ << " " << dirp << " on " << dirp->inode->ino
 	   << " last_name " << dirp->last_name << " offset " << hex << dirp->offset << dec
+	   << " readdir_cache size = " << dirp->inode->dir->readdir_cache.size()
 	   << dendl;
   Dir *dir = dirp->inode->dir;
 
@@ -8663,6 +8665,8 @@ int Client::_readdir_cache_cb(dir_result_t *dirp, add_dirent_cb_t cb, void *p,
     if (dn->inode->is_dir()) {
       mask |= CEPH_STAT_RSTAT;
     }
+
+    ldout(cct, 10) << __func__ << " before getattr " << " on " << idx << " " << dn->inode->ino << dendl;
     int r = _getattr(dn->inode, mask, dirp->perms);
     if (r < 0)
       return r;
@@ -8671,6 +8675,10 @@ int Client::_readdir_cache_cb(dir_result_t *dirp, add_dirent_cb_t cb, void *p,
     pd = dir->readdir_cache.begin() + idx;
     if (pd >= dir->readdir_cache.end() || *pd != dn)
       return -CEPHFS_EAGAIN;
+
+    ldout(cct, 10) << __func__
+		   << " readdir_cache size = " << dir->readdir_cache.size()
+		   << " after getattr " << " on " << (*pd)->inode->ino << dendl;
 
     struct ceph_statx stx;
     struct dirent de;
@@ -8805,6 +8813,9 @@ int Client::readdir_r_cb(dir_result_t *d, add_dirent_cb_t cb, void *p,
       return r;
   }
 
+  if (!dirp->hash_order())
+    clear_dir_complete_and_ordered(dirp->inode.get(), true);
+
   // can we read from our cache?
   ldout(cct, 10) << "offset " << hex << dirp->offset << dec
 	   << " snapid " << dirp->inode->snapid << " (complete && ordered) "
@@ -8907,6 +8918,7 @@ int Client::readdir_r_cb(dir_result_t *d, add_dirent_cb_t cb, void *p,
     }
 
     dirp->set_end();
+    //_readdir_drop_dirp_buffer(dirp);
     return 0;
   }
   ceph_abort();
