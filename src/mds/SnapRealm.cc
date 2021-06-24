@@ -20,6 +20,8 @@
 #include <string_view>
 
 
+char SNAP_DIFF_KEYWORD[] = ".~diff=";
+
 /*
  * SnapRealm
  */
@@ -221,7 +223,11 @@ std::string_view SnapRealm::get_snapname(snapid_t snapid, inodeno_t atino)
   return parent->get_snapname(snapid, atino);
 }
 
-snapid_t SnapRealm::resolve_snapname(std::string_view n, inodeno_t atino, snapid_t first, snapid_t last)
+std::tuple<snapid_t, bool, snapid_t> SnapRealm::resolve_snapname(
+  std::string_view n,
+  inodeno_t atino,
+  snapid_t first,
+  snapid_t last)
 {
   // first try me
   dout(10) << "resolve_snapname '" << n << "' in [" << first << "," << last << "]" << dendl;
@@ -229,7 +235,8 @@ snapid_t SnapRealm::resolve_snapname(std::string_view n, inodeno_t atino, snapid
   bool actual = (atino == inode->ino());
   string pname;
   inodeno_t pino;
-  if (n.length() && n[0] == '_') {
+  char first_char = n.length() ? n[0] : 0;
+  if (first_char == '_') {
     size_t next_ = n.find_last_of('_');
     if (next_ > 1 && next_ + 1 < n.length()) {
       pname = n.substr(1, next_ - 1);
@@ -244,10 +251,34 @@ snapid_t SnapRealm::resolve_snapname(std::string_view n, inodeno_t atino, snapid
     dout(15) << " ? " << p->second << dendl;
     //if (num && p->second.snapid == num)
     //return p->first;
-    if (actual && p->second.name == n)
-	return p->first;
+    if (actual) {
+      if(p->second.name == n)
+	return std::tuple(p->first, false, CEPH_NOSNAP);
+
+      const size_t diff_keyword_len = sizeof(SNAP_DIFF_KEYWORD) - 1;
+      string_view v = n.substr(0, diff_keyword_len);
+      if (v.compare(SNAP_DIFF_KEYWORD) == 0) {
+          ceph_assert(diff_keyword_len <= n.length());
+	  auto n_tmp = n.substr(diff_keyword_len);
+	  auto suffix_pos = n_tmp.find(SNAP_DIFF_KEYWORD);
+	  auto n_snap1 = n_tmp.substr(0, suffix_pos); // full view if no suffix
+	  if (p->second.name == n_snap1) {
+	    if (suffix_pos == string_view::npos) {
+	      return std::tuple(p->first, true, CEPH_NOSNAP);
+	    }
+	    auto [snapid2, is_diff, dummy_snapid] =
+	      resolve_snapname(
+		n_tmp.substr(suffix_pos + diff_keyword_len),
+		atino,
+		first, last);
+	      return snapid2 != CEPH_NOSNAP ?
+		std::make_tuple(p->first, true, snapid2) :
+		std::make_tuple(snapid_t(CEPH_NOSNAP), false, snapid_t(CEPH_NOSNAP));
+	  }
+      }
+    }
     if (!actual && p->second.name == pname && p->second.ino == pino)
-      return p->first;
+      return std::tuple(p->first, false, CEPH_NOSNAP);
   }
 
   if (!srnode.past_parent_snaps.empty()) {
@@ -264,15 +295,15 @@ snapid_t SnapRealm::resolve_snapname(std::string_view n, inodeno_t atino, snapid
       dout(15) << " ? " << *it.second << dendl;
       actual = (it.second->ino == atino);
       if (actual && it.second->name == n)
-	return it.first;
+	return std::tuple(it.first, false, CEPH_NOSNAP);
       if (!actual && it.second->name == pname && it.second->ino == pino)
-	return it.first;
+	return std::tuple(it.first, false, CEPH_NOSNAP);
     }
   }
 
   if (parent && srnode.current_parent_since <= last)
     return parent->resolve_snapname(n, atino, std::max(first, srnode.current_parent_since), last);
-  return 0;
+  return std::tuple(0, false, CEPH_NOSNAP);
 }
 
 
