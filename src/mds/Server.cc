@@ -2252,16 +2252,25 @@ void Server::set_trace_dist(const ref_t<MClientReply> &reply,
   bufferlist bl;
   mds_rank_t whoami = mds->get_nodeid();
   Session *session = mdr->session;
-  snapid_t snapid = mdr->snapid;
-  if (mdr->is_snapid_diff) {
-    snapid = mdr->snapid_diff_effective;
-  } else if (snapid < CEPH_MAXSNAP && snapid >= 100000000ull) {
-    snapid = snapid - 100000000ull;
+  snapid_t snapid;
+  snapid_t snapid_dir;
+  if (mdr->is_removed_snapid_diff) {
+    ceph_assert(mdr->is_snapid_diff);
+    snapid = mdr->snapid_diff_other | CEPH_SNAPDIFF_FLAG | CEPH_SNAPDIFF_RM_FLAG;
+    snapid_dir = mdr->is_removed_snapid_diff < 2 ?
+		  (mdr->snapid | CEPH_SNAPDIFF_FLAG) :
+		  (mdr->snapid_diff_other | CEPH_SNAPDIFF_FLAG | CEPH_SNAPDIFF_RM_FLAG);
+  } else {
+    snapid = mdr->is_snapid_diff ?
+		snapid_t(mdr->snapid | CEPH_SNAPDIFF_FLAG) :
+		mdr->snapid;
+    snapid_dir = snapid;
   }
 
   utime_t now = ceph_clock_now();
 
-  dout(10) << "set_trace_dist snapid " << snapid << dendl;
+  dout(10) << "set_trace_dist snapid " << snapid
+	   << " snapid_dir " << snapid_dir << dendl;
 
   // realm
   if (snapid == CEPH_NOSNAP) {
@@ -2280,7 +2289,7 @@ void Server::set_trace_dist(const ref_t<MClientReply> &reply,
     CDir *dir = dn->get_dir();
     CInode *diri = dir->get_inode();
 
-    diri->encode_inodestat(bl, session, NULL, snapid);
+    diri->encode_inodestat(bl, session, NULL, snapid_dir);
     dout(20) << "set_trace_dist added diri " << *diri << dendl;
 
 #ifdef MDS_VERIFY_FRAGSTAT
@@ -2296,7 +2305,13 @@ void Server::set_trace_dist(const ref_t<MClientReply> &reply,
     dir->encode_dirstat(bl, session->info, ds);
     dout(20) << "set_trace_dist added dir  " << *dir << dendl;
 
-    encode(dn->get_name(), bl);
+    if (mdr->is_removed_snapid_diff) {
+      string name("~");
+      name += dn->get_name();
+      encode(name, bl);
+    } else {
+      encode(dn->get_name(), bl);
+    }
 
     int lease_mask = 0;
     CDentry::linkage_t *dnl = dn->get_linkage(mdr->get_client(), mdr);
@@ -2310,14 +2325,14 @@ void Server::set_trace_dist(const ref_t<MClientReply> &reply,
 	ceph_assert(!in);
     }
     mds->locker->issue_client_lease(dn, mdr, lease_mask, now, bl);
-    dout(20) << "set_trace_dist added dn   " << snapid << " " << *dn << dendl;
+    dout(20) << "set_trace_dist added dn   " << snapid_dir << " " << *dn << dendl;
   } else
     reply->head.is_dentry = 0;
 
   // inode
   if (in) {
     in->encode_inodestat(bl, session, NULL, snapid, 0, mdr->getattr_caps);
-    dout(20) << "set_trace_dist added in   " << *in << dendl;
+    dout(20) << "set_trace_dist added in   " << snapid << " " << *in << dendl;
     reply->head.is_target = 1;
   } else
     reply->head.is_target = 0;
@@ -4558,6 +4573,7 @@ void Server::handle_client_readdir(MDRequestRef& mdr)
   __u32 offset_hash = 0;
   if (!offset_str.empty()) {
     if (mdr->is_snapid_diff && offset_str[0] == '~') {
+      //FIXME
       /*
       auto e = offset_str.find_last_of('~');
       ceph_assert(e != std::string::npos);
@@ -10792,8 +10808,8 @@ void Server::_readdir_diff(
   Session* session = mds->get_session(req);
   client_t client = req->get_source().num();
 
-  snapid_t snapid = mdr->snapid - 100000000ull;
-  snapid_t snapid_before = mdr->snapid_diff_other - 100000000ull;
+  snapid_t snapid = mdr->snapid;
+  snapid_t snapid_before = mdr->snapid_diff_other;
   if (snapid < snapid_before) {
     std::swap(snapid, snapid_before);
   }
@@ -10922,7 +10938,7 @@ void Server::_readdir_diff(
 	name.append(1, '~');
 	dout(5) << __func__ << " deleted dir " << dn->get_name() << " "
 	  << dn->first << "/" << dn->last << dendl;
-	effective_snapid = dn->last;
+	effective_snapid = CEPH_SNAPDIFF_RM_FLAG | dn->last;
 	name.append(dn->get_name());
 	/*/name.append(1, '~');
 	stringstream ss;
@@ -10951,7 +10967,8 @@ void Server::_readdir_diff(
 	  name.append(name_before);
 	  dout(5) << __func__ << " deleted1 " << name_before << " "
 	    << dn_before->first << "/" << dn_before->last << dendl;
-	  effective_snapid = dn_before->last;
+	  effective_snapid = CEPH_SNAPDIFF_RM_FLAG | dn_before->last;
+
 	  /*name.append(1, '~');
 	  stringstream ss;
 	  ss << effective_snapid;
@@ -11014,7 +11031,8 @@ void Server::_readdir_diff(
     name.append(dn_before->get_name());
     dout(5) << __func__ << " deleted3 " << dn_before->get_name() << " "
       << dn_before->first << "/" << dn_before->last << dendl;
-    auto effective_snapid = dn_before->last;
+    auto effective_snapid = CEPH_SNAPDIFF_RM_FLAG | dn_before->last;
+
     /*name.append(1, '~');
     stringstream ss;
     ss << effective_snapid;
@@ -11082,6 +11100,7 @@ int Server::_include_into_readdir_diff(
     dout(10) << " ran out of room, stopping at " << dnbl.length() << " < " << bytes_left << dendl;
     return -ENOSPC;
   }
+  snapid = snapid | CEPH_SNAPDIFF_FLAG;
 
   unsigned start_len = dnbl.length();
 
@@ -11090,7 +11109,8 @@ int Server::_include_into_readdir_diff(
   mds->locker->issue_client_lease(dn, mdr, lease_mask, now, dnbl);
 
   // inode
-  dout(0) << "including inode " << *in << " effective snapid " << snapid << dendl;
+  dout(0) << "including inode " << *in << " effective snapid "
+	  << std::hex << snapid << std::dec << dendl;
   int r = in->encode_inodestat(dnbl, mdr->session, realm, snapid, bytes_left - (int)dnbl.length());
   if (r < 0) {
     // chop off dn->name, lease

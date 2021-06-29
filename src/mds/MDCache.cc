@@ -8242,8 +8242,9 @@ int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,
       mdr->is_snapid_diff = is_diff;
       if (is_diff) {
         snapid = snapid_new;
-	mdr->snapid_diff_effective = mdr->snapid = snapid_new + 100000000ull;
-	mdr->snapid_diff_other = snapid_diff_other + 100000000ull;
+	mdr->snapid = snapid_new;
+	mdr->snapid_diff_other = snapid_diff_other;
+	mdr->is_removed_snapid_diff = 0;
       }	else {
 	snapid = mdr->snapid = snapid_new;
       }
@@ -8252,16 +8253,16 @@ int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,
     }
     string_view p = path[depth];
     if (mdr->is_snapid_diff) {
+      dout(7) << "traverse0: " << p << " " << mdr->is_removed_snapid_diff
+	      << " " << std::hex << mdr->snapid << " " << mdr->snapid_diff_other << std::dec
+	      << dendl;
       if (path[depth][0] == '~') {
 	p.remove_prefix(1);
-	/*auto e = p.find_last_of('~');
-	std::from_chars(p.data() + e + 1, p.data() + p.size(), snapid.val);
-	p.remove_suffix(p.size() - e);*/
-
-	std::swap(mdr->snapid, mdr->snapid_diff_other);
-	snapid = mdr->snapid - 100000000ull;
+	if (!mdr->is_removed_snapid_diff) {
+	  snapid = mdr->snapid_diff_other;
+	}
+	++mdr->is_removed_snapid_diff;
       }
-      mdr->snapid_diff_effective = snapid;
       dout(7) << "traverse: " << p << "." << snapid << dendl;
     }
 
@@ -8557,7 +8558,7 @@ int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,
   
   // success.
   if (mds->logger) mds->logger->inc(l_mds_traverse_hit);
-  dout(10) << "path_traverse finish on snapid " << snapid << dendl;
+  dout(10) << "path_traverse finish on " << *cur << " snapid " << snapid << dendl;
 
   if (flags & MDS_TRAVERSE_RDLOCK_SNAP)
     mdr->locking_state |= MutationImpl::SNAP_LOCKED;
