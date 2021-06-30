@@ -2254,7 +2254,7 @@ void Server::set_trace_dist(const ref_t<MClientReply> &reply,
   Session *session = mdr->session;
   snapid_t snapid;
   snapid_t snapid_dir;
-  if (mdr->is_removed_snapid_diff) {
+  /*if (mdr->is_removed_snapid_diff) {
     ceph_assert(mdr->is_snapid_diff);
     snapid = mdr->snapid_diff_other | CEPH_SNAPDIFF_FLAG | CEPH_SNAPDIFF_RM_FLAG;
     snapid_dir = mdr->is_removed_snapid_diff < 2 ?
@@ -2265,7 +2265,18 @@ void Server::set_trace_dist(const ref_t<MClientReply> &reply,
 		snapid_t(mdr->snapid | CEPH_SNAPDIFF_FLAG) :
 		mdr->snapid;
     snapid_dir = snapid;
-  }
+  }*/
+  snapid = mdr->get_effective_snapid_diff();
+  snapid_dir = mdr->get_effective_snapid_diff(2);
+
+  /*if (mdr->is_removed_snapid_diff) {
+    ceph_assert(mdr->is_snapid_diff);
+    snapid = mdr->get_effective_snapid_diff();
+    snapid_dir = mdr->get_effective_snapid_diff(2);
+  } else {
+    snapid = mdr->get_effective_snapid_diff();
+    snapid_dir = snapid;
+  }*/
 
   utime_t now = ceph_clock_now();
 
@@ -10923,7 +10934,8 @@ void Server::_readdir_diff(
     int lease_mask = dnl->is_primary() ? CEPH_LEASE_PRIMARY_LINK : 0;
 
     // dentry
-    auto effective_snapid = snapid;
+    //auto effective_snapid = snapid;
+    auto effective_snapid = mdr->get_effective_snapid_diff();
     std::string name;
     //auto cur_ino = in->ino();
     utime_t mtime = in->get_inode()->mtime;
@@ -10938,13 +10950,9 @@ void Server::_readdir_diff(
 	name.append(1, '~');
 	dout(5) << __func__ << " deleted dir " << dn->get_name() << " "
 	  << dn->first << "/" << dn->last << dendl;
-	effective_snapid = CEPH_SNAPDIFF_RM_FLAG | dn->last;
+	//effective_snapid = CEPH_SNAPDIFF_RM_FLAG | dn->last;
+	effective_snapid = mdr->get_effective_snapid_diff(0);
 	name.append(dn->get_name());
-	/*/name.append(1, '~');
-	stringstream ss;
-	ss << effective_snapid;
-	name.append(ss.str());*/
-	//effective_snapid = snapid_before;
       }	else {
 	//FIXME: escape starting tildas(~) if any
 	name.append(dn->get_name());
@@ -10967,14 +10975,9 @@ void Server::_readdir_diff(
 	  name.append(name_before);
 	  dout(5) << __func__ << " deleted1 " << name_before << " "
 	    << dn_before->first << "/" << dn_before->last << dendl;
-	  effective_snapid = CEPH_SNAPDIFF_RM_FLAG | dn_before->last;
+	  //effective_snapid = CEPH_SNAPDIFF_RM_FLAG | dn_before->last;
+	  effective_snapid = mdr->get_effective_snapid_diff(0);
 
-	  /*name.append(1, '~');
-	  stringstream ss;
-	  ss << effective_snapid;
-	  name.append(ss.str());*/
-
-	  //_include_readdir_diff(now, mdr, dn_before, dnbl);
 	  int r = _include_into_readdir_diff(now, mdr, realm, lease_mask_before,
 	    effective_snapid, name, dn_before, in_before, bytes_left, dnbl);
 	  dn_before = nullptr;
@@ -11031,14 +11034,9 @@ void Server::_readdir_diff(
     name.append(dn_before->get_name());
     dout(5) << __func__ << " deleted3 " << dn_before->get_name() << " "
       << dn_before->first << "/" << dn_before->last << dendl;
-    auto effective_snapid = CEPH_SNAPDIFF_RM_FLAG | dn_before->last;
+    //auto effective_snapid = CEPH_SNAPDIFF_RM_FLAG | dn_before->last;
+    auto effective_snapid = mdr->get_effective_snapid_diff(0);
 
-    /*name.append(1, '~');
-    stringstream ss;
-    ss << effective_snapid;
-    name.append(ss.str());*/
-
-    //_include_readdir_diff(now, mdr, dn_before, dnbl);
     int r = _include_into_readdir_diff(now, mdr, realm, lease_mask_before,
       effective_snapid, name, dn_before, in_before, bytes_left, dnbl);
     dn_before = nullptr;
@@ -11058,6 +11056,7 @@ void Server::_readdir_diff(
     if (start)
       flags |= CEPH_READDIR_FRAG_COMPLETE; // FIXME: what purpose does this serve
   }
+  //FIXME:
   // client only understand END and COMPLETE flags ?
   /*if (req_flags & CEPH_READDIR_REPLY_BITFLAGS) {
     flags |= CEPH_READDIR_HASH_ORDER | CEPH_READDIR_OFFSET_HASH;
@@ -11100,7 +11099,6 @@ int Server::_include_into_readdir_diff(
     dout(10) << " ran out of room, stopping at " << dnbl.length() << " < " << bytes_left << dendl;
     return -ENOSPC;
   }
-  snapid = snapid | CEPH_SNAPDIFF_FLAG;
 
   unsigned start_len = dnbl.length();
 

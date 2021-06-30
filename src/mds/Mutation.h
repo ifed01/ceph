@@ -389,6 +389,12 @@ struct MDRequestImpl : public MutationImpl {
   bool is_queued_for_replay() const;
   int compare_paths();
 
+  static snapid_t get_effective_snapid_diff(
+    snapid_t s1,
+    snapid_t s2,
+    bool remove);
+  snapid_t get_effective_snapid_diff(size_t remove_lvl = 1) const;
+
   bool can_batch();
   bool is_batch_head() {
     return batch_op_map != nullptr;

@@ -8813,8 +8813,8 @@ int Client::readdir_r_cb(dir_result_t *d, add_dirent_cb_t cb, void *p,
       return r;
   }
 
-  if (!dirp->hash_order())
-    clear_dir_complete_and_ordered(dirp->inode.get(), true);
+  //if (!dirp->hash_order())
+  //clear_dir_complete_and_ordered(dirp->inode.get(), true);
 
   // can we read from our cache?
   ldout(cct, 10) << "offset " << hex << dirp->offset << dec
@@ -8825,6 +8825,15 @@ int Client::readdir_r_cb(dir_result_t *d, add_dirent_cb_t cb, void *p,
   if (dirp->inode->snapid != CEPH_SNAPDIR &&
       dirp->inode->is_complete_and_ordered() &&
       dirp->inode->caps_issued_mask(CEPH_CAP_FILE_SHARED, true)) {
+/*    if (dirp->inode->snapid != CEPH_NOSNAP &&
+          (dirp->inode->snapid & CEPH_SNAPDIFF_FLAG)) {
+      ldout(cct, 10) << " maybe clear " << dirp->inode->snapid << dendl;
+      //clear_dir_complete_and_ordered(dirp->inode.get(), true);
+    } else {
+      int err = _readdir_cache_cb(dirp, cb, p, caps, getref);
+      if (err != -CEPHFS_EAGAIN)
+	return err;
+    }*/
     int err = _readdir_cache_cb(dirp, cb, p, caps, getref);
     if (err != -CEPHFS_EAGAIN)
       return err;

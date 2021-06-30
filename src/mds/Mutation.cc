@@ -442,6 +442,29 @@ int MDRequestImpl::compare_paths()
   return 0;
 }
 
+snapid_t MDRequestImpl::get_effective_snapid_diff(snapid_t s1,
+                                                  snapid_t s2,
+                                                  bool remove)
+{
+  snapid_t res;
+  uint64_t mask = ((1ull << 31) - 1);
+  res = (s2 & mask) << 31;
+  uint64_t removed_mask =
+    remove ? CEPH_SNAPDIFF_RM_FLAG : 0;
+  res = res | (s1 & mask) | CEPH_SNAPDIFF_FLAG | removed_mask;
+  return res;
+}
+
+snapid_t MDRequestImpl::get_effective_snapid_diff(size_t remove_lvl) const
+{
+  snapid_t res = is_snapid_diff ?
+    get_effective_snapid_diff(snapid_diff_other,
+                              snapid,
+                              is_removed_snapid_diff >= remove_lvl) :
+    snapid;
+  return res;
+}
+
 cref_t<MClientRequest> MDRequestImpl::release_client_request()
 {
   msg_lock.lock();
