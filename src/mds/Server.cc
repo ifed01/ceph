@@ -2254,29 +2254,8 @@ void Server::set_trace_dist(const ref_t<MClientReply> &reply,
   Session *session = mdr->session;
   snapid_t snapid;
   snapid_t snapid_dir;
-  /*if (mdr->is_removed_snapid_diff) {
-    ceph_assert(mdr->is_snapid_diff);
-    snapid = mdr->snapid_diff_other | CEPH_SNAPDIFF_FLAG | CEPH_SNAPDIFF_RM_FLAG;
-    snapid_dir = mdr->is_removed_snapid_diff < 2 ?
-		  (mdr->snapid | CEPH_SNAPDIFF_FLAG) :
-		  (mdr->snapid_diff_other | CEPH_SNAPDIFF_FLAG | CEPH_SNAPDIFF_RM_FLAG);
-  } else {
-    snapid = mdr->is_snapid_diff ?
-		snapid_t(mdr->snapid | CEPH_SNAPDIFF_FLAG) :
-		mdr->snapid;
-    snapid_dir = snapid;
-  }*/
   snapid = mdr->get_effective_snapid_diff();
   snapid_dir = mdr->get_effective_snapid_diff(2);
-
-  /*if (mdr->is_removed_snapid_diff) {
-    ceph_assert(mdr->is_snapid_diff);
-    snapid = mdr->get_effective_snapid_diff();
-    snapid_dir = mdr->get_effective_snapid_diff(2);
-  } else {
-    snapid = mdr->get_effective_snapid_diff();
-    snapid_dir = snapid;
-  }*/
 
   utime_t now = ceph_clock_now();
 
@@ -10950,7 +10929,6 @@ void Server::_readdir_diff(
 	name.append(1, '~');
 	dout(5) << __func__ << " deleted dir " << dn->get_name() << " "
 	  << dn->first << "/" << dn->last << dendl;
-	//effective_snapid = CEPH_SNAPDIFF_RM_FLAG | dn->last;
 	effective_snapid = mdr->get_effective_snapid_diff(0);
 	name.append(dn->get_name());
       }	else {
@@ -10975,7 +10953,6 @@ void Server::_readdir_diff(
 	  name.append(name_before);
 	  dout(5) << __func__ << " deleted1 " << name_before << " "
 	    << dn_before->first << "/" << dn_before->last << dendl;
-	  //effective_snapid = CEPH_SNAPDIFF_RM_FLAG | dn_before->last;
 	  effective_snapid = mdr->get_effective_snapid_diff(0);
 
 	  int r = _include_into_readdir_diff(now, mdr, realm, lease_mask_before,
@@ -11034,7 +11011,6 @@ void Server::_readdir_diff(
     name.append(dn_before->get_name());
     dout(5) << __func__ << " deleted3 " << dn_before->get_name() << " "
       << dn_before->first << "/" << dn_before->last << dendl;
-    //auto effective_snapid = CEPH_SNAPDIFF_RM_FLAG | dn_before->last;
     auto effective_snapid = mdr->get_effective_snapid_diff(0);
 
     int r = _include_into_readdir_diff(now, mdr, realm, lease_mask_before,

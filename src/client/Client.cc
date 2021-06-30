@@ -8825,15 +8825,6 @@ int Client::readdir_r_cb(dir_result_t *d, add_dirent_cb_t cb, void *p,
   if (dirp->inode->snapid != CEPH_SNAPDIR &&
       dirp->inode->is_complete_and_ordered() &&
       dirp->inode->caps_issued_mask(CEPH_CAP_FILE_SHARED, true)) {
-/*    if (dirp->inode->snapid != CEPH_NOSNAP &&
-          (dirp->inode->snapid & CEPH_SNAPDIFF_FLAG)) {
-      ldout(cct, 10) << " maybe clear " << dirp->inode->snapid << dendl;
-      //clear_dir_complete_and_ordered(dirp->inode.get(), true);
-    } else {
-      int err = _readdir_cache_cb(dirp, cb, p, caps, getref);
-      if (err != -CEPHFS_EAGAIN)
-	return err;
-    }*/
     int err = _readdir_cache_cb(dirp, cb, p, caps, getref);
     if (err != -CEPHFS_EAGAIN)
       return err;
@@ -10001,14 +9992,20 @@ int Client::_read_async(Fh *f, uint64_t off, uint64_t len, bufferlist *bl)
     len = in->size - off;    
   }
 
+  auto snapid = in->snapid;
+  if (snapid < CEPH_MAXSNAP && CEPH_IS_SNAPDIFF(snapid)) {
+    snapid = snapid & CEPH_SNAPDIFF_ID_MASK;
+  }
   ldout(cct, 10) << " min_bytes=" << f->readahead.get_min_readahead_size()
                  << " max_bytes=" << f->readahead.get_max_readahead_size()
-                 << " max_periods=" << conf->client_readahead_max_periods << dendl;
+                 << " max_periods=" << conf->client_readahead_max_periods
+		 << " snapid=" << snapid
+		 << dendl;
 
   // read (and possibly block)
   int r = 0;
   C_SaferCond onfinish("Client::_read_async flock");
-  r = objectcacher->file_read(&in->oset, &in->layout, in->snapid,
+  r = objectcacher->file_read(&in->oset, &in->layout, snapid,
 			      off, len, bl, 0, &onfinish);
   if (r == 0) {
     get_cap_ref(in, CEPH_CAP_FILE_CACHE);
@@ -10024,7 +10021,7 @@ int Client::_read_async(Fh *f, uint64_t off, uint64_t len, bufferlist *bl)
       ldout(cct, 20) << "readahead " << readahead_extent.first << "~" << readahead_extent.second
 		     << " (caller wants " << off << "~" << len << ")" << dendl;
       Context *onfinish2 = new C_Readahead(this, f);
-      int r2 = objectcacher->file_read(&in->oset, &in->layout, in->snapid,
+      int r2 = objectcacher->file_read(&in->oset, &in->layout, snapid,
 				       readahead_extent.first, readahead_extent.second,
 				       NULL, 0, onfinish2);
       if (r2 == 0) {

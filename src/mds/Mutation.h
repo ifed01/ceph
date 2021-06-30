@@ -390,8 +390,8 @@ struct MDRequestImpl : public MutationImpl {
   int compare_paths();
 
   static snapid_t get_effective_snapid_diff(
-    snapid_t s1,
-    snapid_t s2,
+    snapid_t effective_s,
+    snapid_t aux_s,
     bool remove);
   snapid_t get_effective_snapid_diff(size_t remove_lvl = 1) const;
 
