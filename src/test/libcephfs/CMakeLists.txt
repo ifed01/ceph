@@ -11,6 +11,7 @@ if(${WITH_CEPHFS})
     deleg.cc
     monconfig.cc
     vxattr.cc
+    snapdiff.cc
   )
   target_link_libraries(ceph_test_libcephfs
     ceph-common
