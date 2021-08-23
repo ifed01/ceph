@@ -1304,6 +1304,7 @@ PastIntervals::PriorSet PeeringState::build_prior()
   }
 
   const OSDMap &osdmap = *get_osdmap();
+  ceph_assert(&missing_loc.get_recoverable_predicate() != nullptr);
   PastIntervals::PriorSet prior = past_intervals.get_prior_set(
     pool.info.is_erasure(),
     info.history.last_epoch_started,
@@ -2347,7 +2348,7 @@ bool PeeringState::choose_acting(pg_shard_t &auth_log_shard_id,
   set<pg_shard_t> want_backfill, want_acting_backfill;
   vector<int> want;
   stringstream ss;
-  if (pool.info.is_replicated()) {
+  if (pool.info.is_replicated() || pool.info.is_transparent()) {
     auto [primary_shard, oldest_log] = select_replicated_primary(
       auth_log_shard,
       cct->_conf.get_val<uint64_t>(
@@ -3729,7 +3730,7 @@ void PeeringState::update_calc_stats()
 		 << misplaced << dendl;
 
       // Handle undersized case
-      if (pool.info.is_replicated()) {
+      if (pool.info.is_replicated() || pool.info.is_transparent()) {
         // Add degraded for missing targets (num_objects missing)
         ceph_assert(target >= upset.size());
         unsigned needed = target - upset.size();
@@ -3762,7 +3763,7 @@ void PeeringState::update_calc_stats()
     }
 
     // Handle undersized case
-    if (pool.info.is_replicated()) {
+    if (pool.info.is_replicated() || pool.info.is_transparent()) {
       // Add to missing_target_objects
       ceph_assert(target >= missing_target_objects.size());
       unsigned needed = target - missing_target_objects.size();
@@ -3797,7 +3798,7 @@ void PeeringState::update_calc_stats()
 
       int64_t extra_missing = -1;
 
-      if (pool.info.is_replicated()) {
+      if (pool.info.is_replicated() || pool.info.is_transparent()) {
 	if (!acting_source_objects.empty()) {
 	  auto extra_copy = acting_source_objects.begin();
 	  extra_missing = std::get<0>(*extra_copy);

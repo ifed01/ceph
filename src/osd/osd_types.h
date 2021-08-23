@@ -1202,6 +1202,7 @@ struct pg_pool_t {
     TYPE_REPLICATED = 1,     // replication
     //TYPE_RAID4 = 2,   // raid4 (never implemented)
     TYPE_ERASURE = 3,      // erasure-coded
+    TYPE_TRANSPARENT = 4,
   };
   static constexpr uint32_t pg_CRUSH_ITEM_NONE = 0x7fffffff; /* can't import crush.h here */
   static std::string_view get_type_name(int t) {
@@ -1209,6 +1210,7 @@ struct pg_pool_t {
     case TYPE_REPLICATED: return "replicated";
       //case TYPE_RAID4: return "raid4";
     case TYPE_ERASURE: return "erasure";
+    case TYPE_TRANSPARENT: return "transparent";
     default: return "???";
     }
   }
@@ -1706,6 +1708,7 @@ public:
 
   bool is_replicated()   const { return get_type() == TYPE_REPLICATED; }
   bool is_erasure() const { return get_type() == TYPE_ERASURE; }
+  bool is_transparent() const { return get_type() == TYPE_TRANSPARENT; }
 
   bool supports_omap() const {
     return !(get_type() == TYPE_ERASURE);
@@ -1730,6 +1733,8 @@ public:
       return true;
     case TYPE_ERASURE:
       return false;
+    case TYPE_TRANSPARENT:
+      return true; //FIXME TRANSPARENT minor: is this correct
     default:
       ceph_abort_msg("unhandled pool type");
     }
