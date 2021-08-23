@@ -6542,6 +6542,7 @@ float OSDMap::pool_raw_used_rate(int64_t poolid) const
 
   switch (pool->get_type()) {
   case pg_pool_t::TYPE_REPLICATED:
+  case pg_pool_t::TYPE_TRANSPARENT:
     return pool->get_size();
   case pg_pool_t::TYPE_ERASURE:
   {

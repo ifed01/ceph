@@ -64,6 +64,7 @@
 #endif
 
 #include "PrimaryLogPG.h"
+#include "TransparentPG.h"
 
 #include "msg/Messenger.h"
 #include "msg/Message.h"
@@ -4802,10 +4803,13 @@ PG* OSD::_make_pg(
   PGPool pool(createmap, pgid.pool(), pi, name);
   PG *pg;
   if (pi.type == pg_pool_t::TYPE_REPLICATED ||
-      pi.type == pg_pool_t::TYPE_ERASURE)
+      pi.type == pg_pool_t::TYPE_ERASURE) {
     pg = new PrimaryLogPG(&service, createmap, pool, ec_profile, pgid);
-  else
-    ceph_abort();
+  } else if (pi.type == pg_pool_t::TYPE_TRANSPARENT) {
+    dout(0) << __func__ << " transparent " << dendl;
+    pg = new TransparentPG(&service, createmap, pool, ec_profile, pgid);
+  } else
+    ceph_abort_msg("transparent?????");
   return pg;
 }
 
@@ -9122,9 +9126,14 @@ void OSD::split_pgs(
     ceph_assert(stat_iter != updated_stats.end());
     dout(10) << __func__ << " splitting " << *parent << " into " << *i << dendl;
     PG* child = _make_pg(nextmap, *i);
+    dout(10) << __func__ << " splitting pg made " << dendl;
     child->lock(true);
+    dout(10) << __func__ << " splitting pg locked " << dendl;
     out_pgs->insert(child);
+    dout(10) << __func__ << " splitting pg before new collection " << dendl;
     child->ch = store->create_new_collection(child->coll);
+
+    dout(10) << __func__ << " splitting2 " << child->ch << dendl;
 
     {
       uint32_t shard_index = i->hash_to_shard(shards.size());
@@ -9287,6 +9296,7 @@ void OSD::dispatch_context(PeeringCtx &ctx, PG *pg, OSDMapRef curmap,
     }
   }
   if ((!ctx.transaction.empty() || ctx.transaction.has_contexts()) && pg) {
+    dout(0) << __func__ << " " << *pg << " " << pg->ch << " " << ctx.transaction << dendl;
     int tr = store->queue_transaction(
       pg->ch,
       std::move(ctx.transaction), TrackedOpRef(),
