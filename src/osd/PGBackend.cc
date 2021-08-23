@@ -20,6 +20,7 @@
 #include "common/scrub_types.h"
 #include "ReplicatedBackend.h"
 #include "osd/scrubber/ScrubStore.h"
+#include "TransparentBackend.h"
 #include "ECBackend.h"
 #include "PGBackend.h"
 #include "OSD.h"
@@ -599,6 +600,9 @@ PGBackend *PGBackend::build_pg_backend(
       cct,
       ec_impl,
       pool.stripe_width);
+  }
+  case pg_pool_t::TYPE_TRANSPARENT: {
+    return new TransparentBackend(l, coll, ch, store, cct);
   }
   default:
     ceph_abort();
