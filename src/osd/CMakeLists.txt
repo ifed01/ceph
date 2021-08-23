@@ -17,6 +17,8 @@ set(osd_srcs
   PGLog.cc
   PrimaryLogPG.cc
   ReplicatedBackend.cc
+  TransparentBackend.cc
+  TransparentPG.cc
   ECBackend.cc
   ECTransaction.cc
   PGBackend.cc
