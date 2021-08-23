@@ -7613,6 +7613,11 @@ int OSDMonitor::prepare_pool_size(const unsigned pool_type,
       }
     }
     break;
+  case pg_pool_t::TYPE_TRANSPARENT:
+    *size = 1;
+    if (!set_min_size)
+      *min_size = 1;
+    break;
   default:
     *ss << "prepare_pool_size: " << pool_type << " is not a known pool type";
     err = -EINVAL;
@@ -7629,6 +7634,7 @@ int OSDMonitor::prepare_pool_stripe_width(const unsigned pool_type,
   int err = 0;
   switch (pool_type) {
   case pg_pool_t::TYPE_REPLICATED:
+  case pg_pool_t::TYPE_TRANSPARENT:
     // ignored
     break;
   case pg_pool_t::TYPE_ERASURE:
@@ -7707,6 +7713,7 @@ int OSDMonitor::prepare_pool_crush_rule(const unsigned pool_type,
   if (*crush_rule < 0) {
     switch (pool_type) {
     case pg_pool_t::TYPE_REPLICATED:
+    case pg_pool_t::TYPE_TRANSPARENT:
       {
 	if (rule_name == "") {
 	  if (osdmap.stretch_mode_enabled) {
@@ -7921,7 +7928,8 @@ int OSDMonitor::prepare_new_pool(string& name,
     return r;
   }
 
-  if (osdmap.crush->get_rule_type(crush_rule) != (int)pool_type) {
+  if (pool_type != pg_pool_t::TYPE_TRANSPARENT && /*FIXME*/
+      osdmap.crush->get_rule_type(crush_rule) != (int)pool_type) {
     *ss << "crush rule " << crush_rule << " type does not match pool";
     return -EINVAL;
   }
@@ -12690,6 +12698,8 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       pool_type = pg_pool_t::TYPE_REPLICATED;
     } else if (pool_type_str == "erasure") {
       pool_type = pg_pool_t::TYPE_ERASURE;
+    } else if (pool_type_str == "transparent") {
+      pool_type = pg_pool_t::TYPE_TRANSPARENT;
     } else {
       ss << "unknown pool type '" << pool_type_str << "'";
       err = -EINVAL;

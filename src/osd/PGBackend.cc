@@ -19,6 +19,7 @@
 #include "common/errno.h"
 #include "common/scrub_types.h"
 #include "ReplicatedBackend.h"
+#include "TransparentBackend.h"
 #include "ScrubStore.h"
 #include "ECBackend.h"
 #include "PGBackend.h"
@@ -600,6 +601,9 @@ PGBackend *PGBackend::build_pg_backend(
       cct,
       ec_impl,
       pool.stripe_width);
+  }
+  case pg_pool_t::TYPE_TRANSPARENT: {
+    return new TransparentBackend(l, coll, ch, store, cct);
   }
   default:
     ceph_abort();
