@@ -28,6 +28,7 @@
 #include "mon/MonClient.h"
 #include "include/str_list.h"
 #include "include/stringify.h"
+#include "include/object.h"
 #include "messages/MMonMap.h"
 #include "msg/Messenger.h"
 #include "include/ceph_assert.h"
@@ -685,6 +686,86 @@ extern "C" int ceph_readdirplus_r(struct ceph_mount_info *cmount, struct ceph_di
   if (flags & ~CEPH_REQ_FLAG_MASK)
     return -EINVAL;
   return cmount->get_client()->readdirplus_r(reinterpret_cast<dir_result_t*>(dirp), de, stx, want, flags, out);
+}
+
+struct ceph_snapdiff_info
+{
+  struct ceph_mount_info* cmount = nullptr;
+  struct ceph_dir_result* dirp = nullptr;
+  struct ceph_dir_result* other = nullptr;
+};
+
+extern "C" int ceph_open_snapdiff(struct ceph_mount_info* cmount,
+                                  const char* snappath1,
+                                  const char* snappath2,
+                                  struct ceph_snapdiff_info** out)
+{
+  if (!cmount->is_mounted()) {
+    /* we set errno to signal errors. */
+    errno = ENOTCONN;
+    return -errno;
+  }
+  ceph_snapdiff_info* res = new ceph_snapdiff_info;
+  if (!res) {
+    errno = ENOMEM;
+    return -errno;
+  }
+  int r = ceph_opendir(cmount, snappath1, &(res->dirp));
+  if (r != 0) {
+    goto release_info;
+    return r;
+  }
+  r = ceph_opendir(cmount, snappath2, &(res->other));
+  if (r != 0) {
+    goto close_dirp;
+  }
+  //FIXME: check snappath matching
+
+  res->cmount = cmount;
+  *out = res;
+  return 0;
+  
+  ceph_closedir(cmount, res->other);
+close_dirp:
+  ceph_closedir(cmount, res->dirp);
+release_info:
+  delete res;  
+
+  return r;
+}
+
+extern "C" int ceph_readdir_snapdiff(struct ceph_snapdiff_info* snapdiff,
+                                     struct ceph_snapdiff_entry_t* out)
+{
+  if (!snapdiff->cmount->is_mounted()) {
+    /* also sets errno to signal errors. */
+    errno = ENOTCONN;
+    return -errno;
+  }
+  snapid_t snapid;
+  int r = snapdiff->cmount->get_client()->readdir_snapdiff(
+    reinterpret_cast<dir_result_t*>(snapdiff->dirp),
+    reinterpret_cast<dir_result_t*>(snapdiff->other),
+    &(out->dir_entry),
+    &snapid);
+  if (r >= 0) {
+    // converting snapid_t to uint64_t to avoid snapid_t exposure
+    out->snapid = snapid;
+  }
+  return r;
+}
+                          
+extern "C" int ceph_close_snapdiff(struct ceph_snapdiff_info* snapdiff)
+{
+  if (!snapdiff->cmount->is_mounted()) {
+    /* also sets errno to signal errors. */
+    errno = ENOTCONN;
+    return -errno;
+  }
+  ceph_closedir(snapdiff->cmount, snapdiff->other);
+  ceph_closedir(snapdiff->cmount, snapdiff->dirp);
+  delete snapdiff;
+  return 0;
 }
 
 extern "C" int ceph_getdents(struct ceph_mount_info *cmount, struct ceph_dir_result *dirp,

@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <fcntl.h>
+#include <dirent.h>
 
 #include "ceph_ll_client.h"
 
@@ -110,6 +111,11 @@ struct snap_info {
   uint64_t id;
   size_t nr_snap_metadata;
   struct snap_metadata *snap_metadata;
+};
+
+struct ceph_snapdiff_entry_t {
+  struct dirent dir_entry;
+  uint64_t snapid; //should be snapid_t but prefer not to exposure it
 };
 
 /* setattr mask bits (up to an int in size) */
@@ -607,23 +613,43 @@ int ceph_readdir_r(struct ceph_mount_info *cmount, struct ceph_dir_result *dirp,
 int ceph_readdirplus_r(struct ceph_mount_info *cmount, struct ceph_dir_result *dirp, struct dirent *de,
 		       struct ceph_statx *stx, unsigned want, unsigned flags, struct Inode **out);
 
-/** FIXME: update the comments!!!!
- * Get the next entry in an open snapshot delta's directory.
+struct ceph_snapdiff_info;
+
+/**
+ * Opens snapdiff stream to perform snapshot comparison (aka snapdiff).
  *
- * @param cmount the ceph mount handle to use for performing the readdir.
- * @param snapA - snapshot id to build delta on
- * @param snapB - snapshot id to build delta on
- * @param dirp the directory stream pointer from an opendir holding the state of the
- *        next entry to return.
- * @returns the next directory entry or NULL if at the end of the directory (or the directory
- *          is empty.  This pointer should not be freed by the caller, and is only safe to
- *          access between return and the next call to ceph_readdir or ceph_closedir.
+ * @param cmount the ceph mount handle to use for snapdiff retrieval.
+ * @param snappath1 the directory stream pointer from an opendir holding the
+ *                  primary snapshot entry to build snapdiff for.
+ * @param snap2 opposed snapshot's root(!) directory entry to build snapdiff
+                against
+ * @param out resulting snapdiff stream handle to be used for snapdiff results
+              retrieval
+ * @returns 0 on success and negative error code otherwise
  */
-int ceph_readdir_snapdiff(struct ceph_mount_info* cmount,
-				     struct ceph_dir_result* dirp,
-    				     uint64_t snapA, uint64_t snapB,
-				     struct dirent* res_dirent,
-				     uint64_t* res_snapid);
+int ceph_open_snapdiff(struct ceph_mount_info* cmount,
+                       const char* snappath1,
+                       const char* snappath2,
+                       struct ceph_snapdiff_info** out);
+/**
+ * Get the next entry for snapshot comparison(aka snapdiff) result.
+ *
+ * @param info snapdiff stream handle opened via ceph_open_snapdiff()
+ * @param out  the next snapdiff entry which includes directory entry and the
+ *             entry's snapshot id - freshier one for emerged/existing entry or
+ *             source snapshot id for the removed entry.
+ * @returns >0 on success, 0 if no more entries in the stream and negative
+ *          error code otherwise
+ */
+int ceph_readdir_snapdiff(struct ceph_snapdiff_info* snapdiff,
+                          struct ceph_snapdiff_entry_t* out);
+/**
+ * Close snapdiff stream.
+ *
+ * @param info snapdiff stream handle opened via ceph_open_snapdiff()
+ * @returns 0 on success and negative error code otherwise
+ */
+int ceph_close_snapdiff(struct ceph_snapdiff_info* snapdiff);
 
 /**
  * Gets multiple directory entries.
