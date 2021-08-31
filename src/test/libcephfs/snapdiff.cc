@@ -15,6 +15,7 @@
 #include "include/cephfs/libcephfs.h"
 #include "include/stat.h"
 #include "include/ceph_assert.h"
+#include "include/object.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -43,7 +44,10 @@ public:
   }
   ~TestMount()
   {
-    ceph_assert(0 == ceph_rmdir(cmount, dir_path));
+    if (cmount) {
+      ceph_assert(0 == purge_dir(""));
+    }
+    ceph_rmdir(cmount, dir_path);
     ceph_shutdown(cmount);
   }
 
@@ -58,10 +62,12 @@ public:
     sprintf(snap_name, "%s_%d", name, getpid());
     return snap_name;
   }
-  string make_snap_path(const char* name) {
+  string make_snap_path(const char* sname, const char* subdir = nullptr) {
     char snap_path[PATH_MAX];
-    string snap_name = make_snap_name(name);
-    sprintf(snap_path, "%s/.snap/%s", dir_path, snap_name.c_str());
+    string snap_name = subdir ?
+      concat_path(make_snap_name(sname), subdir) :
+      make_snap_name(sname);
+    sprintf(snap_path, ".snap/%s", snap_name.c_str());
     return snap_path;
   }
   string make_snapdiff_relpath(const char* name1, const char* name2,
@@ -88,6 +94,21 @@ public:
     string snap_name = make_snap_name(name);
     return ceph_rmsnap(cmount, dir_path, snap_name.c_str());
   }
+  int get_snapid(const char* name, uint64_t* res)
+  {
+    ceph_assert(res);
+    snap_info snap_info;
+
+    char snap_path[PATH_MAX];
+    string snap_name = make_snap_name(name);
+    sprintf(snap_path, "%s/.snap/%s", dir_path, snap_name.c_str());
+    int r = ceph_get_snap_info(cmount, snap_path, &snap_info);
+    if (r >= 0) {
+      *res = snap_info.id;
+      r = 0;
+    }
+    return r;
+  }
 
   int write_full(const char* relpath, const string& data)
   {
@@ -105,7 +126,7 @@ public:
   }
   string concat_path(string_view path, string_view name) {
     string s(path);
-    if (s.back() != '/') {
+    if (s.empty() || s.back() != '/') {
       s += '/';
     }
     s += name;
@@ -184,12 +205,80 @@ public:
         std::string name(dire->d_name);
         auto it = std::find(expected.begin(), end, name);
         if (it == end) {
+          std::cerr << "readdir_and_compare error: unexpected name:"
+                    << name << std::endl;
           return false;
         }
         expected.erase(it);
         return true;
       });
     if (r == 0 && !expected.empty()) {
+      std::cerr << __func__ << " error: left entries:" << std::endl;
+      for (auto& e : expected) {
+        std::cerr << e << std::endl;
+      }
+      std::cerr << __func__ << " ************" << std::endl;
+      r = -ENOTEMPTY;
+    }
+    return r;
+  }
+  int for_each_readdir_snapdiff(const char* snap1_relpath,
+    const char* snap2_relpath,
+    std::function<bool(const dirent*, uint64_t)> fn)
+  {
+    auto snap1_path = make_file_path(snap1_relpath);
+    auto snap2_path = make_file_path(snap2_relpath);
+    ceph_snapdiff_info* info = nullptr;
+    ceph_snapdiff_entry_t res_entry;
+    int r = ceph_open_snapdiff(cmount,
+                               snap1_path.c_str(),
+                               snap2_path.c_str(),
+                               &info);
+    if (r != 0) {
+      std::cerr << " Failed to open snapdiff, ret:" << r << std::endl;
+      return r;
+    }
+                               
+    while (0 < (r = ceph_readdir_snapdiff(info,
+                                          &res_entry))) {
+      if (strcmp(res_entry.dir_entry.d_name, ".") == 0 ||
+        strcmp(res_entry.dir_entry.d_name, "..") == 0) {
+        continue;
+      }
+      if (!fn(&res_entry.dir_entry, res_entry.snapid)) {
+        r = -EINTR;
+        break;
+      }
+    }
+    ceph_assert(0 == ceph_close_snapdiff(info));
+    return r;
+  }
+  int readdir_snapdiff_and_compare(const char* snap1_relpath,
+    const char* snap2_relpath,
+    const vector<pair<string, uint64_t>>& expected0)
+  {
+    vector<pair<string, uint64_t>> expected(expected0);
+    auto end = expected.end();
+    int r = for_each_readdir_snapdiff(snap1_relpath,
+      snap2_relpath,
+      [&](const dirent* dire, uint64_t snapid) {
+
+        pair<string, uint64_t> p = std::make_pair(dire->d_name, snapid);
+        auto it = std::find(expected.begin(), end, p);
+        if (it == end) {
+          std::cerr << "readdir_snapdiff_and_compare error: unexpected name:"
+            << dire->d_name << "/" << snapid << std::endl;
+          return false;
+        }
+        expected.erase(it);
+        return true;
+      });
+    if (r == 0 && !expected.empty()) {
+      std::cerr << __func__ << " error: left entries:" << std::endl;
+      for (auto& e : expected) {
+        std::cerr << e.first << "/" << e.second << std::endl;
+      }
+      std::cerr << __func__ << " ************" << std::endl;
       r = -ENOTEMPTY;
     }
     return r;
@@ -222,7 +311,9 @@ public:
     if (r != 0) {
       return r;
     }
-    r = rmdir(relpath0);
+    if (*relpath0 != 0) {
+      r = rmdir(relpath0);
+    }
     return r;
   }
 
@@ -235,16 +326,31 @@ public:
   }
 };
 
+//
+// Testing basic SnapDiff functionality.
+// Using SnapDiff API exposed via .snap path queries.
+// This tosses a bunch of 4 files through 2 snapshots at root folder
+// and verifies if SnapDiff (and relevant FS access helpers)
+// provide proper results
+//
 TEST(LibCephFS, SnapDiffSimple)
 {
   TestMount test_mount;
 
+  // Create 3 files with some original content
   ASSERT_LT(0, test_mount.write_full("fileA", "hello world"));
   ASSERT_LT(0, test_mount.write_full("fileC", "hello world in another file"));
   ASSERT_LT(0, test_mount.write_full("fileD", "hello world unmodified"));
 
+  // Make the first snapshot: snap1
+  // which keeps 3 files: fileA, fileC, fileD
   ASSERT_EQ(0, test_mount.mksnap("snap1"));
 
+  // Now invoke snapshot snap1 listing and make sure it contains
+  // all the expected files.
+  // This has nothing about SnapDiff so far, just checkiong
+  // our FS access helpers work as expected
+  //
   std::cout << "---------snap1 listing---------" << std::endl;
   ASSERT_EQ(0, test_mount.for_each_readdir("/",
     [&](const dirent* dire) {
@@ -258,22 +364,41 @@ TEST(LibCephFS, SnapDiffSimple)
     expected.push_back("fileD");
     ASSERT_EQ(0, test_mount.readdir_and_compare("/", expected));
   }
+  // Test if we check file content properly for existing file
   ASSERT_EQ(0, test_mount.readfull_and_compare("fileA", "hello world"));
+  // And get an error for  non-existing one
   ASSERT_EQ(-ERANGE, test_mount.readfull_and_compare("fileC", "hello world"));
 
+  // Now create/update/remove some files to get a delta between snap1 and head:
+  // fileA - content updated
+  // fileB - created
+  // fileC - removed
   ASSERT_LT(0, test_mount.write_full("fileA", "hello world again"));
   ASSERT_LT(0, test_mount.write_full("fileB", "hello world again in B"));
   ASSERT_EQ(0, test_mount.unlink("fileC"));
 
+  // and make another snapshot: snap2
   ASSERT_EQ(0, test_mount.mksnap("snap2"));
+
+  // get current listing for root, still mostly irelevant to SnapDiff
   std::cout << "---------snap2 listing---------" << std::endl;
   ASSERT_EQ(0, test_mount.for_each_readdir("/",
     [&](const dirent* dire) {
       std::cout << dire->d_name << std::endl;
       return true;
     }));
+  {
+    vector<string> expected;
+    expected.push_back("fileA");
+    expected.push_back("fileB");
+    expected.push_back("fileD");
+    ASSERT_EQ(0, test_mount.readdir_and_compare("/", expected));
+  }
 
-  std::cout << "---------invalid snapdiff path, the same snaps---------" << std::endl;
+  // Make sure SnapDiff returns an error when running SnapDiff gets the same
+  // snapshot name for both parties A and B.
+  std::cout << "---------invalid snapdiff path, the same snaps---------"
+            << std::endl;
   {
     auto snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap1");
     ASSERT_EQ(-ENOENT, test_mount.for_each_readdir(snapdiff_path.c_str(),
@@ -281,13 +406,31 @@ TEST(LibCephFS, SnapDiffSimple)
         return true;
       }));
   }
-  std::cout << "---------snap1 vs. snap2 diff listing---------" << std::endl;
+  // Another negative test: error on invalid snapshot name for SnapDiff's
+  // party B
+  std::cout << "---------invalid snapdiff path, broken snap2 ---------"
+            << std::endl;
+  {
+    // invalid file path - no slash between snapdiff and file names
+    auto snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap2");
+    string s = snapdiff_path;
+    s += "fileA";
+    ASSERT_EQ(-EACCES, test_mount.readfull_and_compare(s.c_str(), "hello world again"));
+  }
+
+  //
+  // Get FS delta (SnapDiff) for snapshots: snap1 and snap2
+  //
+  // At first just make sure OK is returned and print that delta to cout
+  std::cout << "---------snap1 vs. snap2 diff listing---------"
+            << std::endl;
   auto snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap2");
   ASSERT_EQ(0, test_mount.for_each_readdir(snapdiff_path.c_str(),
     [&](const dirent* dire) {
       std::cout << dire->d_name << std::endl;
       return true;
     }));
+  // Now make sure readdir results match our expectations,
   std::cout << "---------reading from snapdiff results---------" << std::endl;
   {
     vector<string> expected;
@@ -298,20 +441,33 @@ TEST(LibCephFS, SnapDiffSimple)
       test_mount.readdir_and_compare(snapdiff_path.c_str(),expected));
   }
 
+  // Now checking if access to files at HEAD still works properly
   ASSERT_EQ(0, test_mount.readfull_and_compare("fileA", "hello world again"));
+  ASSERT_EQ(0, test_mount.readfull_and_compare("fileB",
+    "hello world again in B"));
   ASSERT_EQ(-EACCES, test_mount.readfull_and_compare("fileC", "hello world"));
+  ASSERT_EQ(0, test_mount.readfull_and_compare("fileD",
+   "hello world unmodified"));
 
-  ASSERT_EQ(0, test_mount.readfull_and_compare(snapdiff_path, "fileA", "hello world again"));
-  ASSERT_EQ(-EINVAL, test_mount.readfull_and_compare(snapdiff_path, "fileA", "hello world AGAIN"));
+  // Now checking if access to files through SnapDiff path (snap1 vs. snap2)
+  // works as expected
+  //
+
+  // Check if fileA has got expected content from snap2
+  ASSERT_EQ(0, test_mount.readfull_and_compare(snapdiff_path, "fileA",
+   "hello world again"));
+  // paranoic check if readfull_and_compare works properly for SnapDiff:
+  // i.e. it  returns error when getting unexpected content
+  //
+  ASSERT_EQ(-EINVAL, test_mount.readfull_and_compare(snapdiff_path, "fileA",
+   "hello world AGAIN"));
+
+  // fileB to get proper content from snap2
   ASSERT_EQ(0, test_mount.readfull_and_compare(snapdiff_path, "fileB", "hello world again in B"));
+
+  // fileC to be marked as removed and it has got content from snap1
   ASSERT_EQ(0, test_mount.readfull_and_compare(snapdiff_path, "~fileC", "hello world in another file"));
-  std::cout << "---------invalid snapdiff path, no snap2 ---------" << std::endl;
-  {
-    // invalid file path - no slash between snapdiff and file names
-    string s = snapdiff_path;
-    s += "fileA";
-    ASSERT_EQ(-EACCES, test_mount.readfull_and_compare(s.c_str(), "hello world again"));
-  }
+
   std::cout << "------------- closing -------------" << std::endl;
 
   ASSERT_EQ(0, test_mount.unlink("fileA"));
@@ -321,7 +477,10 @@ TEST(LibCephFS, SnapDiffSimple)
   ASSERT_EQ(0, test_mount.rmsnap("snap2"));
 }
 
-/* The following method creates the following layout of files/folders/snapshots,
+/* The following method creates some files/folders/snapshots layout,
+   described in the sheet below.
+   We're to test SnapDiff against that structure.
+
 * where:
   - xN denotes file 'x' version N.
   - X denotes folder name
@@ -388,8 +547,8 @@ void prepareSnapDiffCases(TestMount& test_mount)
   ceph_assert(0 == test_mount.mkdir("C"));
   ceph_assert(0 < test_mount.write_full("C/cc", "file 'C/cc' v1"));
 
-  ceph_assert(0 == test_mount.mkdir("C/C1"));
-  ceph_assert(0 < test_mount.write_full("C/C1/c", "file 'C/C1/c' v1"));
+  ceph_assert(0 == test_mount.mkdir("C/CC"));
+  ceph_assert(0 < test_mount.write_full("C/CC/c", "file 'C/CC/c' v1"));
 
   ceph_assert(0 == test_mount.mkdir("G"));
   ceph_assert(0 < test_mount.write_full("G/gg", "file 'G/gg' v1"));
@@ -494,15 +653,24 @@ void prepareSnapDiffCases(TestMount& test_mount)
   ceph_assert(0 == test_mount.purge_dir("L/LN"));
 }
 
-TEST(LibCephFS, SnapDiffVariousCases)
+//
+// This case tests SnapDiff functionality for snap1/snap2 snapshot delta
+// retrieved through .snap path-based query API.
+// It operates against FS layout created by prepareSnapDiffCases() method,
+// see relevant table before that function for FS state overview.
+//
+TEST(LibCephFS, SnapDiffCases1_2)
 {
   TestMount test_mount;
 
+  // Create directory tree evolving through a bunch of snapshots
   prepareSnapDiffCases(test_mount);
 
   string snapdiff_path;
 
   {
+    // Print snapshot delta (snap1 vs. snap2) results for root in a
+    // human-readable form.
     std::cout << "---------snap1 vs. snap2 diff listing---------" << std::endl;
     snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap2");
     ASSERT_EQ(0, test_mount.for_each_readdir(snapdiff_path.c_str(),
@@ -512,25 +680,37 @@ TEST(LibCephFS, SnapDiffVariousCases)
       }));
     std::cout << std::endl;
 
+    // Make sure the root delta is as expected
+    // One should use columns snap1 and snap2 from
+    // the table preceeding prepareSnapDiffCases() function
+    // to learn which names to expect in the delta.
+    //
+    //  - file 'a' is unchanged hence not present in delta
+    //  - file 'ff' is unchanged hence not present in delta
+    //  - file 'i' is unchanged hence not present in delta
+    //
     vector<string> expected;
-    expected.push_back("b");
-    expected.push_back("~c");
-    expected.push_back("d");
-    expected.push_back("f");
-    expected.push_back("~g");
-    expected.push_back("S");
-    expected.push_back("T");
-    expected.push_back("~C");
-    expected.push_back("~G");
-    expected.push_back("k");
-    expected.push_back("l");
-    expected.push_back("K");
-    expected.push_back("I");
-    expected.push_back("L");
-
+    expected.push_back("b");  // file 'b' is updated in snap2
+    expected.push_back("~c"); // file 'c' is removed in snap2
+    expected.push_back("d");  // file 'd' is created in snap2
+    expected.push_back("f");  // file 'f' is updated in snap2
+    expected.push_back("~g"); // file 'g' is removed in snap2
+    expected.push_back("S");  // folder 'S' is present in snap2 hence reported
+    expected.push_back("T");  // folder 'T' is created in snap2
+    expected.push_back("~C"); // folder '~C' is removed in snap2
+    expected.push_back("~G"); // folder '~G' is removed in snap2
+    expected.push_back("k");  // file 'k' is created in snap2
+    expected.push_back("l");  // file 'l' is created in snap2
+    expected.push_back("K");  // folder 'K' is created in snap2
+    expected.push_back("I");  // folder 'I' is created in snap2
+    expected.push_back("L");  // folder 'L' is present in snap2 but got more
+                              // subfolders
     ASSERT_EQ(0,
       test_mount.readdir_and_compare(snapdiff_path.c_str(), expected));
 
+    //
+    // selectively check the content for entries from root snapshot diff
+    //
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "b", "file 'b' v2"));
     ASSERT_EQ(0,
@@ -540,48 +720,83 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "~g", "file 'g' v1"));
 
+    //
+    // Make sure snapshot delta for /S (existed at both snap1 and snap2)
+    // is as expected
+    //
     expected.clear();
     expected.push_back("sa");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap2", "S");
     ASSERT_EQ(0,
       test_mount.readdir_and_compare(snapdiff_path.c_str(), expected));
+
+    //
+    // Make sure sa file from /S snapshot delta has proper
+    // content, i.e one from snap2's sa file
+    //
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "sa", "file 'S/sa' v2"));
 
+    //
+    // Make sure snapshot delta for /T (created at snap2)
+    // is as expected
+    //
     expected.clear();
     expected.push_back("td");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap2", "T");
     ASSERT_EQ(0,
       test_mount.readdir_and_compare(snapdiff_path.c_str(), expected));
+
+    // check the content for T/td
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "td", "file 'T/td' v2"));
 
+    //
+    // Make sure snapshot delta for /C (removed at snap2)
+    // is as expected
+    //
     expected.clear();
     expected.push_back("~cc");
-    expected.push_back("~C1");
+    expected.push_back("~CC");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap2", "~C");
     ASSERT_EQ(0,
       test_mount.readdir_and_compare(snapdiff_path.c_str(), expected));
+
+    // check the content for removed /C/cc
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "~cc", "file 'C/cc' v1"));
 
+    //
+    // Make sure snapshot delta for /C/CC (removed at snap2)
+    // is as expected
+    //
     expected.clear();
     expected.push_back("~c");
-    snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap2", "~C/~C1");
+    snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap2", "~C/~CC");
     ASSERT_EQ(0,
       test_mount.readdir_and_compare(snapdiff_path.c_str(), expected));
+    // check the content for removed /C/CC/c
     ASSERT_EQ(0,
-      test_mount.readfull_and_compare(snapdiff_path.c_str(), "~c", "file 'C/C1/c' v1"));
+      test_mount.readfull_and_compare(snapdiff_path.c_str(), "~c", "file 'C/CC/c' v1"));
 
+    //
+    // Make sure snapshot delta for /I (created at snap2)
+    // is as expected
+    //
     expected.clear();
     expected.push_back("ii");
     expected.push_back("J");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap2", "I");
     ASSERT_EQ(0,
       test_mount.readdir_and_compare(snapdiff_path.c_str(), expected));
+    // check the content for removed /I/ii
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "ii", "file 'I/ii' v2"));
 
+    //
+    // Make sure snapshot delta for /I/J (created at snap2)
+    // is as expected
+    //
     expected.clear();
     expected.push_back("i");
     expected.push_back("j");
@@ -592,6 +807,10 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "k", "file 'I/J/k' v2"));
 
+    //
+    // Make sure snapshot delta for /L (extended at snap2)
+    // is as expected
+    //
     expected.clear();
     expected.push_back("LL");
     expected.push_back("LM");
@@ -600,6 +819,10 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readdir_and_compare(snapdiff_path.c_str(), expected));
 
+    //
+    // Make sure snapshot delta for /L/LL (updated at snap2)
+    // is as expected
+    //
     expected.clear();
     expected.push_back("ll");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap2", "L/LL");
@@ -608,12 +831,52 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "ll", "file 'L/LL/ll' v2"));
 
+    //
+    // Make sure snapshot delta for /L/LN (created empty at snap2)
+    // is as expected
+    //
     expected.clear();
     snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap2", "L/LN");
     ASSERT_EQ(0,
       test_mount.readdir_and_compare(snapdiff_path.c_str(), expected));
+
+    // Make sure snapshot delta for /L/LM (created at snap2)
+    // is as expected
+    //
+    expected.clear();
+    expected.push_back("lm");
+    snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap2", "L/LM");
+    ASSERT_EQ(0,
+      test_mount.readdir_and_compare(snapdiff_path.c_str(), expected));
+    ASSERT_EQ(0,
+      test_mount.readfull_and_compare(snapdiff_path.c_str(), "lm", "file 'L/LM/lm' v2"));
   }
 
+  std::cout << "-------------" << std::endl;
+
+  test_mount.remove_all();
+  test_mount.rmsnap("snap1");
+  test_mount.rmsnap("snap2");
+  test_mount.rmsnap("snap3");
+}
+
+//
+// This case tests SnapDiff functionality for snap2/snap3 snapshot delta
+// retrieved through .snap path-based query API.
+// It operates against FS layout created by prepareSnapDiffCases() method,
+// see relevant table before that function for FS state overview.
+//
+TEST(LibCephFS, SnapDiffCases2_3)
+{
+  TestMount test_mount;
+
+  // Create directory tree evolving through a bunch of snapshots
+  prepareSnapDiffCases(test_mount);
+
+  string snapdiff_path;
+
+  // Print snapshot delta (snap2 vs. snap3) results for root in a
+  // human-readable form.
   {
     std::cout << "---------snap2 vs. snap3 diff listing---------" << std::endl;
     snapdiff_path = test_mount.make_snapdiff_relpath("snap2", "snap3");
@@ -624,25 +887,36 @@ TEST(LibCephFS, SnapDiffVariousCases)
       }));
     std::cout << std::endl;
 
+    // Make sure the root delta is as expected
+    // One should use columns snap1 and snap2 from
+    // the table preceeding prepareSnapDiffCases() function
+    // to learn which names to expect in the delta.
+    //
+    //  - file 'c' is removed since snap1 hence not present in delta
+    //  - file 'l' is unchanged hence not present in delta
+    //  - file 'i' is unchanged hence not present in delta
+    //
     vector<string> expected;
-    expected.push_back("a");
-    expected.push_back("b");
-    expected.push_back("d");
-    expected.push_back("~f");
-    expected.push_back("~ff");
-    expected.push_back("g");
-    expected.push_back("S");
-    expected.push_back("T");
-    expected.push_back("G");
-    expected.push_back("~k");
-    expected.push_back("~K");
-    expected.push_back("H");
-    expected.push_back("I");
-    expected.push_back("L");
-
+    expected.push_back("a");   // file 'a' is updated in snap3
+    expected.push_back("b");   // file 'b' is updated in snap3
+    expected.push_back("d");   // file 'd' is updated in snap3
+    expected.push_back("~f");  // file 'f' is removed in snap3
+    expected.push_back("~ff"); // file 'ff' is removed in snap3
+    expected.push_back("g");   // file 'g' re-appeared in snap3
+    expected.push_back("S");   // folder 'S' is present in snap3 hence reported
+    expected.push_back("T");   // folder 'T' is present in snap3 hence reported
+    expected.push_back("G");   // folder 'G' re-appeared in snap3 hence reported
+    expected.push_back("~k");  // file 'k' is removed in snap3
+    expected.push_back("~K");  // folder 'K' is removed in snap3
+    expected.push_back("H");   // folder 'H' is created in snap3 hence reported
+    expected.push_back("I");   // folder 'I' is present in snap3 hence reported
+    expected.push_back("L");   // folder 'L' is present in snap3 hence reported
     ASSERT_EQ(0,
       test_mount.readdir_and_compare(snapdiff_path.c_str(), expected));
 
+    //
+    // Check the content for entries from root snapshot diff
+    //
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "a", "file 'a' v3"));
     ASSERT_EQ(0,
@@ -658,6 +932,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "~k", "file 'k' v2"));
 
+    //
+    // Make sure snapshot delta for /S (children updated) is as expected
+    //
     expected.clear();
     expected.push_back("sa");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap2", "snap3", "S");
@@ -666,6 +943,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "sa", "file 'S/sa' v3"));
 
+    //
+    // Make sure snapshot delta for /T (children updated) is as expected
+    //
     expected.clear();
     expected.push_back("td");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap2", "snap3", "T");
@@ -674,6 +954,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "td", "file 'T/td' v3"));
 
+    //
+    // Make sure snapshot delta for /G (re-appeared) is as expected
+    //
     expected.clear();
     expected.push_back("gg");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap2", "snap3", "G");
@@ -682,6 +965,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "gg", "file 'G/gg' v3"));
 
+    //
+    // Make sure snapshot delta for /K (removed) is as expected
+    //
     expected.clear();
     expected.push_back("~kk");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap2", "snap3", "~K");
@@ -690,6 +976,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "~kk", "file 'K/kk' v2"));
 
+    //
+    // Make sure snapshot delta for /H (created) is as expected
+    //
     expected.clear();
     expected.push_back("hh");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap2", "snap3", "H");
@@ -698,6 +987,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "hh", "file 'H/hh' v3"));
 
+    //
+    // Make sure snapshot delta for /I (children updated) is as expected
+    //
     expected.clear();
     expected.push_back("ii");
     expected.push_back("iii");
@@ -713,6 +1005,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "iiii", "file 'I/iiii' v3"));
 
+    //
+    // Make sure snapshot delta for /I/J (children updated/removed) is as expected
+    //
     expected.clear();
     expected.push_back("i");
     expected.push_back("~k");
@@ -727,6 +1022,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "l", "file 'I/J/l' v3"));
 
+    //
+    // Make sure snapshot delta for /L (children updated/removed) is as expected
+    //
     expected.clear();
     expected.push_back("ll");
     expected.push_back("LL");
@@ -738,6 +1036,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "ll", "file 'L/ll' v3"));
 
+    //
+    // Make sure snapshot delta for /L/LL (children updated) is as expected
+    //
     expected.clear();
     expected.push_back("ll");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap2", "snap3", "L/LL");
@@ -746,6 +1047,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "ll", "file 'L/LL/ll' v3"));
 
+    //
+    // Make sure snapshot delta for /L/LM (removed) is as expected
+    //
     expected.clear();
     expected.push_back("~lm");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap2", "snap3", "L/~LM");
@@ -754,13 +1058,42 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "~lm", "file 'L/LM/lm' v2"));
 
+    //
+    // Make sure snapshot delta for /L/LN (created empty) is as expected
+    //
     expected.clear();
     snapdiff_path = test_mount.make_snapdiff_relpath("snap2", "snap3", "L/LN");
     ASSERT_EQ(0,
       test_mount.readdir_and_compare(snapdiff_path.c_str(), expected));
   }
+  std::cout << "-------------" << std::endl;
+
+  test_mount.remove_all();
+  test_mount.rmsnap("snap1");
+  test_mount.rmsnap("snap2");
+  test_mount.rmsnap("snap3");
+}
+
+//
+// This case tests SnapDiff functionality for snap1/snap3 snapshot delta
+// retrieved through .snap path-based query API.
+// It operates against FS layout created by prepareSnapDiffCases() method,
+// see relevant table before that function for FS state overview.
+//
+TEST(LibCephFS, SnapDiffCases1_3)
+{
+  TestMount test_mount;
+
+
+  // Create directory tree evolving through a bunch of snapshots
+  prepareSnapDiffCases(test_mount);
+
+  string snapdiff_path;
+
   {
-    std::cout << "---------snap1 vs. snap3 diff listing---------" << std::endl;
+    // Print snapshot delta (snap3 vs. snap1) results for root in a
+    // human-readable form.
+    std::cout << "---------snap3 vs. snap1 diff listing---------" << std::endl;
     snapdiff_path = test_mount.make_snapdiff_relpath("snap3", "snap1");
     ASSERT_EQ(0, test_mount.for_each_readdir(snapdiff_path.c_str(),
       [&](const dirent* dire) {
@@ -768,27 +1101,42 @@ TEST(LibCephFS, SnapDiffVariousCases)
         return true;
       }));
     std::cout << std::endl;
-    vector<string> expected;
-    expected.push_back("a");
-    expected.push_back("b");
-    expected.push_back("~c");
-    expected.push_back("d");
-    expected.push_back("~f");
-    expected.push_back("~ff");
-    expected.push_back("g");
-    expected.push_back("S");
-    expected.push_back("T");
-    expected.push_back("~C");
-    expected.push_back("G");
-    expected.push_back("l");
-    expected.push_back("~G");
-    expected.push_back("H");
-    expected.push_back("I");
-    expected.push_back("L");
 
+    // Make sure the root delta is as expected
+    // One should use columns snap1 and snap3 from
+    // the table preceeding prepareSnapDiffCases() function
+    // to learn which names to expect in the delta.
+    //
+    //  - file 'i' is unchanged hence not present in delta
+    //
+    vector<string> expected;
+    expected.push_back("a");   // file 'a' is updated in snap3
+    expected.push_back("b");   // file 'b' is updated in snap3
+    expected.push_back("~c");  // file 'c' is removed in snap2
+    expected.push_back("d");   // file 'd' is updated in snap3
+    expected.push_back("~f");  // file 'f' is removed in snap3
+    expected.push_back("~ff"); // file 'ff' is removed in snap3
+    expected.push_back("g");   // file 'g' removed in snap2 and
+                               // re-appeared in snap3
+    expected.push_back("S");   // folder 'S' is present in snap3 hence reported
+    expected.push_back("T");   // folder 'T' is present in snap3 hence reported
+    expected.push_back("~C");  // folder 'C' is removed in snap2
+
+    // folder 'G' is removed in snap2 and re-appeared in snap3
+    // hence we indicate it as both removed and present
+    expected.push_back("~G");
+    expected.push_back("G");
+
+    expected.push_back("l");   // file 'l' is created in snap2
+    expected.push_back("H");   // folder 'H' is created in snap3 hence reported
+    expected.push_back("I");   // folder 'I' is created in snap3 hence reported
+    expected.push_back("L");   // folder 'L' is created in snap3 hence reported
     ASSERT_EQ(0,
       test_mount.readdir_and_compare(snapdiff_path.c_str(), expected));
 
+    //
+    // Check the content for entries from root snapshot diff
+    //
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "a", "file 'a' v3"));
     ASSERT_EQ(0,
@@ -806,6 +1154,10 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "l", "file 'l' v2"));
 
+
+    //
+    // Make sure snapshot delta for /S (children updated) is as expected
+    //
     expected.clear();
     expected.push_back("sa");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap3", "S");
@@ -814,6 +1166,10 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "sa", "file 'S/sa' v3"));
 
+
+    //
+    // Make sure snapshot delta for /T (created and children updated) is as expected
+    //
     expected.clear();
     expected.push_back("td");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap3", "T");
@@ -822,23 +1178,33 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "td", "file 'T/td' v3"));
 
+
+    //
+    // Make sure snapshot delta for /C (removed) is as expected
+    //
     expected.clear();
     expected.push_back("~cc");
-    expected.push_back("~C1");
+    expected.push_back("~CC");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap3", "~C");
     ASSERT_EQ(0,
       test_mount.readdir_and_compare(snapdiff_path.c_str(), expected));
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "~cc", "file 'C/cc' v1"));
 
+    //
+    // Make sure snapshot delta for /C/C (removed) is as expected
+    //
     expected.clear();
     expected.push_back("~c");
-    snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap3", "~C/~C1");
+    snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap3", "~C/~CC");
     ASSERT_EQ(0,
       test_mount.readdir_and_compare(snapdiff_path.c_str(), expected));
     ASSERT_EQ(0,
-      test_mount.readfull_and_compare(snapdiff_path.c_str(), "~c", "file 'C/C1/c' v1"));
+      test_mount.readfull_and_compare(snapdiff_path.c_str(), "~c", "file 'C/CC/c' v1"));
 
+    //
+    // Make sure snapshot delta for /G (removed) is as expected
+    //
     expected.clear();
     expected.push_back("~gg");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap3", "~G");
@@ -847,6 +1213,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "~gg", "file 'G/gg' v1"));
 
+    //
+    // Make sure snapshot delta for /G (re-created) is as expected
+    //
     expected.clear();
     expected.push_back("gg");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap3", "G");
@@ -855,6 +1224,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "gg", "file 'G/gg' v3"));
 
+    //
+    // Make sure snapshot delta for /H (created) is as expected
+    //
     expected.clear();
     expected.push_back("hh");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap3", "H");
@@ -863,6 +1235,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "hh", "file 'H/hh' v3"));
 
+    //
+    // Make sure snapshot delta for /I (chinldren updated) is as expected
+    //
     expected.clear();
     expected.push_back("ii");
     expected.push_back("iii");
@@ -874,6 +1249,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "iii", "file 'I/iii' v3"));
 
+    //
+    // Make sure snapshot delta for /I/J (created at snap2) is as expected
+    //
     expected.clear();
     expected.push_back("i");
     expected.push_back("j");
@@ -886,6 +1264,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "l", "file 'I/J/l' v3"));
 
+    //
+    // Make sure snapshot delta for /I/J (children updated) is as expected
+    //
     expected.clear();
     expected.push_back("ll");
     expected.push_back("LL");
@@ -896,6 +1277,9 @@ TEST(LibCephFS, SnapDiffVariousCases)
     ASSERT_EQ(0,
       test_mount.readfull_and_compare(snapdiff_path.c_str(), "ll", "file 'L/ll' v3"));
 
+    //
+    // Make sure snapshot delta for /L/LL (children updated) is as expected
+    //
     expected.clear();
     expected.push_back("ll");
     snapdiff_path = test_mount.make_snapdiff_relpath("snap1", "snap3", "L/LL");
@@ -915,4 +1299,533 @@ TEST(LibCephFS, SnapDiffVariousCases)
   test_mount.rmsnap("snap1");
   test_mount.rmsnap("snap2");
   test_mount.rmsnap("snap3");
+}
+
+/* The following method creates some files/folders/snapshots layout,
+   described in the sheet below.
+   We're to test SnapDiff readdir API against that structure.
+
+* where:
+  - xN denotes file 'x' version N.
+  - X denotes folder name
+  - * denotes no/removed file/folder
+
+#    snap1         snap2
+# fileA1      | fileA2      |
+# *           | fileB2      |
+# fileC1      | *           |
+# fileD1      | fileD1      |
+# dirA        | dirA        |
+# dirA/fileA1 | dirA/fileA2 |
+# *           | dirB        |
+# *           | dirB/fileb2 |
+# dirC        | *           |
+# dirC/filec1 | *           |
+# dirD        | dirD        |
+# dirD/fileD1 | dirD/fileD1 |
+*/
+void prepareSnapDiffLibCases(TestMount& test_mount)
+{
+  //************ snap1 *************
+  ceph_assert(0 < test_mount.write_full("fileA", "hello world"));
+  ceph_assert(0 < test_mount.write_full("fileC", "hello world to be removed"));
+  ceph_assert(0 < test_mount.write_full("fileD", "hello world unmodified"));
+  ceph_assert(0 == test_mount.mkdir("dirA"));
+  ceph_assert(0 < test_mount.write_full("dirA/fileA", "file 'A/a' v1"));
+  ceph_assert(0 == test_mount.mkdir("dirC"));
+  ceph_assert(0 < test_mount.write_full("dirC/filec", "file 'C/c' v1"));
+  ceph_assert(0 == test_mount.mkdir("dirD"));
+  ceph_assert(0 < test_mount.write_full("dirD/filed", "file 'D/d' v1"));
+
+  ceph_assert(0 == test_mount.mksnap("snap1"));
+
+  //************ snap2 *************
+  ceph_assert(0 < test_mount.write_full("fileA", "hello world again in A"));
+  ceph_assert(0 < test_mount.write_full("fileB", "hello world in B"));
+  ceph_assert(0 == test_mount.unlink("fileC"));
+
+  ceph_assert(0 < test_mount.write_full("dirA/fileA", "file 'A/a' v2"));
+  ceph_assert(0 == test_mount.purge_dir("dirC"));
+  ceph_assert(0 == test_mount.mkdir("dirB"));
+  ceph_assert(0 < test_mount.write_full("dirB/fileb", "file 'B/b' v2"));
+
+  ceph_assert(0 == test_mount.mksnap("snap2"));
+}
+
+/*
+* Basic functionality testing for the SnapDiff readdir API
+*/
+TEST(LibCephFS, SnapDiffLib)
+{
+  TestMount test_mount;
+
+  // Create simple directory tree with a couple of snapshots
+  // to test against
+  prepareSnapDiffLibCases(test_mount);
+
+  uint64_t snapid1;
+  uint64_t snapid2;
+
+  // learn snapshot ids and do basic verification
+  ASSERT_EQ(0, test_mount.get_snapid("snap1", &snapid1));
+  ASSERT_EQ(0, test_mount.get_snapid("snap2", &snapid2));
+  ASSERT_GT(snapid1, 0);
+  ASSERT_GT(snapid2, 0);
+  ASSERT_GT(snapid2, snapid1);
+  std::cout << snapid1 << " vs. " << snapid2 << std::endl;
+
+  //
+  // Make sure root listing for snapshot snap1 is as expected
+  //
+  {
+    std::cout << "---------snap1 listing verification---------" << std::endl;
+    string snap_path = test_mount.make_snap_path("snap1");
+    vector<string> expected;
+    expected.push_back("fileA");
+    expected.push_back("fileC");
+    expected.push_back("fileD");
+    expected.push_back("dirA");
+    expected.push_back("dirC");
+    expected.push_back("dirD");
+    ASSERT_EQ(0,
+      test_mount.readdir_and_compare(snap_path.c_str(), expected));
+  }
+
+  //
+  // Make sure root listing for snapshot snap2 is as expected
+  //
+  {
+    std::cout << "---------snap2 listing verification---------" << std::endl;
+    string snap_path = test_mount.make_snap_path("snap2");
+    vector<string> expected;
+    expected.push_back("fileA");
+    expected.push_back("fileB");
+    expected.push_back("fileD");
+    expected.push_back("dirA");
+    expected.push_back("dirB");
+    expected.push_back("dirD");
+    ASSERT_EQ(0,
+      test_mount.readdir_and_compare(snap_path.c_str(), expected));
+  }
+
+  //
+  // Print snap1 vs. snap2 delta for the root
+  //
+  {
+    string snap_path = test_mount.make_snap_path("snap2");
+    string snap_other_path = test_mount.make_snap_path("snap1");
+    std::cout << "---------snap1 vs. snap2 diff listing---------" << std::endl;
+    ASSERT_EQ(0, test_mount.for_each_readdir_snapdiff(
+      snap_path.c_str(),
+      snap_other_path.c_str(),
+      [&](const dirent* dire, uint64_t snapid) {
+        std::cout << dire->d_name << " snap " << snapid << std::endl;
+        return true;
+      }));
+  }
+
+  //
+  // Make sure snap1 vs. snap2 delta for the root is as expected
+  //
+  {
+    string snap_path = test_mount.make_snap_path("snap2");
+    string snap_other_path = test_mount.make_snap_path("snap1");
+    std::cout << "---------snap1 vs. snap2 diff listing verification---------"
+              << std::endl;
+    vector<pair<string, uint64_t>> expected;
+    expected.emplace_back("fileA", snapid2);
+    expected.emplace_back("fileB", snapid2);
+    expected.emplace_back("fileC", snapid1);
+    expected.emplace_back("dirA", snapid2);
+    expected.emplace_back("dirB", snapid2);
+    expected.emplace_back("dirC", snapid1);
+    expected.emplace_back("dirD", snapid2);
+    ASSERT_EQ(0,
+      test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
+        snap_other_path.c_str(),
+        expected));
+
+    // Check if different order of snapshot names in the request doesn't matter
+    snap_path = test_mount.make_snap_path("snap1");
+    snap_other_path = test_mount.make_snap_path("snap2");
+    std::cout << "---------snap2 vs. snap1 diff listing verification---------"
+              << std::endl;
+    ASSERT_EQ(0,
+      test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
+        snap_other_path.c_str(),
+        expected));
+  }
+
+  //
+  // Make sure snap1 vs. snap2 delta for /dirA is as expected
+  //
+  {
+    string snap_path = test_mount.make_snap_path("snap2", "dirA");
+    string snap_other_path = test_mount.make_snap_path("snap1");
+    std::cout << "---------snap1/dirA vs. snap2/dirA diff listing verification---------" << std::endl;
+    vector<pair<string, uint64_t>> expected;
+    expected.emplace_back("fileA", snapid2);
+    ASSERT_EQ(0,
+      test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
+        snap_other_path.c_str(),
+        expected));
+  }
+
+  //
+  // Make sure snap1 vs. snap2 delta for /dirB is as expected
+  //
+  {
+    string snap_path = test_mount.make_snap_path("snap2", "dirB");
+    string snap_other_path = test_mount.make_snap_path("snap1");
+    std::cout << "---------snap1/dirB vs. snap2/dirB diff listing verification---------" << std::endl;
+    vector<pair<string, uint64_t>> expected;
+    expected.emplace_back("fileb", snapid2);
+    ASSERT_EQ(0,
+      test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
+        snap_other_path.c_str(),
+        expected));
+  }
+
+  //
+  // Make sure snap1 vs. snap2 delta for /dirC is as expected
+  //
+  {
+    string snap_path = test_mount.make_snap_path("snap1", "dirC");
+    string snap_other_path = test_mount.make_snap_path("snap2");
+    std::cout << "---------snap1/dirC vs. snap2/dirC diff listing verification---------" << std::endl;
+    vector<pair<string, uint64_t>> expected;
+    expected.emplace_back("filec", snapid1);
+    ASSERT_EQ(0,
+      test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
+        snap_other_path.c_str(),
+        expected));
+  }
+
+  //
+  // Make sure snap1 vs. snap2 delta for /dirD is as expected
+  //
+  {
+    string snap_path = test_mount.make_snap_path("snap2", "dirD");
+    string snap_other_path = test_mount.make_snap_path("snap1");
+    std::cout << "---------snap1/dirD vs. snap2/dirD diff listing verification---------" << std::endl;
+    vector<pair<string, uint64_t>> expected;
+    ASSERT_EQ(0,
+      test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
+        snap_other_path.c_str(),
+        expected));
+  }
+
+  // Make sure SnapDiff returns an error when provided with the same
+  // snapshot name for both parties A and B.
+  {
+    string snap_path = test_mount.make_snap_path("snap2");
+    string snap_other_path = snap_path;
+    std::cout << "---------invalid snapdiff params, the same snaps---------" << std::endl;
+    ASSERT_EQ(-EINVAL, test_mount.for_each_readdir_snapdiff(
+      snap_path.c_str(),
+      snap_other_path.c_str(),
+      [&](const dirent* dire, uint64_t snapid) {
+        return true;
+      }));
+  }
+  // Make sure SnapDiff returns an error when provided with an empty
+  // snapshot name for one of the parties
+  {
+    std::cout << "---------invalid snapdiff params, no snap_other ---------" << std::endl;
+    string snap_path = test_mount.make_snap_path("snap2");
+    string snap_other_path;
+    ASSERT_EQ(-EINVAL, test_mount.for_each_readdir_snapdiff(
+      snap_path.c_str(),
+      snap_other_path.c_str(),
+      [&](const dirent* dire, uint64_t snapid) {
+        return true;
+      }));
+  }
+
+  std::cout << "------------- closing -------------" << std::endl;
+  ASSERT_EQ(0, test_mount.purge_dir(""));
+  ASSERT_EQ(0, test_mount.rmsnap("snap1"));
+  ASSERT_EQ(0, test_mount.rmsnap("snap2"));
+}
+
+/* The following method creates some files/folders/snapshots layout,
+   described in the sheet below.
+   We're to test SnapDiff readdir API against that structure.
+
+* where:
+  - xN denotes file 'x' version N.
+  - X denotes folder name
+  - * denotes no/removed file/folder
+
+#     snap1        snap2      snap3      head
+# fileA1      | fileA2      | fileA2
+# *           | fileB2      | fileB2
+# fileC1      | *           | fileC3
+# fileD1      | fileD1      | fileD3
+# fileF1      | *           | *
+# *           | *           | fileE3
+# dirA        | dirA        | *
+# dirA/fileA1 | dirA/fileA2 | *
+# *           | dirB        | *
+# *           | dirB/fileb2 | *
+# dirC        | *           | *
+# dirC/filec1 | *           | *
+# dirD        | dirD        | dirD
+# dirD/filed1 | dirD/filed1 | dirD/filed1
+*/
+void prepareSnapDiffLib2Cases(TestMount& test_mount)
+{
+  //************ snap1 *************
+  ceph_assert(0 < test_mount.write_full("fileA", "hello world"));
+  ceph_assert(0 < test_mount.write_full("fileC", "hello world to be removed temporarily"));
+  ceph_assert(0 < test_mount.write_full("fileD", "hello world unmodified"));
+  ceph_assert(0 < test_mount.write_full("fileF", "hello world to be removed completely"));
+  ceph_assert(0 == test_mount.mkdir("dirA"));
+  ceph_assert(0 < test_mount.write_full("dirA/fileA", "file 'A/a' v1"));
+  ceph_assert(0 == test_mount.mkdir("dirC"));
+  ceph_assert(0 < test_mount.write_full("dirC/filec", "file 'C/c' v1"));
+  ceph_assert(0 == test_mount.mkdir("dirD"));
+  ceph_assert(0 < test_mount.write_full("dirD/filed", "file 'D/d' v1"));
+
+  ceph_assert(0 == test_mount.mksnap("snap1"));
+
+  //************ snap2 *************
+  ceph_assert(0 < test_mount.write_full("fileA", "hello world again in A"));
+  ceph_assert(0 < test_mount.write_full("fileB", "hello world in B"));
+  ceph_assert(0 == test_mount.unlink("fileC"));
+  ceph_assert(0 == test_mount.unlink("fileF"));
+
+  ceph_assert(0 < test_mount.write_full("dirA/fileA", "file 'A/a' v2"));
+  ceph_assert(0 == test_mount.mkdir("dirB"));
+  ceph_assert(0 < test_mount.write_full("dirB/fileb", "file 'B/b' v2"));
+  ceph_assert(0 == test_mount.purge_dir("dirC"));
+
+  ceph_assert(0 == test_mount.mksnap("snap2"));
+
+  //************ snap3 *************
+  ceph_assert(0 < test_mount.write_full("fileC", "hello world in C recovered"));
+  ceph_assert(0 < test_mount.write_full("fileD", "hello world in D now modified"));
+  ceph_assert(0 < test_mount.write_full("fileE", "file 'E' created at snap3"));
+  ceph_assert(0 == test_mount.purge_dir("dirA"));
+  ceph_assert(0 == test_mount.purge_dir("dirB"));
+  ceph_assert(0 == test_mount.mksnap("snap3"));
+}
+
+/*
+* More versatile SnapDiff readdir API verification,
+* includes 3 different snapshots and interleaving/repetitive calls to make sure
+* the results aren't spoiled due to caching.
+*/
+TEST(LibCephFS, SnapDiffLib2)
+{
+  TestMount test_mount;
+
+  prepareSnapDiffLib2Cases(test_mount);
+
+  // Create simple directory tree with a couple of snapshots to test against
+  uint64_t snapid1;
+  uint64_t snapid2;
+  uint64_t snapid3;
+  ASSERT_EQ(0, test_mount.get_snapid("snap1", &snapid1));
+  ASSERT_EQ(0, test_mount.get_snapid("snap2", &snapid2));
+  ASSERT_EQ(0, test_mount.get_snapid("snap3", &snapid3));
+  std::cout << snapid1 << " vs. " << snapid2 << " vs. " << snapid3 << std::endl;
+  ASSERT_GT(snapid1, 0);
+  ASSERT_GT(snapid2, 0);
+  ASSERT_GT(snapid3, 0);
+  ASSERT_GT(snapid2, snapid1);
+  ASSERT_GT(snapid3, snapid2);
+
+  // define a labda which verifies snap1/snap2/snap3 listings
+  auto verify_snap_listing = [&]()
+  {
+    {
+      string snap_path = test_mount.make_snap_path("snap1");
+
+      std::cout << "---------snap1 listing verification---------" << std::endl;
+      vector<string> expected;
+      expected.push_back("fileA");
+      expected.push_back("fileC");
+      expected.push_back("fileD");
+      expected.push_back("fileF");
+      expected.push_back("dirA");
+      expected.push_back("dirC");
+      expected.push_back("dirD");
+      ASSERT_EQ(0,
+        test_mount.readdir_and_compare(snap_path.c_str(), expected));
+    }
+    {
+      std::cout << "---------snap2 listing verification---------" << std::endl;
+      string snap_path = test_mount.make_snap_path("snap2");
+      vector<string> expected;
+      expected.push_back("fileA");
+      expected.push_back("fileB");
+      expected.push_back("fileD");
+      expected.push_back("dirA");
+      expected.push_back("dirB");
+      expected.push_back("dirD");
+      ASSERT_EQ(0,
+        test_mount.readdir_and_compare(snap_path.c_str(), expected));
+    }
+    {
+      std::cout << "---------snap3 listing verification---------" << std::endl;
+      string snap_path = test_mount.make_snap_path("snap3");
+      vector<string> expected;
+      expected.push_back("fileA");
+      expected.push_back("fileB");
+      expected.push_back("fileC");
+      expected.push_back("fileD");
+      expected.push_back("fileE");
+      expected.push_back("dirD");
+      ASSERT_EQ(0,
+        test_mount.readdir_and_compare(snap_path.c_str(), expected));
+    }
+  };
+  // Prepare expected delta for snap1 vs. snap2
+  vector<pair<string, uint64_t>> snap1_2_diff_expected;
+  snap1_2_diff_expected.emplace_back("fileA", snapid2);
+  snap1_2_diff_expected.emplace_back("fileB", snapid2);
+  snap1_2_diff_expected.emplace_back("fileC", snapid1);
+  snap1_2_diff_expected.emplace_back("fileF", snapid1);
+  snap1_2_diff_expected.emplace_back("dirA", snapid2);
+  snap1_2_diff_expected.emplace_back("dirB", snapid2);
+  snap1_2_diff_expected.emplace_back("dirC", snapid1);
+  snap1_2_diff_expected.emplace_back("dirD", snapid2);
+
+  // Prepare expected delta for snap1 vs. snap3
+  vector<pair<string, uint64_t>> snap1_3_diff_expected;
+  snap1_3_diff_expected.emplace_back("fileA", snapid3);
+  snap1_3_diff_expected.emplace_back("fileB", snapid3);
+  snap1_3_diff_expected.emplace_back("fileC", snapid3);
+  snap1_3_diff_expected.emplace_back("fileD", snapid3);
+  snap1_3_diff_expected.emplace_back("fileE", snapid3);
+  snap1_3_diff_expected.emplace_back("fileF", snapid1);
+  snap1_3_diff_expected.emplace_back("dirA", snapid1);
+  snap1_3_diff_expected.emplace_back("dirC", snapid1);
+  snap1_3_diff_expected.emplace_back("dirD", snapid3);
+
+  // Prepare expected delta for snap2 vs. snap3
+  vector<pair<string, uint64_t>> snap2_3_diff_expected;
+  snap2_3_diff_expected.emplace_back("fileC", snapid3);
+  snap2_3_diff_expected.emplace_back("fileD", snapid3);
+  snap2_3_diff_expected.emplace_back("fileE", snapid3);
+  snap2_3_diff_expected.emplace_back("dirA", snapid2);
+  snap2_3_diff_expected.emplace_back("dirB", snapid2);
+  snap2_3_diff_expected.emplace_back("dirD", snapid3);
+
+  // Helper function to verify readdir_snapdiff returns expected results
+  auto verify_snap_diff = [&](
+    vector<pair<string, uint64_t>>& expected,
+    const char* snap1_name,
+    const char* snap2_name,
+    const char* dir_name = nullptr)
+  {
+    string snap_path = test_mount.make_snap_path(snap2_name, dir_name);
+    string snap_other_path = test_mount.make_snap_path(snap1_name);
+    std::cout << "---------" << snap1_name << " vs. " << snap2_name
+              << " diff listing verification for /" << (dir_name ? dir_name : "")
+              << std::endl;
+    ASSERT_EQ(0,
+      test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
+        snap_other_path.c_str(),
+        expected));
+  };
+  // Helper function to print readdir_snapdiff results
+  auto print_snap_diff = [&](const char* snap1_name,
+                             const char* snap2_name,
+                             const char* dir_name = nullptr)
+  {
+    string snap_path = test_mount.make_snap_path(snap2_name, dir_name);
+    string snap_other_path = test_mount.make_snap_path(snap1_name);
+    std::cout << "---------" << snap1_name << " vs. " << snap2_name
+              << " diff listing for /" << (dir_name ? dir_name : "")
+              << std::endl;
+    ASSERT_EQ(0, test_mount.for_each_readdir_snapdiff(
+      snap_path.c_str(),
+      snap_other_path.c_str(),
+      [&](const dirent* dire, uint64_t snapid) {
+        std::cout << dire->d_name << " snap " << snapid << std::endl;
+        return true;
+      }));
+  };
+
+  // Check snapshot listings on a cold cache
+  verify_snap_listing();
+
+  // Check snapshot listings on a warm cache
+  verify_snap_listing(); // served from cache
+
+  // Print snap1 vs. snap2 delta against the root folder
+  print_snap_diff("snap1", "snap2");
+  // Verify snap1 vs. snap2 delta for the root
+  verify_snap_diff(snap1_2_diff_expected, "snap1", "snap2");
+
+  // Check snapshot listings on a warm cache once again
+  // to make sure it wasn't spoiled by SnapDiff
+  verify_snap_listing(); // served from cache
+
+  // Verify snap2 vs. snap1 delta
+  verify_snap_diff(snap1_2_diff_expected, "snap2", "snap1");
+
+  // Check snapshot listings on a warm cache once again
+  // to make sure it wasn't spoiled by SnapDiff
+  verify_snap_listing(); // served from cache
+
+  // Verify snap1 vs. snap3 delta for the root
+  verify_snap_diff(snap1_3_diff_expected, "snap1", "snap3");
+
+  // Verify snap2 vs. snap3 delta for the root
+  verify_snap_diff(snap2_3_diff_expected, "snap2", "snap3");
+
+  // Check snapshot listings on a warm cache once again
+  // to make sure it wasn't spoiled by SnapDiff
+  verify_snap_listing(); // served from cache
+
+  // Print snap1 vs. snap2 delta against /dirA folder
+  print_snap_diff("snap1", "snap2", "dirA");
+
+  // Verify snap1 vs. snap2 delta for /dirA
+  {
+    vector<pair<string, uint64_t>> expected;
+    expected.emplace_back("fileA", snapid2);
+    verify_snap_diff(expected, "snap1", "snap2", "dirA");
+  }
+
+  // Print snap1 vs. snap2 delta against /dirB folder
+  print_snap_diff("snap1", "snap2", "dirB");
+
+  // Verify snap1 vs. snap2 delta for /dirB
+  {
+    vector<pair<string, uint64_t>> expected;
+    expected.emplace_back("fileb", snapid2);
+    verify_snap_diff(expected, "snap1", "snap2", "dirB");
+  }
+
+  // Print snap1 vs. snap2 delta against /dirD folder
+  print_snap_diff("snap1", "snap2", "dirD");
+
+  // Verify snap1 vs. snap2 delta for /dirD
+  {
+    vector<pair<string, uint64_t>> expected;
+    verify_snap_diff(expected, "snap1", "snap2", "dirD");
+  }
+
+  // Check snapshot listings on a warm cache once again
+  // to make sure it wasn't spoiled by SnapDiff
+  verify_snap_listing(); // served from cache
+
+  // Verify snap1 vs. snap2 delta for the root once again
+  verify_snap_diff(snap1_2_diff_expected, "snap1", "snap2");
+
+  // Verify snap2 vs. snap3 delta for the root once again
+  verify_snap_diff(snap2_3_diff_expected, "snap3", "snap2");
+
+  // Verify snap1 vs. snap3 delta for the root once again
+  verify_snap_diff(snap1_3_diff_expected, "snap1", "snap3");
+
+  std::cout << "------------- closing -------------" << std::endl;
+  ASSERT_EQ(0, test_mount.purge_dir(""));
+  ASSERT_EQ(0, test_mount.rmsnap("snap1"));
+  ASSERT_EQ(0, test_mount.rmsnap("snap2"));
+  ASSERT_EQ(0, test_mount.rmsnap("snap3"));
 }
