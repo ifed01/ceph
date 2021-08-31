@@ -350,6 +350,14 @@ public:
   int readdir_r(dir_result_t *dirp, struct dirent *de);
   int readdirplus_r(dir_result_t *dirp, struct dirent *de, struct ceph_statx *stx, unsigned want, unsigned flags, Inode **out);
 
+  // On return:
+  // *res_de - entry, which was altered between snapA and snapB
+  // *res_snap - resulting entry's snapid, values less than snapB 
+  //             means entry not present in snapB
+  //
+  int readdir_snapdiff(snapid_t snapA, snapid_t snapB, dir_result_t* d,
+    struct dirent* res_de, snapid_t* res_snap);
+
   int getdir(const char *relpath, list<string>& names,
 	     const UserPerm& perms);  // get the whole dir at once.
 
@@ -1246,6 +1254,8 @@ private:
     MAY_READ = 4,
   };
 
+  typedef std::function<void(dir_result_t*, MetaRequest*, InodeRef&, frag_t)> fill_readdir_args_cb_t;
+
   std::unique_ptr<CephContext, std::function<void(CephContext*)>> cct_deleter;
 
   /* Flags for VXattr */
@@ -1266,8 +1276,18 @@ private:
   bool _readdir_have_frag(dir_result_t *dirp);
   void _readdir_next_frag(dir_result_t *dirp);
   void _readdir_rechoose_frag(dir_result_t *dirp);
-  int _readdir_get_frag(dir_result_t *dirp);
+  int _readdir_get_frag(int op, dir_result_t *dirp,
+    fill_readdir_args_cb_t fill_req_cb);
   int _readdir_cache_cb(dir_result_t *dirp, add_dirent_cb_t cb, void *p, int caps, bool getref);
+  int _readdir_r_cb(int op,
+    dir_result_t* d,
+    add_dirent_cb_t cb,
+    fill_readdir_args_cb_t fill_cb,
+    void* p,
+    unsigned want,
+    unsigned flags,
+    bool getref);
+
   void _closedir(dir_result_t *dirp);
 
   // other helpers
