@@ -1184,15 +1184,17 @@ void Client::insert_readdir_results(MetaRequest *request, MetaSession *session, 
   dir_result_t *dirp = request->dirp;
   ceph_assert(dirp);
 
+  bool snapdiff = request->head.op == CEPH_MDS_OP_READDIR_SNAPDIFF;
   // the extra buffer list is only set for readdir, lssnap and
   // readdir_snapdiff replies
   auto p = reply->get_extra_bl().cbegin();
   if (!p.end()) {
     // snapdir?
-    if (request->head.op == CEPH_MDS_OP_LSSNAP || 
-      request->head.op == CEPH_MDS_OP_READDIR_SNAPDIFF) {
+    if (request->head.op == CEPH_MDS_OP_LSSNAP) {
       ceph_assert(diri);
       diri = open_snapdir(diri);
+    } else if (request->head.op == CEPH_MDS_OP_READDIR_SNAPDIFF) {
+
     }
 
     // only open dir if we're actually adding stuff to it!
