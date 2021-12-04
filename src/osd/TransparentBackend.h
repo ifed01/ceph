@@ -331,7 +331,7 @@ private:
   /**
    * Client IO
    */
-  /*struct InProgressOp : public RefCountedObject {
+/*  struct InProgressOp : public RefCountedObject {
     ceph_tid_t tid;
     std::set<pg_shard_t> waiting_for_commit;
     Context *on_commit;
@@ -349,7 +349,7 @@ private:
   };
   std::map<ceph_tid_t, ceph::ref_t<InProgressOp>> in_progress_ops;*/
 public:
-  //friend class C_OSD_OnOpCommit;
+  friend class C_OSD_OnOpCommit;
 
   void call_write_ordered(std::function<void(void)> &&cb) override {
     // ReplicatedBackend submits writes inline in submit_transaction, so

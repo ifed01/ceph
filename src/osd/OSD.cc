@@ -4776,6 +4776,7 @@ PG* OSD::_make_pg(
   if (createmap->have_pg_pool(pgid.pool())) {
     pi = *createmap->get_pg_pool(pgid.pool());
     name = createmap->get_pool_name(pgid.pool());
+    dout(10) << __func__ << " " << pi.type << " " << name << dendl;
     if (pi.is_erasure()) {
       ec_profile = createmap->get_erasure_code_profile(pi.erasure_code_profile);
     }
@@ -4793,6 +4794,7 @@ PG* OSD::_make_pg(
     auto p = bl.cbegin();
     decode(pi, p);
     decode(name, p);
+    dout(10) << __func__ << " missed " << pi.type << " " << name << dendl;
     if (p.end()) { // dev release v13.0.2 did not include ec_profile
       derr << __func__ << " missing ec_profile from pool " << pgid.pool()
 	   << " tombstone" << dendl;
