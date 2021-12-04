@@ -10,6 +10,13 @@
  * Foundation.  See file COPYING.
  *
  */
+#include <map>
+#include <set>
+#include <list>
+#include <vector>
+#include <string>
+#include <utility>
+#include <functional>
 #include "common/errno.h"
 #include "TransparentBackend.h"
 #include "messages/MOSDOp.h"
@@ -271,23 +278,22 @@ int TransparentBackend::objects_read_sync(
 
 int TransparentBackend::objects_readv_sync(
   const hobject_t &hoid,
-  map<uint64_t, uint64_t>&& m,
+  std::map<uint64_t, uint64_t>&& m,
   uint32_t op_flags,
   bufferlist *bl)
 {
-  int r = 0;
-  /*interval_set<uint64_t> im(std::move(m));
+  interval_set<uint64_t> im(std::move(m));
   auto r = store->readv(ch, ghobject_t(hoid), im, *bl, op_flags);
   if (r >= 0) {
     m = std::move(im).detach();
-  }*/
+  }
   return r;
 }
 
 void TransparentBackend::objects_read_async(
   const hobject_t &hoid,
-  const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
-		  pair<bufferlist*, Context*> > > &to_read,
+  const std::list<std::pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
+		  std::pair<bufferlist*, Context*> > > &to_read,
   Context *on_complete,
   bool fast_read)
 {
@@ -299,26 +305,25 @@ void TransparentBackend::objects_read_async(
   ceph::ref_t<TransparentBackend::InProgressOp> op;
 public:
   C_OSD_OnOpCommit(TransparentBackend *pg, ceph::ref_t<TransparentBackend::InProgressOp> op)
-    : pg(pg), op(std::move(op)) {}
   void finish(int) override {
     pg->op_commit(op);
   }
 };
+*/
 
 void generate_transaction(
   PGTransactionUPtr &pgt,
   const coll_t &coll,
-  vector<pg_log_entry_t> &log_entries,
   ObjectStore::Transaction *t,
-  set<hobject_t> *added,
-  set<hobject_t> *removed,
+  std::set<hobject_t> *added,
+  std::set<hobject_t> *removed,
   const ceph_release_t require_osd_release = ceph_release_t::unknown )
 {
   ceph_assert(t);
   ceph_assert(added);
   ceph_assert(removed);
 
-  for (auto &&le: log_entries) {
+  /*for (auto &&le: log_entries) {
     le.mark_unrollbackable();
     auto oiter = pgt->op_map.find(le.soid);
     if (oiter != pgt->op_map.end() && oiter->second.updated_snaps) {
@@ -327,9 +332,136 @@ void generate_transaction(
       le.snaps.swap(bl);
       le.snaps.reassign_to_mempool(mempool::mempool_osd_pglog);
     }
-  }
+  }*/
 
   pgt->safe_create_traverse(
+    [&](std::pair<const hobject_t, PGTransaction::ObjectOperation> &obj_op) {
+      const hobject_t &oid = obj_op.first;
+      const ghobject_t goid =
+        ghobject_t(oid, ghobject_t::NO_GEN, shard_id_t::NO_SHARD);
+      const PGTransaction::ObjectOperation &op = obj_op.second;
+
+      if (oid.is_temp()) {
+        if (op.is_fresh_object()) {
+          added->insert(oid);
+        } else if (op.is_delete()) {
+          removed->insert(oid);
+        }
+      }
+
+      if (op.delete_first) {
+        t->remove(coll, goid);
+      }
+
+      match(
+        op.init_type,
+        [&](const PGTransaction::ObjectOperation::Init::None &) {
+        },
+        [&](const PGTransaction::ObjectOperation::Init::Create &op) {
+          if (require_osd_release >= ceph_release_t::octopus) {
+            t->create(coll, goid);
+          } else {
+            t->touch(coll, goid);
+          }
+        },
+        [&](const PGTransaction::ObjectOperation::Init::Clone &op) {
+          t->clone(
+            coll,
+            ghobject_t(
+              op.source, ghobject_t::NO_GEN, shard_id_t::NO_SHARD),
+            goid);
+        },
+        [&](const PGTransaction::ObjectOperation::Init::Rename &op) {
+          ceph_assert(op.source.is_temp());
+          t->collection_move_rename(
+            coll,
+            ghobject_t(
+              op.source, ghobject_t::NO_GEN, shard_id_t::NO_SHARD),
+            coll,
+            goid);
+        });
+
+      if (op.truncate) {
+        t->truncate(coll, goid, op.truncate->first);
+        if (op.truncate->first != op.truncate->second)
+          t->truncate(coll, goid, op.truncate->second);
+      }
+
+      if (!op.attr_updates.empty()) {
+        std::map<std::string, bufferlist, std::less<>> attrs;
+        for (auto &&p: op.attr_updates) {
+          if (p.second)
+            attrs[p.first] = *(p.second);
+          else
+            t->rmattr(coll, goid, p.first);
+        }
+        t->setattrs(coll, goid, attrs);
+      }
+      if (op.clear_omap)
+        t->omap_clear(coll, goid);
+      if (op.omap_header)
+        t->omap_setheader(coll, goid, *(op.omap_header));
+
+      for (auto &&up: op.omap_updates) {
+        using UpdateType = PGTransaction::ObjectOperation::OmapUpdateType;
+        switch (up.first) {
+        case UpdateType::Remove:
+          t->omap_rmkeys(coll, goid, up.second);
+          break;
+        case UpdateType::Insert:
+          t->omap_setkeys(coll, goid, up.second);
+          break;
+        case UpdateType::RemoveRange:
+          t->omap_rmkeyrange(coll, goid, up.second);
+          break;
+        }
+      }
+
+      // updated_snaps doesn't matter since we marked unrollbackable
+
+      if (op.alloc_hint) {
+        auto &hint = *(op.alloc_hint);
+        t->set_alloc_hint(
+          coll,
+          goid,
+          hint.expected_object_size,
+          hint.expected_write_size,
+          hint.flags);
+      }
+
+      for (auto &&extent: op.buffer_updates) {
+        using BufferUpdate = PGTransaction::ObjectOperation::BufferUpdate;
+        match(
+          extent.get_val(),
+          [&](const BufferUpdate::Write &op) {
+            t->write(
+              coll,
+              goid,
+              extent.get_off(),
+              extent.get_len(),
+              op.buffer,
+              op.fadvise_flags);
+          },
+          [&](const BufferUpdate::Zero &op) {
+            t->zero(
+              coll,
+              goid,
+              extent.get_off(),
+              extent.get_len());
+          },
+          [&](const BufferUpdate::CloneRange &op) {
+            ceph_assert(op.len == extent.get_len());
+            t->clone_range(
+              coll,
+              ghobject_t(op.from, ghobject_t::NO_GEN, shard_id_t::NO_SHARD),
+              goid,
+              op.offset,
+              extent.get_len(),
+              extent.get_off());
+          });
+      }
+    });
+/*  pgt->safe_create_traverse(
     [&](pair<const hobject_t, PGTransaction::ObjectOperation> &obj_op) {
       const hobject_t &oid = obj_op.first;
       const ghobject_t goid =
@@ -456,8 +588,8 @@ void generate_transaction(
 	      extent.get_off());
 	  });
       }
-    });
-} */
+    });*/
+}
 
 void TransparentBackend::submit_transaction(
   const hobject_t &soid,
@@ -466,33 +598,32 @@ void TransparentBackend::submit_transaction(
   PGTransactionUPtr &&_t,
   const eversion_t &trim_to,
   const eversion_t &min_last_complete_ondisk,
-  vector<pg_log_entry_t>&& _log_entries,
+  std::vector<pg_log_entry_t>&& _log_entries,
   std::optional<pg_hit_set_history_t> &hset_history,
   Context *on_all_commit,
   ceph_tid_t tid,
   osd_reqid_t reqid,
   OpRequestRef orig_op)
 {
-  /*parent->apply_stats(
+  parent->apply_stats(
     soid,
     delta_stats);
 
-  vector<pg_log_entry_t> log_entries(_log_entries);
+  //vector<pg_log_entry_t> log_entries(_log_entries);
   ObjectStore::Transaction op_t;
   PGTransactionUPtr t(std::move(_t));
-  set<hobject_t> added, removed;
+  std::set<hobject_t> added, removed;
   generate_transaction(
     t,
     coll,
-    log_entries,
     &op_t,
     &added,
     &removed,
     get_osdmap()->require_osd_release);
   ceph_assert(added.size() <= 1);
   ceph_assert(removed.size() <= 1);
-
-  auto insert_res = in_progress_ops.insert(
+ 
+  /*auto insert_res = in_progress_ops.insert(
     make_pair(
       tid,
       ceph::make_ref<InProgressOp>(
@@ -502,11 +633,13 @@ void TransparentBackend::submit_transaction(
     );
   ceph_assert(insert_res.second);
   InProgressOp &op = *insert_res.first->second;
-
-#ifdef HAVE_JAEGER
+  auto op = ceph::make_ref<InProgressOp>(
+    tid, on_all_commit, orig_op, at_version);
+*/
+/*#ifdef HAVE_JAEGER
   auto rep_sub_trans = jaeger_tracing::child_span("TransparentBackend::submit_transaction", orig_op->osd_parent_span);
-#endif
-  op.waiting_for_commit.insert(
+#endif*/
+  /*op.waiting_for_commit.insert(
     parent->get_acting_recovery_backfill_shards().begin(),
     parent->get_acting_recovery_backfill_shards().end());
 
@@ -525,9 +658,9 @@ void TransparentBackend::submit_transaction(
     op_t);
 
   add_temp_objs(added);
-  clear_temp_objs(removed);
+  clear_temp_objs(removed);*/
 
-  parent->log_operation(
+  /*parent->log_operation(
     std::move(log_entries),
     hset_history,
     trim_to,
@@ -538,15 +671,17 @@ void TransparentBackend::submit_transaction(
   
   op_t.register_on_commit(
     parent->bless_context(
-      new C_OSD_OnOpCommit(this, &op)));
+      new C_OSD_OnOpCommit(this, on_all_commit, orig_op)));
+*/
+  op_t.register_on_commit(on_all_commit);
 
-  vector<ObjectStore::Transaction> tls;
+  std::vector<ObjectStore::Transaction> tls;
   tls.push_back(std::move(op_t));
 
-  parent->queue_transactions(tls, op.op);
+  parent->queue_transactions(tls, orig_op);
   if (at_version != eversion_t()) {
     parent->op_applied(at_version);
-  }*/
+  }
 }
 
 /*void TransparentBackend::op_commit(const ceph::ref_t<InProgressOp>& op)
@@ -571,8 +706,8 @@ void TransparentBackend::submit_transaction(
     op->on_commit = 0;
     in_progress_ops.erase(op->tid);
   }
-}
-
+}*/
+/*
 void TransparentBackend::do_repop_reply(OpRequestRef op)
 {
   static_cast<MOSDRepOpReply*>(op->get_nonconst_req())->finish_decode();
