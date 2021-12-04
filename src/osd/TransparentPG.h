@@ -14,11 +14,15 @@
 #define CEPH_TRANSPARENTPG_H
 
 //#include <boost/tuple/tuple.hpp>
+#include <map>
+#include <string>
+#include <functional>
+#include <memory>
 #include "include/ceph_assert.h"
 //#include "DynamicPerfStats.h"
 #include "OSD.h"
 #include "PG.h"
-#include "pg_scrubber.h"
+#include "osd/scrubber/pg_scrubber.h"
 /*#include "Watch.h"
 #include "TierAgentState.h"
 #include "messages/MOSDOpReply.h"
@@ -49,12 +53,6 @@ public:
     return false;
   }
 
-  [[nodiscard]] bool should_requeue_blocked_ops(
-    eversion_t last_recovery_applied) const final
-  {
-    return false;
-  }
-
   void stats_of_handled_objects(const object_stat_sum_t& delta_stats,
     const hobject_t& soid) final
   {
@@ -71,10 +69,11 @@ private:
 };
 
 class TransparentPG : public PG, public PGBackend::Listener {
+  struct OpContext;
 public:
   TransparentPG(OSDService* o, OSDMapRef curmap,
     const PGPool& _pool,
-    const map<string, string>& ec_profile, spg_t p) :
+    const std::map<std::string, std::string>& ec_profile, spg_t p) :
     PG(o, curmap, _pool, p),
     pgbackend(
       PGBackend::build_pg_backend(
@@ -90,7 +89,7 @@ public:
       pgbackend->get_is_recoverable_predicate());
 
     //snap_trimmer_machine.initiate(); // FIXME TRANSPARENT
-    m_scrubber = make_unique<TransparentScrub>(this);
+    m_scrubber = std::make_unique<TransparentScrub>(this);
   }
 
   PGBackend* get_pgbackend() override {
@@ -194,7 +193,7 @@ public:
    */
   Context* bless_context(Context* c) override
   {
-    //FIXME TRANSPARENT
+    ceph_assert(false);
     return nullptr;
   }
   GenContext<ThreadPool::TPHandle&>* bless_gencontext(
@@ -327,7 +326,6 @@ public:
   void op_applied(
     const eversion_t& applied_version) override
   {
-    ceph_assert(false);
   }
 
   bool should_send_op(
@@ -624,7 +622,7 @@ public:
   void snap_trimmer(epoch_t) final
   {
   }
-  void do_command(const string_view&,
+  void do_command(const std::string_view&,
     const cmdmap_t&,
     const ceph::buffer::v15_2_0::list&,
     std::function<void(int,
@@ -672,6 +670,31 @@ public:
   void snap_trimmer_scrub_complete() final
   {
   }
+protected:
+  int do_osd_ops(OpContext* ctx, std::vector<OSDOp>& ops);
+  void do_pg_op(OpRequestRef op);
+
+  int prepare_transaction(OpContext* ctx);
+  void complete_read_ctx(int result, OpContext* ctx);
+
+  void close_op_ctx(OpContext* ctx);
+  void log_op_stats(const OpRequest& op,
+    const uint64_t inb,
+    const uint64_t outb);
+
+  int getattrs_maybe_cache(
+    //ObjectContextRef obc,
+    const hobject_t& soid,
+    std::map<std::string, bufferlist, std::less<>>* out);
+  int do_read(OpContext* ctx, OSDOp& osd_op);
+  int do_sparse_read(OpContext* ctx, OSDOp& osd_op);
+  int do_writesame(OpContext* ctx, OSDOp& osd_op);
+
+  int do_extent_cmp(OpContext* ctx, OSDOp& osd_op);
+  int finish_extent_cmp(OSDOp& osd_op, const ceph::buffer::list& read_bl);
+
+  int do_xattr_cmp_u64(int op, uint64_t v1, ceph::buffer::list& xattr);
+  int do_xattr_cmp_str(int op, std::string& v1s, ceph::buffer::list& xattr);
 
 private:
   std::set<pg_shard_t> dummy_pg_shard_set;
@@ -681,8 +704,8 @@ private:
   boost::scoped_ptr<PGBackend> pgbackend;
 
   void do_op(OpRequestRef& op);
-  struct OpContext;
   void execute_ctx(OpContext* ctx);
+  void finish_ctx(OpContext* ctx, int log_op_type, int result = 0);
 
 };
 
