@@ -607,20 +607,22 @@ int ceph_readdir_r(struct ceph_mount_info *cmount, struct ceph_dir_result *dirp,
 int ceph_readdirplus_r(struct ceph_mount_info *cmount, struct ceph_dir_result *dirp, struct dirent *de,
 		       struct ceph_statx *stx, unsigned want, unsigned flags, struct Inode **out);
 
-/** FIXME: update the comments!!!!
- * Get the next entry in an open snapshot delta's directory.
+/**
+ * Get the next entry for snapshot comparison(aka delta) result.
  *
  * @param cmount the ceph mount handle to use for performing the readdir.
- * @param dirp the directory stream pointer from an opendir holding the state of the
- *        next entry to return.
- * @param snap_other - snapshot id to build delta
+ * @param dirp the directory stream pointer from an opendir holding the snapshot directory entry
+ *        to build delta for.
+ * @param other the another snapshot root(!) directory entry to build delta against.
  * @returns the next directory entry or NULL if at the end of the directory (or the directory
  *          is empty.  This pointer should not be freed by the caller, and is only safe to
- *          access between return and the next call to ceph_readdir or ceph_closedir.
+ *          access between return and the next call to ceph_readdir_snapdiff or ceph_closedir.
+ *          res_snapid pointer returns the resulting entry's snapshot id - freshier one for
+ *          emerged/existing entry or source snapshot id for the removed entry.
  */
 int ceph_readdir_snapdiff(struct ceph_mount_info* cmount,
 				     struct ceph_dir_result* dirp,
-				     uint64_t snap_other,
+				     struct ceph_dir_result* other,
 				     struct dirent* res_dirent,
 				     uint64_t* res_snapid);
 

@@ -223,21 +223,28 @@ public:
     return r;
   }
   int for_each_readdir_snapdiff(const char* snap1_relpath,
-    uint64_t snap_other,
+    const char* snap2_relpath,
     std::function<bool(const dirent*, uint64_t)> fn)
   {
     auto snap1_path = make_file_path(snap1_relpath);
+    auto snap2_path = make_file_path(snap2_relpath);
     struct ceph_dir_result* ls_dir;
+    struct ceph_dir_result* ls_other_dir;
     int r = ceph_opendir(cmount, snap1_path.c_str(), &ls_dir);
     if (r != 0) {
     std::cerr << snap1_path << " failed to open, ret:" << r << std::endl;
+      return r;
+    }
+    r = ceph_opendir(cmount, snap2_path.c_str(), &ls_other_dir);
+    if (r != 0) {
+    std::cerr << snap2_path << " failed to open, ret:" << r << std::endl;
       return r;
     }
     dirent res_de;
     uint64_t res_snapid;
     while (0 < (r = ceph_readdir_snapdiff(cmount,
                                           ls_dir,
-                                          snap_other,
+                                          ls_other_dir,
                                           &res_de,
                                           &res_snapid))) {
       if (strcmp(res_de.d_name, ".") == 0 ||
@@ -249,17 +256,18 @@ public:
         break;
       }
     }
+    ceph_assert(0 == ceph_closedir(cmount, ls_other_dir));
     ceph_assert(0 == ceph_closedir(cmount, ls_dir));
     return r;
   }
   int readdir_snapdiff_and_compare(const char* snap1_relpath,
-    uint64_t snap_other,
+    const char* snap2_relpath,
     const vector<pair<string, uint64_t>>& expected0)
   {
     vector<pair<string, uint64_t>> expected(expected0);
     auto end = expected.end();
     int r = for_each_readdir_snapdiff(snap1_relpath,
-      snap_other,
+      snap2_relpath,
       [&](const dirent* dire, uint64_t snapid) {
 
         pair<string, uint64_t> p = std::make_pair(dire->d_name, snapid);
@@ -1044,10 +1052,11 @@ TEST(LibCephFS, SnapDiffLib)
 
   {
     string snap_path = test_mount.make_snap_path("snap2");
+    string snap_other_path = test_mount.make_snap_path("snap1");
     std::cout << "---------snap1 vs. snap2 diff listing---------" << std::endl;
     ASSERT_EQ(0, test_mount.for_each_readdir_snapdiff(
       snap_path.c_str(),
-      snapid1,
+      snap_other_path.c_str(),
       [&](const dirent* dire, uint64_t snapid) {
         std::cout << dire->d_name << " snap " << snapid << std::endl;
         return true;
@@ -1055,10 +1064,11 @@ TEST(LibCephFS, SnapDiffLib)
   }
   {
     string snap_path = test_mount.make_snap_path("snap2", "dirA");
+    string snap_other_path = test_mount.make_snap_path("snap1");
     std::cout << "---------snap1/dirA vs. snap2/dirA diff listing---------" << std::endl;
     ASSERT_EQ(0, test_mount.for_each_readdir_snapdiff(
       snap_path.c_str(),
-      snapid1,
+      snap_other_path.c_str(),
       [&](const dirent* dire, uint64_t snapid) {
         std::cout << dire->d_name << " snap " << snapid << std::endl;
         return true;
@@ -1066,10 +1076,11 @@ TEST(LibCephFS, SnapDiffLib)
   }
   {
     string snap_path = test_mount.make_snap_path("snap2", "dirB");
+    string snap_other_path = test_mount.make_snap_path("snap1");
     std::cout << "---------snap1/dirB vs. snap2/dirB diff listing---------" << std::endl;
     ASSERT_EQ(0, test_mount.for_each_readdir_snapdiff(
       snap_path.c_str(),
-      snapid1,
+      snap_other_path.c_str(),
       [&](const dirent* dire, uint64_t snapid) {
         std::cout << dire->d_name << " snap " << snapid << std::endl;
         return true;
@@ -1077,10 +1088,11 @@ TEST(LibCephFS, SnapDiffLib)
   }
   {
     string snap_path = test_mount.make_snap_path("snap2", "dirD");
+    string snap_other_path = test_mount.make_snap_path("snap1");
     std::cout << "---------snap1/dirD vs. snap2/dirD diff listing---------" << std::endl;
     ASSERT_EQ(0, test_mount.for_each_readdir_snapdiff(
       snap_path.c_str(),
-      snapid1,
+      snap_other_path.c_str(),
       [&](const dirent* dire, uint64_t snapid) {
         std::cout << dire->d_name << " snap " << snapid << std::endl;
         return true;
@@ -1114,10 +1126,11 @@ TEST(LibCephFS, SnapDiffLib)
   }
   {
     string snap_path = test_mount.make_snap_path("snap2");
+    string snap_other_path = test_mount.make_snap_path("snap1");
     std::cout << "---------snap1 vs. snap2 diff listing---------" << std::endl;
     ASSERT_EQ(0, test_mount.for_each_readdir_snapdiff(
       snap_path.c_str(),
-      snapid1,
+      snap_other_path.c_str(),
       [&](const dirent* dire, uint64_t snapid) {
         std::cout << dire->d_name << " snap " << snapid << std::endl;
         return true;
@@ -1125,6 +1138,7 @@ TEST(LibCephFS, SnapDiffLib)
   }
   {
     string snap_path = test_mount.make_snap_path("snap2");
+    string snap_other_path = test_mount.make_snap_path("snap1");
     std::cout << "---------snap1 vs. snap2 diff listing verification---------" << std::endl;
     vector<pair<string, uint64_t>> expected;
     expected.emplace_back("fileA", snapid2);
@@ -1136,11 +1150,12 @@ TEST(LibCephFS, SnapDiffLib)
     expected.emplace_back("dirD", snapid2);
     ASSERT_EQ(0,
       test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
-        snapid1,
+        snap_other_path.c_str(),
         expected));
   }
   {
     string snap_path = test_mount.make_snap_path("snap1");
+    string snap_other_path = test_mount.make_snap_path("snap2");
     std::cout << "---------snap2 vs. snap1 diff listing verification---------" << std::endl;
     vector<pair<string, uint64_t>> expected;
     expected.emplace_back("fileA", snapid2);
@@ -1152,34 +1167,37 @@ TEST(LibCephFS, SnapDiffLib)
     expected.emplace_back("dirD", snapid2);
     ASSERT_EQ(0,
       test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
-        snapid2,
+        snap_other_path.c_str(),
         expected));
   }
   {
     string snap_path = test_mount.make_snap_path("snap2", "dirB");
+    string snap_other_path = test_mount.make_snap_path("snap1");
     std::cout << "---------snap1/dirB vs. snap2/dirB diff listing verification---------" << std::endl;
     vector<pair<string, uint64_t>> expected;
     expected.emplace_back("fileb", snapid2);
     ASSERT_EQ(0,
       test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
-        snapid1,
+        snap_other_path.c_str(),
         expected));
   }
   {
     string snap_path = test_mount.make_snap_path("snap2", "dirD");
+    string snap_other_path = test_mount.make_snap_path("snap1");
     std::cout << "---------snap1/dirD vs. snap2/dirD diff listing verification---------" << std::endl;
     vector<pair<string, uint64_t>> expected;
     ASSERT_EQ(0,
       test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
-        snapid1,
+        snap_other_path.c_str(),
         expected));
   }
   {
     string snap_path = test_mount.make_snap_path("snap2");
+    string snap_other_path = snap_path;
     std::cout << "---------invalid snapdiff params, the same snaps---------" << std::endl;
     ASSERT_EQ(-EINVAL, test_mount.for_each_readdir_snapdiff(
       snap_path.c_str(),
-      snapid2,
+      snap_other_path.c_str(),
       [&](const dirent* dire, uint64_t snapid) {
         return true;
       }));
@@ -1187,9 +1205,10 @@ TEST(LibCephFS, SnapDiffLib)
   {
     std::cout << "---------invalid snapdiff params, no snap_other ---------" << std::endl;
     string snap_path = test_mount.make_snap_path("snap2");
+    string snap_other_path;
     ASSERT_EQ(-EINVAL, test_mount.for_each_readdir_snapdiff(
       snap_path.c_str(),
-      CEPH_NOSNAP,
+      snap_other_path.c_str(),
       [&](const dirent* dire, uint64_t snapid) {
         return true;
       }));
@@ -1322,26 +1341,28 @@ TEST(LibCephFS, SnapDiffLib2)
   snap2_3_diff_expected.emplace_back("dirD", snapid3);
 
   auto verify_snap_diff = [&](
-    uint64_t snapid1,
+    std::string_view snap1_name,
     std::string_view snap2_name,
     vector<pair<string, uint64_t>>& expected)
   {
     string snap_path = test_mount.make_snap_path(snap2_name.data());
+    string snap_other_path = test_mount.make_snap_path(snap1_name.data());
     std::cout << "--------- " << snapid1 << " vs. " << snap2_name
               << " diff listing verification---------" << std::endl;
     ASSERT_EQ(0,
       test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
-        snapid1,
+        snap_other_path.c_str(),
         expected));
   };
-  auto print_snap_diff = [&](uint64_t snapid1, std::string_view snap2_name)
+  auto print_snap_diff = [&](std::string_view snap1_name, std::string_view snap2_name)
   {
     string snap_path = test_mount.make_snap_path(snap2_name.data());
+    string snap_other_path = test_mount.make_snap_path(snap1_name.data());
     std::cout << "---------" << snapid1 << " vs. " << snap2_name
               << " diff listing---------" << std::endl;
     ASSERT_EQ(0, test_mount.for_each_readdir_snapdiff(
       snap_path.c_str(),
-      snapid1,
+      snap_other_path.c_str(),
       [&](const dirent* dire, uint64_t snapid) {
         std::cout << dire->d_name << " snap " << snapid << std::endl;
         return true;
@@ -1350,21 +1371,22 @@ TEST(LibCephFS, SnapDiffLib2)
 
   verify_snap_listing();
   verify_snap_listing(); // served from cache
-  print_snap_diff(snapid1, "snap2");
-  verify_snap_diff(snapid1, "snap2", snap1_2_diff_expected);
+  print_snap_diff("snap1", "snap2");
+  verify_snap_diff("snap1", "snap2", snap1_2_diff_expected);
   verify_snap_listing(); // served from cache
-  verify_snap_diff(snapid2, "snap1", snap1_2_diff_expected);
+  verify_snap_diff("snap2", "snap1", snap1_2_diff_expected);
   verify_snap_listing(); // served from cache
-  verify_snap_diff(snapid1, "snap3", snap1_3_diff_expected);
-  verify_snap_diff(snapid2, "snap3", snap2_3_diff_expected);
+  verify_snap_diff("snap1", "snap3", snap1_3_diff_expected);
+  verify_snap_diff("snap2", "snap3", snap2_3_diff_expected);
   verify_snap_listing(); // served from cache
 
   {
     string snap_path = test_mount.make_snap_path("snap2", "dirA");
+    string snap_other_path = test_mount.make_snap_path("snap1");
     std::cout << "---------snap1/dirA vs. snap2/dirA diff listing---------" << std::endl;
     ASSERT_EQ(0, test_mount.for_each_readdir_snapdiff(
       snap_path.c_str(),
-      snapid1,
+      snap_other_path.c_str(),
       [&](const dirent* dire, uint64_t snapid) {
         std::cout << dire->d_name << " snap " << snapid << std::endl;
         return true;
@@ -1372,21 +1394,23 @@ TEST(LibCephFS, SnapDiffLib2)
   }
   {
     string snap_path = test_mount.make_snap_path("snap2", "dirA");
+    string snap_other_path = test_mount.make_snap_path("snap1");
     std::cout << "---------snap1/dirA vs. snap2/dirA diff listing verification---------" << std::endl;
     vector<pair<string, uint64_t>> expected;
     expected.emplace_back("fileA", snapid2);
     ASSERT_EQ(0,
       test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
-        snapid1,
+        snap_other_path.c_str(),
         expected));
   }
 
   {
     string snap_path = test_mount.make_snap_path("snap2", "dirB");
+    string snap_other_path = test_mount.make_snap_path("snap1");
     std::cout << "---------snap1/dirB vs. snap2/dirB diff listing---------" << std::endl;
     ASSERT_EQ(0, test_mount.for_each_readdir_snapdiff(
       snap_path.c_str(),
-      snapid1,
+      snap_other_path.c_str(),
       [&](const dirent* dire, uint64_t snapid) {
         std::cout << dire->d_name << " snap " << snapid << std::endl;
         return true;
@@ -1394,21 +1418,23 @@ TEST(LibCephFS, SnapDiffLib2)
   }
   {
     string snap_path = test_mount.make_snap_path("snap2", "dirB");
+    string snap_other_path = test_mount.make_snap_path("snap1");
     std::cout << "---------snap1/dirB vs. snap2/dirB diff listing verification---------" << std::endl;
     vector<pair<string, uint64_t>> expected;
     expected.emplace_back("fileb", snapid2);
     ASSERT_EQ(0,
       test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
-        snapid1,
+        snap_other_path.c_str(),
         expected));
   }
 
   {
     string snap_path = test_mount.make_snap_path("snap2", "dirD");
+    string snap_other_path = test_mount.make_snap_path("snap1");
     std::cout << "---------snap1/dirD vs. snap2/dirD diff listing---------" << std::endl;
     ASSERT_EQ(0, test_mount.for_each_readdir_snapdiff(
       snap_path.c_str(),
-      snapid1,
+      snap_other_path.c_str(),
       [&](const dirent* dire, uint64_t snapid) {
         std::cout << dire->d_name << " snap " << snapid << std::endl;
         return true;
@@ -1416,17 +1442,18 @@ TEST(LibCephFS, SnapDiffLib2)
   }
   {
     string snap_path = test_mount.make_snap_path("snap2", "dirD");
+    string snap_other_path = test_mount.make_snap_path("snap1");
     std::cout << "---------snap1/dirD vs. snap2/dirD diff listing verification---------" << std::endl;
     vector<pair<string, uint64_t>> expected;
     ASSERT_EQ(0,
       test_mount.readdir_snapdiff_and_compare(snap_path.c_str(),
-        snapid1,
+        snap_other_path.c_str(),
         expected));
   }
   verify_snap_listing(); // served from cache
-  verify_snap_diff(snapid1, "snap2", snap1_2_diff_expected);
-  verify_snap_diff(snapid3, "snap2", snap2_3_diff_expected);
-  verify_snap_diff(snapid1, "snap3", snap1_3_diff_expected);
+  verify_snap_diff("snap1", "snap2", snap1_2_diff_expected);
+  verify_snap_diff("snap3", "snap2", snap2_3_diff_expected);
+  verify_snap_diff("snap1", "snap3", snap1_3_diff_expected);
 
   std::cout << "------------- closing -------------" << std::endl;
   ASSERT_EQ(0, test_mount.purge_dir(""));

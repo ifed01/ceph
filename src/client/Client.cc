@@ -9497,10 +9497,16 @@ int Client::readdirplus_r(dir_result_t *d, struct dirent *de,
   return 0;
 }
 
-int Client::readdir_snapdiff(dir_result_t* d, snapid_t snap_other,
-  struct dirent* res_de, snapid_t* res_snap)
+int Client::readdir_snapdiff(dir_result_t* d,
+  dir_result_t* d_other,
+  struct dirent* res_de,
+  snapid_t* res_snap)
 {
   int ret;
+
+  ceph_assert(d->inode);
+  ceph_assert(d_other->inode);
+
   auto& de = d->de;
   ceph_statx stx;
   single_readdir sr;
@@ -9517,7 +9523,7 @@ int Client::readdir_snapdiff(dir_result_t* d, snapid_t snap_other,
       diri->make_nosnap_relative_path(path);
       req->set_filepath(path);
       req->set_inode(diri.get());
-      req->head.args.snapdiff.snap_other = snap_other;
+      req->head.args.snapdiff.snap_other = d_other->inode->snapid;
       req->head.args.snapdiff.frag = fg;
       req->head.args.snapdiff.flags = CEPH_READDIR_REPLY_BITFLAGS;
       if (dirp->last_name.length()) {

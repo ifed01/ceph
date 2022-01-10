@@ -690,7 +690,7 @@ extern "C" int ceph_readdirplus_r(struct ceph_mount_info *cmount, struct ceph_di
 
 extern "C" int ceph_readdir_snapdiff(struct ceph_mount_info* cmount,
 						struct ceph_dir_result* dirp,
-					        uint64_t snap_other,
+						struct ceph_dir_result* other,
 						struct dirent* res_dirent,
 						uint64_t* res_snapid)
 {
@@ -700,8 +700,11 @@ extern "C" int ceph_readdir_snapdiff(struct ceph_mount_info* cmount,
     return -errno;
   }
   snapid_t snapid;
-  auto r = cmount->get_client()->readdir_snapdiff(reinterpret_cast<dir_result_t*>(dirp),
-    snap_other, res_dirent, &snapid);
+  auto r = cmount->get_client()->readdir_snapdiff(
+    reinterpret_cast<dir_result_t*>(dirp),
+    reinterpret_cast<dir_result_t*>(other),
+    res_dirent,
+    &snapid);
   if (res_snapid) {
     // converting snapid_t to uint64_t to avoid snapid_t exposure
     *res_snapid = snapid;

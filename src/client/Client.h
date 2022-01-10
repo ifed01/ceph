@@ -366,7 +366,7 @@ public:
   // *res_snap - resulting entry's snapid, values less than dirp's snapid
   //             means entry not present in d
   //
-  int readdir_snapdiff(dir_result_t* dirp, snapid_t snap_other,
+  int readdir_snapdiff(dir_result_t* dirp, dir_result_t* dir_other,
     struct dirent* res_de, snapid_t* res_snap);
 
   int getdir(const char *relpath, std::list<std::string>& names,
