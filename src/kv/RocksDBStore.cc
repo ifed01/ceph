@@ -1243,6 +1243,7 @@ int RocksDBStore::do_open(ostream &out,
   plb.add_time_avg(l_rocksdb_write_delay_time, "rocksdb_write_delay_time", "Rocksdb write delay time");
   plb.add_time_avg(l_rocksdb_write_pre_and_post_process_time, 
       "rocksdb_write_pre_and_post_time", "total time spent on writing a record, excluding write process");
+  plb.add_time_avg(l_rocksdb_flush_latency, "flush_latency", "Flush Latency");
   logger = plb.create_perf_counters();
   cct->get_perfcounters_collection()->add(logger);
 
@@ -2101,6 +2102,22 @@ void RocksDBStore::compact_range(const string& start, const string& end)
       compact_range(column, key_lowest, key_end);
     }
   }
+}
+
+void RocksDBStore::flush_all()
+{
+  utime_t start = ceph_clock_now();
+/*  rocksdb::WriteOptions woptions;
+  woptions.sync = false;
+
+  int result = submit_common(woptions, t);*/
+  rocksdb::FlushOptions options;
+  //FIXME: pass column families: const std::vector<ColumnFamilyHandle*>& column_families)
+  db->Flush(options);
+
+  utime_t lat = ceph_clock_now() - start;
+  logger->tinc(l_rocksdb_flush_latency, lat);
+
 }
 
 RocksDBStore::RocksDBWholeSpaceIteratorImpl::~RocksDBWholeSpaceIteratorImpl()

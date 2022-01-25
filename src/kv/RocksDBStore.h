@@ -42,6 +42,7 @@ enum {
   l_rocksdb_write_memtable_time,
   l_rocksdb_write_delay_time,
   l_rocksdb_write_pre_and_post_process_time,
+  l_rocksdb_flush_latency,
   l_rocksdb_last,
 };
 
@@ -230,6 +231,8 @@ public:
 			   const std::string& end) override {
     compact_range_async(combine_strings(prefix, start), combine_strings(prefix, end));
   }
+
+  void flush_all();
 
   RocksDBStore(CephContext *c, const std::string &path, std::map<std::string,std::string> opt, void *p) :
     cct(c),
