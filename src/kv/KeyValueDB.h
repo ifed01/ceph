@@ -404,6 +404,7 @@ public:
   virtual void compact_range_async(const std::string& prefix,
 				   const std::string& start, const std::string& end) {}
 
+  virtual void flush_all() {}
   // See RocksDB merge operator definition, we support the basic
   // associative merge only right now.
   class MergeOperator {

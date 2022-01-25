@@ -42,6 +42,7 @@ enum {
   l_rocksdb_write_memtable_time,
   l_rocksdb_write_delay_time,
   l_rocksdb_write_pre_and_post_process_time,
+  l_rocksdb_flush_latency,
   l_rocksdb_last,
 };
 
@@ -125,7 +126,8 @@ private:
   typedef decltype(cf_handles)::iterator cf_handles_iterator;
   std::unordered_map<uint32_t, std::string> cf_ids_to_prefix;
   std::unordered_map<std::string, rocksdb::BlockBasedTableOptions> cf_bbt_opts;
-  
+  std::vector<rocksdb::ColumnFamilyHandle *> all_cf_handles;
+
   void add_column_family(const std::string& cf_name, uint32_t hash_l, uint32_t hash_h,
 			 size_t shard_idx, rocksdb::ColumnFamilyHandle *handle);
   bool is_column_family(const std::string& prefix);
@@ -234,6 +236,8 @@ public:
 			   const std::string& end) override {
     compact_range_async(combine_strings(prefix, start), combine_strings(prefix, end));
   }
+
+  void flush_all();
 
   RocksDBStore(CephContext *c, const std::string &path, std::map<std::string,std::string> opt, void *p) :
     cct(c),

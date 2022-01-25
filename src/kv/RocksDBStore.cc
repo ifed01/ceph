@@ -617,6 +617,7 @@ void RocksDBStore::add_column_family(const std::string& cf_name, uint32_t hash_l
     column.handles.resize(shard_idx + 1);
   column.handles[shard_idx] = handle;
   cf_ids_to_prefix.emplace(handle->GetID(), cf_name);
+  all_cf_handles.emplace_back(handle);
 }
 
 bool RocksDBStore::is_column_family(const std::string& prefix) {
@@ -1251,6 +1252,7 @@ int RocksDBStore::do_open(ostream &out,
   plb.add_time_avg(l_rocksdb_write_delay_time, "rocksdb_write_delay_time", "Rocksdb write delay time");
   plb.add_time_avg(l_rocksdb_write_pre_and_post_process_time, 
       "rocksdb_write_pre_and_post_time", "total time spent on writing a record, excluding write process");
+  plb.add_time_avg(l_rocksdb_flush_latency, "flush_latency", "Flush Latency");
   logger = plb.create_perf_counters();
   cct->get_perfcounters_collection()->add(logger);
 
@@ -1308,6 +1310,7 @@ void RocksDBStore::close()
       db->DestroyColumnFamilyHandle(p.second.handles[i]);
     }
   }
+  all_cf_handles.clear();
   cf_handles.clear();
   if (must_close_default_cf) {
     db->DestroyColumnFamilyHandle(default_cf);
@@ -2131,6 +2134,20 @@ void RocksDBStore::compact_range(const string& start, const string& end)
       compact_range(column, key_lowest, key_end);
     }
   }
+}
+
+void RocksDBStore::flush_all()
+{
+  utime_t start = ceph_clock_now();
+  rocksdb::FlushOptions options;
+
+  db->Flush(options);
+  if (!all_cf_handles.empty()) {
+    db->Flush(options, all_cf_handles);
+  }
+
+  utime_t lat = ceph_clock_now() - start;
+  logger->tinc(l_rocksdb_flush_latency, lat);
 }
 
 RocksDBStore::RocksDBWholeSpaceIteratorImpl::~RocksDBWholeSpaceIteratorImpl()
