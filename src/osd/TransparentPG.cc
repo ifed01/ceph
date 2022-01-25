@@ -327,7 +327,7 @@ void TransparentPG::do_op(OpRequestRef& op)
     op->reset_desc();   // for TrackedOp
     m->clear_payload();
   }
-  dout(0) << __func__ << ": op " << *m << dendl;
+  dout(10) << __func__ << ": op " << *m << dendl;
 
   if (m->has_flag(CEPH_OSD_FLAG_PARALLELEXEC)) {
     // not implemented.
@@ -367,7 +367,7 @@ void TransparentPG::do_op(OpRequestRef& op)
 void TransparentPG::execute_ctx(OpContext* ctx)
 {
 //  FUNCTRACE(cct);
-  dout(0) << __func__ << " " << ctx << dendl;
+  dout(10) << __func__ << " " << ctx << dendl;
   //ctx->reset_obs(ctx->obc);
   //ctx->update_log_only = false; // reset in case finish_copyfrom() is re-running execute_ctx
   OpRequestRef op = ctx->op;
@@ -893,7 +893,7 @@ void TransparentPG::log_op_stats(const OpRequest& op,
     ceph_abort();
   }
 
-  dout(15) << "log_op_stats " << *m
+  dout(15) << "transparent log_op_stats " << *m
     << " inb " << inb
     << " outb " << outb
     << " lat " << latency << dendl;
@@ -2538,7 +2538,7 @@ int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
       result = 0;
       { // write full object
 	//tracepoint(osd, do_osd_op_pre_writefull, soid.oid.name.c_str(), soid.snap.val, oi.size, 0, op.extent.length);
-	dout(0) << __func__ << " write full0 " << op.extent.length << dendl;
+	dout(10) << __func__ << " write full0 " << op.extent.length << dendl;
 
 	if (op.extent.length != osd_op.indata.length()) {
 	  result = -EINVAL;
@@ -2579,7 +2579,7 @@ int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
 	/*write_update_size_and_usage(ctx->delta_stats, oi, ctx->modified_ranges,
 	  0, op.extent.length, true);*/
       }
-      dout(0) << __func__ << " write full " << op.extent.length << dendl;
+      dout(10) << __func__ << " write full " << op.extent.length << dendl;
       break;
 
     case CEPH_OSD_OP_WRITESAME:
