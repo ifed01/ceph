@@ -59,9 +59,6 @@ public:
   }
 
 private:
-  void scrub_snapshot_metadata(ScrubMap& map, const missing_map_t& missing_digest) final
-  {
-  }
 
   void _scrub_clear_state() final
   {
