@@ -1811,6 +1811,7 @@ private:
     uint64_t last_blobid = 0;  ///< if non-zero, highest new blobid we allocated
 
     uint64_t wal_seq = 0;      ///< WAL seq to return back once txc is committed
+    void* wal_op_ctx = nullptr;///< opaque WAL I/O context
 #if defined(WITH_LTTNG)
     bool tracing = false;
 #endif
