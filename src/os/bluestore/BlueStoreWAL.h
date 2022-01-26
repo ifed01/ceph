@@ -70,9 +70,7 @@ WRITE_CLASS_DENC(bluewal_transact_head_t)
 class BluestoreWAL {
 protected:
   typedef boost::intrusive::unordered_set_member_hook<> unordered_set_hook;
-  struct Op : public BlueStore::AioContext {
-    BluestoreWAL* wal = nullptr;
-    IOContext ioc;
+  struct Op {
     uint64_t transact_seqno = 0;
     uint64_t wiping_pages = 0;
     uint64_t prev_page_seqno = 0;
@@ -81,21 +79,16 @@ protected:
 
     unordered_set_hook member_hook_; //member hook
 
-    Op(BluestoreWAL* _wal,
-      CephContext* cct,
+    Op(CephContext* cct,
       uint64_t _seq,
       uint64_t wp,
       void* _txc)
-      : wal(_wal),
-      ioc(cct, this),
-      transact_seqno(_seq),
+      : transact_seqno(_seq),
       wiping_pages(wp),
       txc(_txc) {
     }
     // dummy ctor for lookups
-    Op(uint64_t _seq) : ioc(nullptr, nullptr), transact_seqno(_seq) {
-    }
-    ~Op() override{
+    Op(uint64_t _seq) : transact_seqno(_seq) {
     }
     friend std::size_t hash_value(const Op& op) {
       return std::size_t(op.transact_seqno);
@@ -103,9 +96,6 @@ protected:
     friend bool operator==(const Op& left, const Op& right) {
       return left.transact_seqno == right.transact_seqno;
     }
-
-  protected:
-    void aio_finish(BlueStore* store) override;
   };
 
 protected:
@@ -196,8 +186,10 @@ public:
   }
   void init_add_pages(uint64_t offset, uint64_t len);
   
-  int submit(void* txc, bufferlist& txc_payload);
+  void* log(IOContext* ioc, void* txc, const std::string& txc_payload);
   void submitted(uint64_t outdated_page_seqno, KeyValueDB& db);
+
+  void aio_finish(BlueStore* store, void* op);
 
   void shutdown();
 
