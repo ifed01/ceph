@@ -13,6 +13,8 @@
 
 #include <utility>
 
+#include "include/intarith.h"
+#include "include/crc32c.h"
 #include "blk/BlockDevice.h"
 #include "BlueStore.h"
 
@@ -23,11 +25,6 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "BlueWAL: "
 
-void BluestoreWAL::Op::aio_finish(BlueStore* store)
-{
-  running = false;
-  wal->aio_finish(store, *this);
-}
 // =======================================================
 enum {
   l_bluestore_wal_first = l_bluestore_last,
@@ -219,6 +216,12 @@ void BluestoreWAL::aio_submit(IOContext* ioc)
   bdev->aio_submit(ioc);
 }
 
+void BluestoreWAL::aio_finish(BlueStore* store, void* o)
+{
+  Op* op = static_cast<Op*>(o);
+  aio_finish(store, *op);
+}
+
 void BluestoreWAL::aio_finish(BlueStore* store, Op& op)
 {
   mono_clock::time_point t0 = mono_clock::now();
@@ -281,7 +284,7 @@ void BluestoreWAL::aio_finish(BlueStore* store, Op& op)
   logger->tinc(l_bluestore_wal_aio_finish_lat, mono_clock::now() - t0);
 
 }
-int BluestoreWAL::submit(void* txc, bufferlist& t)
+void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
 {
   bufferlist bl;
   bluewal_transact_head_t header;
@@ -294,6 +297,12 @@ int BluestoreWAL::submit(void* txc, bufferlist& t)
   header.uuid = uuid;
 
   logger->inc(l_bluestore_wal_input_bytes, t_len);
+
+  auto* op = new Op(
+    cct,
+    0, // future transact seq no
+    0, //no wiping
+    txc);
 
   std::unique_lock l(lock);
   // note current page to mark it as exhausted 
@@ -312,23 +321,28 @@ int BluestoreWAL::submit(void* txc, bufferlist& t)
   dout(7) << __func__ << " need pages:" << need_pages
 	  << " transact len:" << t_len << dendl;
   ++transact_seqno;
-  auto* op = new Op(
-    this,
-    cct,
-    transact_seqno,
-    0, //no wiping
-    txc);
-  auto* ioc = &(op->ioc);
+  op->transact_seqno = transact_seqno;
+  auto csum = ceph_crc32c(transact_seqno,
+    (const unsigned char*)t.c_str(),
+    t_len);
 
   if (likely(!need_pages)) {
     uint64_t offs = curpage_pos + page_offsets[get_page_idx(page_seqno)];
 
+    size_t to_write = p2roundup(thead_size + t_len, block_size);
+
+    auto appender = bl.get_page_aligned_appender(to_write / block_size);
+    bl.reserve(to_write);
+
     header.seq = transact_seqno;
     header.len = t_len;
+    header.uuid = uuid;
+    header.csum = csum;
 
     encode(header, bl);
-    bl.claim_append(t);
-    _pad_bl(bl, block_size);
+
+    appender.append(t.c_str(), t_len);
+    appender.append_zero(p2nphase(size_t(bl.length()), block_size));
 
     dout(7) << __func__ << " write 0x" << std::hex << offs
       << "~" << bl.length() << std::dec << dendl;
@@ -336,6 +350,13 @@ int BluestoreWAL::submit(void* txc, bufferlist& t)
     curpage_pos += bl.length();
     avail -= bl.length();
     logger->inc(l_bluestore_wal_output_bytes, bl.length());
+
+    /*{
+	dout(10) << " segments = " << bl.get_num_buffers()
+	        << " length = " << bl.length()
+	        << dendl;
+    }*/
+
     aio_write(offs, bl, ioc, false);
   } else {
     bluewal_page_head_t pheader;
@@ -353,14 +374,15 @@ int BluestoreWAL::submit(void* txc, bufferlist& t)
     header.seq = transact_seqno;
     // put the whole length into the first transaction header
     header.len = t_len;
+    header.uuid = uuid;
     // first transaction's header keeps csum for the whole payload
-    header.csum = t.crc32c(transact_seqno);
+    header.csum = csum;
     encode(header, bl);
 
     size_t page = 0;
     do {
       if (likely(need_pages == 1)) {
-        bl.claim_append(t);
+        bl.append(t.c_str(), t_len);
       } else {
 	size_t l = std::min(t_len - t_written, page_size - phead_size - thead_size);
 	if (page != 0) {
@@ -379,10 +401,8 @@ int BluestoreWAL::submit(void* txc, bufferlist& t)
 	  header.csum = 0; // don't care about csum of the portion
 	  encode(header, bl);
 	}
-	bufferlist subbuf;
-	subbuf.substr_of(t, t_written, l); // FIXME: to avoid copy!!!
+	bl.append(t.c_str() + t_written, l);
 	t_written += l;
-	bl.claim_append(subbuf);
       }
       _pad_bl(bl, block_size);
       auto offs = curpage_pos + page_offsets[get_page_idx(page_seqno)];
@@ -401,8 +421,6 @@ int BluestoreWAL::submit(void* txc, bufferlist& t)
     wiping = wipe_pages(ioc);
   }
 
-  aio_submit(ioc);
-
   // when huge op is issues (2+ pages) - mark ending page
   // as completely consumed
   // and immediately request completion indication for 
@@ -412,8 +430,8 @@ int BluestoreWAL::submit(void* txc, bufferlist& t)
   if (need_pages > 2) {
     avail -= page_size - curpage_pos;
     curpage_pos = page_size;
-    // this will cause the next submit call to request the second commit
-    // indication for the same page seqno - committed() to handle(ignore) that
+    // this will cause the next log() call to request the second submit
+    // indication for the same page seqno - submitted() to handle(i.e. ignore) that
     op->prev_page_seqno = page_seqno;
 
   } else if (prev_page_seqno != page_seqno) {
@@ -430,7 +448,7 @@ int BluestoreWAL::submit(void* txc, bufferlist& t)
     << " prev_page_seqno " << op->prev_page_seqno
     << dendl;
 
-  return 0;
+  return op;
 }
 
 void BluestoreWAL::submitted(uint64_t submitted_page_seqno,
@@ -476,6 +494,7 @@ void BluestoreWAL::submitted(uint64_t submitted_page_seqno,
     }
   }
 }
+
 
 void BluestoreWAL::shutdown()
 {
