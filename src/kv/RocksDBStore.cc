@@ -1826,14 +1826,9 @@ void RocksDBStore::RocksDBTransactionImpl::merge(
   }
 }
 
-void RocksDBStore::RocksDBTransactionImpl::get_as_bytes(bufferlist* out)
+const std::string& RocksDBStore::RocksDBTransactionImpl::get_as_bytes()
 {
-    ceph_assert(out);
-    const std::string& s = bat.Data();
-    bufferptr bp = buffer::claim_char(
-      s.length(),
-      const_cast<char*>(s.data()));
-    out->append(bp);
+    return bat.Data();
 }
 
 int RocksDBStore::get(
