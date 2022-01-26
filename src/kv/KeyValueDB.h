@@ -136,7 +136,7 @@ public:
     // the life of the out buffer .
     // Hence no need to copy transaction data
     // if possible
-    virtual void get_as_bytes(bufferlist* out) {
+    virtual const std::string& get_as_bytes() {
       ceph_assert(false); // unsupported
     }
   };

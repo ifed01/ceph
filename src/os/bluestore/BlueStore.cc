@@ -12698,7 +12698,7 @@ void BlueStore::_txc_state_proc(TransContext *txc)
     switch (txc->get_state()) {
     case TransContext::STATE_PREPARE:
       throttle.log_state_latency(*txc, logger, l_bluestore_state_prepare_lat);
-      if (txc->ioc.has_pending_aios()) {
+      if (txc->ioc.has_pending_aios() || wal) {
 	txc->set_state(TransContext::STATE_AIO_WAIT);
 #ifdef WITH_BLKIN
         if (txc->trace) {
@@ -12706,6 +12706,11 @@ void BlueStore::_txc_state_proc(TransContext *txc)
         }
 #endif
 	txc->had_ios = true;
+	if (wal) {
+          ceph_assert(!txc->wal_op_ctx);
+          txc->wal_op_ctx = wal->log(&(txc->ioc), txc, txc->t->get_as_bytes());
+        }
+
 	_txc_aio_submit(txc);
 	return;
       }
@@ -12732,11 +12737,13 @@ void BlueStore::_txc_state_proc(TransContext *txc)
       }
 
       throttle.log_state_latency(*txc, logger, l_bluestore_state_io_done_lat);
-      if (wal) {
+
+      if (txc->wal_op_ctx) {
+        ceph_assert(wal);
 	txc->set_state(TransContext::STATE_GOING_WAL);
-        bufferlist bl;
-        txc->t->get_as_bytes(&bl);
-        wal->submit(txc, bl);
+	// this might not trigger immediate continuation due to
+	// potentially unsorted operations in WAL
+	wal->aio_finish(this, txc->wal_op_ctx);
       } else {
         _txc_queue_kv(txc);
       }
