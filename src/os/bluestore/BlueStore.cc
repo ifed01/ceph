@@ -13018,9 +13018,7 @@ void BlueStore::_txc_committed_kv(TransContext *txc)
   throttle.complete_kv(*txc);
 
   {
-    if (wal) {
-      wal->submitted(txc->wal_seq, *db);
-    } else {
+    if (!wal) {
       std::lock_guard l(txc->osr->qlock);
       txc->set_state(TransContext::STATE_KV_DONE);
       if (txc->ch->commit_queue) {
@@ -13645,6 +13643,11 @@ void BlueStore::_kv_finalize_thread()
 
       auto start = mono_clock::now();
 
+      if (wal && !kv_committed.empty()) {
+        // use the last txc to confirm all the previous wal pages
+	TransContext *txc = kv_committed.back();
+	wal->submitted(txc->wal_seq, *db);
+      }
       while (!kv_committed.empty()) {
 	TransContext *txc = kv_committed.front();
 	ceph_assert(txc->get_state() == TransContext::STATE_KV_SUBMITTED);
