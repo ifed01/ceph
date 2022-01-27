@@ -102,64 +102,71 @@ void BluestoreWAL::init_add_pages(uint64_t offset, uint64_t len)
   }
 }
 
-bool BluestoreWAL::get_write_pos(size_t need, uint64_t* _need_pages)
+bool BluestoreWAL::init_op(size_t need, uint64_t* _need_pages, Op** op)
 {
-  if (need + thead_size + curpage_pos <= page_size) {
-    *_need_pages = 0;
-    return true;
-  }
-  auto psize = page_size - phead_size - thead_size;
-  size_t need_pages = round_up_to(need, psize) / psize;
-  ceph_assert(need_pages <= get_total_pages());
-
-  uint64_t avail_pages = get_total_pages() - (page_seqno - last_wiped_page_seqno);
-  uint64_t non_wiped_avail_pages = 0;
-
-  // pending wiping pages can't be used and prevent
-  // following committed pages from usage as well
-  // hence measuring how many committed pages are available
-  if (last_wiped_page_seqno == last_wiping_page_seqno) {
-    non_wiped_avail_pages = last_committed_page_seqno - last_wiping_page_seqno;
-  }
-  if (avail_pages + non_wiped_avail_pages < need_pages) {
+  auto &op_res = ops[(transact_seqno + 1) % ops.size()];
+  if (op_res.running) {
+    dout(7) << __func__
+            << " no more ops, need waiting"
+            << dendl;
     return false;
   }
+  size_t need_pages = 0;
+  if (need + thead_size + curpage_pos > page_size) {
+    auto psize = page_size - phead_size - thead_size;
+    need_pages = round_up_to(need, psize) / psize;
+    ceph_assert(need_pages <= get_total_pages());
 
-//FIXME: sanity!!!
-  if (!(avail_pages + non_wiped_avail_pages  == avail / page_size) ||
-      !(last_submitted_page_seqno <= page_seqno) ||
-      !(last_committed_page_seqno <= last_submitted_page_seqno) ||
-      !(last_wiping_page_seqno <= last_committed_page_seqno) ||
-      !(last_wiped_page_seqno <= last_wiping_page_seqno)) {
-    derr << __func__ << " before assertion:"
-         << " need pages:" << need_pages
-         << " avail pages:" << avail_pages
-         << " avail:" << avail
-         << " avail/page_size:" << avail / page_size
-         << " page seqno:" << page_seqno
-         << " last submitted:" << last_submitted_page_seqno
-         << " last committed:" << last_committed_page_seqno
-         << " wiping: " << last_wiping_page_seqno
-         << " wiped: " << last_wiped_page_seqno
-         <<dendl;
+    uint64_t avail_pages = get_total_pages() - (page_seqno - last_wiped_page_seqno);
+    uint64_t non_wiped_avail_pages = 0;
+
+    // pending wiping pages can't be used and prevent
+    // following committed pages from usage as well
+    // hence measuring how many committed pages are available
+    if (last_wiped_page_seqno == last_wiping_page_seqno) {
+      non_wiped_avail_pages = last_committed_page_seqno - last_wiping_page_seqno;
+    }
+    if (avail_pages + non_wiped_avail_pages < need_pages) {
+      return false;
+    }
+
+    //FIXME: sanity!!!
+    if (!(avail_pages + non_wiped_avail_pages  == avail / page_size) ||
+        !(last_submitted_page_seqno <= page_seqno) ||
+        !(last_committed_page_seqno <= last_submitted_page_seqno) ||
+        !(last_wiping_page_seqno <= last_committed_page_seqno) ||
+        !(last_wiped_page_seqno <= last_wiping_page_seqno)) {
+      derr << __func__ << " before assertion:"
+           << " need pages:" << need_pages
+           << " avail pages:" << avail_pages
+           << " avail:" << avail
+           << " avail/page_size:" << avail / page_size
+           << " page seqno:" << page_seqno
+           << " last submitted:" << last_submitted_page_seqno
+           << " last committed:" << last_committed_page_seqno
+           << " wiping: " << last_wiping_page_seqno
+           << " wiped: " << last_wiped_page_seqno
+           <<dendl;
+    }
+    ceph_assert(avail_pages + non_wiped_avail_pages == avail / page_size);
+    ceph_assert(last_submitted_page_seqno <= page_seqno);
+    ceph_assert(last_committed_page_seqno <= last_submitted_page_seqno);
+    ceph_assert(last_wiping_page_seqno <= last_committed_page_seqno);
+    ceph_assert(last_wiped_page_seqno <= last_wiping_page_seqno);
+    ceph_assert(avail_pages + non_wiped_avail_pages == avail / page_size);
+
+    // we can use non-wiped pages as we're planning to overwrite them
+    // but we need to adjust relevant last sequences to avoid
+    // confusion
+    uint64_t non_wiped_advance = need_pages > avail_pages ? need_pages - avail_pages : 0;
+    ceph_assert(non_wiped_advance <= non_wiped_avail_pages);
+    last_wiping_page_seqno += non_wiped_advance;
+    last_wiped_page_seqno += non_wiped_advance;
   }
 
-  ceph_assert(avail_pages + non_wiped_avail_pages == avail / page_size);
-  ceph_assert(last_submitted_page_seqno <= page_seqno);
-  ceph_assert(last_committed_page_seqno <= last_submitted_page_seqno);
-  ceph_assert(last_wiping_page_seqno <= last_committed_page_seqno);
-  ceph_assert(last_wiped_page_seqno <= last_wiping_page_seqno);
-  ceph_assert(avail_pages + non_wiped_avail_pages == avail / page_size);
-
-  // we can use non-wiped pages as we're planning to overwrite them
-  // but we need to adjust relevant last sequences to avoid 
-  // confusion
-  uint64_t non_wiped_advance = need_pages > avail_pages ? need_pages - avail_pages : 0;
-  ceph_assert(non_wiped_advance <= non_wiped_avail_pages);
-  last_wiping_page_seqno += non_wiped_advance;
-  last_wiped_page_seqno += non_wiped_advance;
-
+  op_res.transact_seqno = ++transact_seqno;
   *_need_pages = need_pages;
+  *op = &op_res;
   return true;
 }
 
@@ -269,6 +276,10 @@ void BluestoreWAL::aio_finish(BlueStore* store, Op& op)
 	      << dendl;
       }
       ceph_assert(last_wiped_page_seqno <= last_wiping_page_seqno);
+    }
+    //awake pending submits if any
+    if (num_pending_free) {
+      l.unlock();
       flush_cond.notify_all();
     }
   }
@@ -292,24 +303,27 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
   std::unique_lock l(lock);
 
   uint64_t need_pages = 0;
-  while (!get_write_pos(t_len, &need_pages)) {
+  Op* op_ptr = nullptr;
+  while (!init_op(t_len, &need_pages, &op_ptr)) {
     ++num_pending_free;
-    dout(8) << __func__ << " - no write pos, waiting: "
+    dout(8) << __func__ << " - no op, waiting: "
             << num_pending_free << dendl;
     flush_cond.wait(l);
     --num_pending_free;
     dout(8) << __func__ << " wait done" << dendl;
   }
   dout(7) << __func__ << " need pages:" << need_pages
-	  << " transact len:" << t_len << dendl;
+	  << " transact seq:" << transact_seqno
+	  << " transact len:" << t_len
+	  << dendl;
 
-  auto& op = ops[++transact_seqno % ops.size()];
+  auto& op = *op_ptr;
 
-  auto csum = ceph_crc32c(transact_seqno,
+  auto csum = ceph_crc32c(op.transact_seqno,
     (const unsigned char*)t.c_str(),
     t_len);
 
-  header.seq = transact_seqno;
+  header.seq = op.transact_seqno;
   // always put the whole length into the first transaction header
   header.len = t_len;
   // first transaction's header keeps csum for the whole payload
@@ -320,7 +334,7 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
     wiping = wipe_pages(ioc);
   }
 
-  op.init4running(transact_seqno,
+  op.run(
     wiping,
     page_seqno ? page_seqno - 1 : 0, //NB: we would get delayed submit notification
                                      // for page seq 0 but that's fine
@@ -507,11 +521,9 @@ void BluestoreWAL::submitted(uint64_t submitted_page_seqno,
       last_committed_page_seqno = last_submitted_page_seqno;
       avail += to_flush;
 
-      //awake pending submits only if there is no
-      // page wiping in progress as it prevents page from the reuse
-      // until the completion.
-      if (num_pending_free &&
-          last_wiping_page_seqno == last_wiped_page_seqno) {
+      //awake pending submits if any
+      if (num_pending_free) {
+        l.unlock();
         flush_cond.notify_all();
       }
     }
