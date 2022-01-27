@@ -71,10 +71,9 @@ protected:
     uint64_t wiping_pages = 0;
     uint64_t prev_page_seqno = 0;
     void* txc = nullptr;
-    bool running = true;
+    bool running = false;
 
-    void init4running(uint64_t _seq, uint64_t wp, uint64_t prev, void* _txc) {
-      transact_seqno = _seq;
+    void run(uint64_t wp, uint64_t prev, void* _txc) {
       wiping_pages = wp;
       prev_page_seqno = prev;
       txc = _txc;
@@ -117,7 +116,7 @@ protected:
   PerfCounters* logger = nullptr;
 
 protected:
-  bool get_write_pos(size_t need, uint64_t* _need_pages);
+  bool init_op(size_t need, uint64_t* _need_pages, Op**);
 
   inline size_t get_total_pages() const {
     return page_offsets.size();
