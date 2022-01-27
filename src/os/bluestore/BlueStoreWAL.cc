@@ -47,9 +47,7 @@ BluestoreWAL::BluestoreWAL(CephContext* _cct,
     bdev(_bdev),
     uuid(_uuid),
     page_size(psize),
-    block_size(bsize),
-    pending_transactions(
-      pending_transactions_t::bucket_traits(pt_buckets, MAX_BUCKETS))
+    block_size(bsize)
 {
   ceph_assert(psize >= bsize);
 
@@ -67,6 +65,8 @@ BluestoreWAL::BluestoreWAL(CephContext* _cct,
   bl.clear();
   encode(pheader, bl);
   phead_size = bl.length();
+
+  ops.resize(128 * 1024); //FIXME: make configurable/dependable of WAL size
 
   PerfCountersBuilder b(cct, "bluestoreWAL",
     l_bluestore_wal_first, l_bluestore_wal_last);
@@ -236,28 +236,22 @@ void BluestoreWAL::aio_finish(BlueStore* store, Op& op)
             << dendl;
 
     wiped += op.wiping_pages;
-    pending_transactions.erase_and_dispose(
-      op,
-      DeleteDisposer());
     ++min_pending_io_seqno;
-    while (min_pending_io_seqno <= max_pending_io_seqno) {
-      auto it = pending_transactions.find(Op(min_pending_io_seqno));
-      ceph_assert(it != pending_transactions.end());
-      dout(7) << __func__ << " may be processing " << it->transact_seqno
-	      << " prev seqno " << it->prev_page_seqno
-	      << " running " << it->running
+    while (min_pending_io_seqno <= transact_seqno) {
+      auto& op2 = ops[min_pending_io_seqno % ops.size()];
+      dout(7) << __func__ << " may be processing " << op2.transact_seqno
+	      << " prev seqno " << op2.prev_page_seqno
+	      << " running " << op2.running
 	      << dendl;
-      if (it->running) {
+      if (op2.running) {
 	break;
       }
 
-      notify_store(store, it->prev_page_seqno, it->txc);
-      dout(7) << __func__ << " processed " << it->transact_seqno
-	<< dendl;
+      notify_store(store, op2.prev_page_seqno, op2.txc);
+      dout(7) << __func__ << " processed " << op2.transact_seqno
+	      << dendl;
 
-      wiped += it->wiping_pages;
-      pending_transactions.erase_and_dispose(it,
-	DeleteDisposer());
+      wiped += op2.wiping_pages;
       ++min_pending_io_seqno;
     }
     if (wiped) {
@@ -295,12 +289,6 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
 
   logger->inc(l_bluestore_wal_input_bytes, t_len);
 
-  auto* op = new Op(
-    cct,
-    0, // future transact seq no
-    0, //no wiping
-    txc);
-
   std::unique_lock l(lock);
 
   uint64_t need_pages = 0;
@@ -314,8 +302,8 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
   }
   dout(7) << __func__ << " need pages:" << need_pages
 	  << " transact len:" << t_len << dendl;
-  ++transact_seqno;
-  max_pending_io_seqno = transact_seqno;
+
+  auto& op = ops[++transact_seqno % ops.size()];
 
   auto csum = ceph_crc32c(transact_seqno,
     (const unsigned char*)t.c_str(),
@@ -331,12 +319,12 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
   if (last_wiping_page_seqno < last_committed_page_seqno) {
     wiping = wipe_pages(ioc);
   }
-  op->transact_seqno = transact_seqno;
-  op->wiping_pages = wiping;
-  //NB: we would get delayed submit notification for page seq 0
-  // but that's fine
-  op->prev_page_seqno = page_seqno ? page_seqno - 1 : 0;
-  pending_transactions.insert(*op);
+
+  op.init4running(transact_seqno,
+    wiping,
+    page_seqno ? page_seqno - 1 : 0, //NB: we would get delayed submit notification
+                                     // for page seq 0 but that's fine
+    txc);
 
   if (likely(!need_pages)) {
     uint64_t offs = curpage_pos + page_offsets[get_page_idx(page_seqno)];
@@ -368,16 +356,16 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
 
     aio_write(offs, bl, ioc, false);
     dout(7) << __func__
-            << " simple op submitted " << op->transact_seqno
-            << " wiping " << op->wiping_pages
+            << " simple op submitted " << op.transact_seqno
+            << " wiping " << op.wiping_pages
             << " write 0x" << std::hex << offs
             << "~" << bl.length() << std::dec
             << dendl;
-    return op;
+    return &op;
   } // if(!need_pages)
 
-  op->prev_page_seqno = page_seqno;
   // we need to use next page(s)
+  op.prev_page_seqno = page_seqno++;
   {
     bluewal_page_head_t pheader;
     size_t t_written = 0;
@@ -388,8 +376,7 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
 
     pheader.uuid = uuid;
     pheader.following_pages = need_pages;
-    pheader.seq = ++page_seqno;
-
+    pheader.seq = page_seqno;
 
     if (likely(need_pages == 1)) {
       size_t to_write = p2roundup(phead_size + thead_size + t_len, block_size);
@@ -410,16 +397,16 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
       curpage_pos += bl.length();
       l.unlock();
       dout(7) << __func__
-              << " op submitted " << op->transact_seqno
-	      << " prev_page_seqno " << op->prev_page_seqno
-	      << " wiping " << op->wiping_pages
+              << " op submitted " << op.transact_seqno
+	      << " prev_page_seqno " << op.prev_page_seqno
+	      << " wiping " << op.wiping_pages
               << " write 0x" << std::hex << offs
 	      << "~" << bl.length() << std::dec
 	      << dendl;
 
       logger->inc(l_bluestore_wal_output_bytes, bl.length());
       aio_write(offs, bl, ioc, false);
-      return op;
+      return &op;
     }
 
     size_t page = 0;
@@ -478,15 +465,15 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
     curpage_pos = page_size;
     // this will cause the next log() call to request the second submit
     // indication for the same page seqno - submitted() to handle(i.e. ignore) that
-    op->prev_page_seqno = page_seqno;
+    op.prev_page_seqno = page_seqno;
   }
 
-  dout(7) << __func__ << " op submitted " << op->transact_seqno
-	  << " wiping " << op->wiping_pages
-	  << " prev_page_seqno " << op->prev_page_seqno
+  dout(7) << __func__ << " op submitted " << op.transact_seqno
+	  << " wiping " << op.wiping_pages
+	  << " prev_page_seqno " << op.prev_page_seqno
 	  << dendl;
 
-  return op;
+  return &op;
 }
 
 void BluestoreWAL::submitted(uint64_t submitted_page_seqno,
