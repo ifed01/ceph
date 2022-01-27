@@ -55,7 +55,7 @@ struct bluewal_transact_head_t {
   uint32_t len = 0;
   uuid_d uuid;
   uint32_t csum = 0;
-    
+
   DENC(bluewal_transact_head_t, v, p) {
     DENC_START(1, 1, p);
     denc(v.seq, p);
@@ -111,7 +111,7 @@ protected:
 
   size_t phead_size = 0;
   size_t thead_size = 0;
-  
+
   std::vector<uint64_t> page_offsets;
 
   std::atomic<uint64_t> last_submitted_page_seqno = 0;// last page seq got DB submit confirmation
@@ -144,7 +144,6 @@ protected:
   PerfCounters* logger = nullptr;
 
 protected:
-  void _pad_bl(bufferlist& bl, size_t pad_size);
   bool get_write_pos(size_t need, uint64_t* _need_pages);
 
   inline size_t get_total_pages() const {
@@ -185,7 +184,7 @@ public:
     }
   }
   void init_add_pages(uint64_t offset, uint64_t len);
-  
+
   void* log(IOContext* ioc, void* txc, const std::string& txc_payload);
   void submitted(uint64_t outdated_page_seqno, KeyValueDB& db);
 
