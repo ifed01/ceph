@@ -15,10 +15,7 @@
 #define CEPH_OSD_BLUESTORE_WAL_H
 
 #include <atomic>
-//#include <mutex>
 #include <vector>
-#include <boost/intrusive/unordered_set.hpp>
-#include <boost/functional/hash.hpp>
 
 #include "include/ceph_assert.h"
 #include "include/buffer.h"
@@ -69,7 +66,6 @@ WRITE_CLASS_DENC(bluewal_transact_head_t)
 
 class BluestoreWAL {
 protected:
-  typedef boost::intrusive::unordered_set_member_hook<> unordered_set_hook;
   struct Op {
     uint64_t transact_seqno = 0;
     uint64_t wiping_pages = 0;
@@ -77,29 +73,16 @@ protected:
     void* txc = nullptr;
     bool running = true;
 
-    unordered_set_hook member_hook_; //member hook
-
-    Op(CephContext* cct,
-      uint64_t _seq,
-      uint64_t wp,
-      void* _txc)
-      : transact_seqno(_seq),
-      wiping_pages(wp),
-      txc(_txc) {
-    }
-    // dummy ctor for lookups
-    Op(uint64_t _seq) : transact_seqno(_seq) {
-    }
-    friend std::size_t hash_value(const Op& op) {
-      return std::size_t(op.transact_seqno);
-    }
-    friend bool operator==(const Op& left, const Op& right) {
-      return left.transact_seqno == right.transact_seqno;
+    void init4running(uint64_t _seq, uint64_t wp, uint64_t prev, void* _txc) {
+      transact_seqno = _seq;
+      wiping_pages = wp;
+      prev_page_seqno = prev;
+      txc = _txc;
+      running = true;
     }
   };
 
 protected:
-  static const size_t MAX_BUCKETS = 8192;
 
   CephContext* cct = nullptr;
   BlockDevice* bdev = nullptr;
@@ -127,19 +110,9 @@ protected:
   uint64_t last_wiping_page_seqno = 0; 		      // last page seq wiping has been triggered for
   uint64_t last_wiped_page_seqno = 0;		      // last page seq which has been wiped
 
-  struct DeleteDisposer {
-    void operator()(Op* o) { delete o; }
-  };
-
-  typedef 
-    boost::intrusive::member_hook<Op, unordered_set_hook, &Op::member_hook_>
-      MemberOption;
-  using pending_transactions_t = boost::intrusive::unordered_set<Op, MemberOption>;
-  pending_transactions_t::bucket_type pt_buckets[MAX_BUCKETS];
-  pending_transactions_t pending_transactions;
+  std::vector<Op> ops;
 
   uint64_t min_pending_io_seqno = 1;
-  uint64_t max_pending_io_seqno = 0;
 
   PerfCounters* logger = nullptr;
 
