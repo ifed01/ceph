@@ -88,6 +88,7 @@ enum {
   l_bluestore_state_aio_wait_lat,
   l_bluestore_state_io_done_lat,
   l_bluestore_state_going_wal_lat,
+  l_bluestore_state_wal_done_lat,
   l_bluestore_state_kv_queued_lat,
   l_bluestore_state_kv_committing_lat,
   l_bluestore_state_kv_done_lat,
@@ -1708,6 +1709,7 @@ private:
       STATE_AIO_WAIT,
       STATE_IO_DONE,
       STATE_GOING_WAL,
+      STATE_WAL_DONE,
       STATE_KV_QUEUED,     // queued for kv_sync_thread submission
       STATE_KV_SUBMITTED,  // submitted to kv; not yet synced
       STATE_KV_DONE,
@@ -1724,6 +1726,7 @@ private:
       case STATE_AIO_WAIT: return "aio_wait";
       case STATE_IO_DONE: return "io_done";
       case STATE_GOING_WAL: return "going_wal";
+      case STATE_WAL_DONE: return "wal_done";
       case STATE_KV_QUEUED: return "kv_queued";
       case STATE_KV_SUBMITTED: return "kv_submitted";
       case STATE_KV_DONE: return "kv_done";
@@ -1801,6 +1804,7 @@ private:
     uint64_t osd_pool_id = META_POOL_ID;    ///< osd pool id we're operating on
 
     IOContext ioc;
+    IOContext ioc2;
     bool had_ios = false;  ///< true if we submitted IOs before our kv txn
 
     uint64_t seq = 0;
@@ -1825,6 +1829,7 @@ private:
       : ch(c),
 	osr(o),
 	ioc(cct, this),
+	ioc2(cct, this),
 	start(ceph::mono_clock::now()) {
       last_stamp = start;
       if (on_commits) {

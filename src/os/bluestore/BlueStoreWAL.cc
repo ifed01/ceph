@@ -236,15 +236,9 @@ void BluestoreWAL::aio_write(uint64_t off,
   bdev->aio_write(off, bl, ioc, false);
 }
 
-void BluestoreWAL::aio_submit(IOContext* ioc)
-{
-  bdev->aio_submit(ioc);
-}
-
 void BluestoreWAL::aio_finish(BlueStore* store, void* o)
 {
-  Op* op = static_cast<Op*>(o);
-  aio_finish(store, *op);
+  aio_finish(store, *static_cast<Op*>(o));
 }
 
 void BluestoreWAL::aio_finish(BlueStore* store, Op& op)
@@ -305,8 +299,8 @@ void BluestoreWAL::aio_finish(BlueStore* store, Op& op)
     }
   }
   logger->tinc(l_bluestore_wal_aio_finish_lat, mono_clock::now() - t0);
-
 }
+
 void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
 {
   bufferlist bl;
@@ -379,12 +373,12 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
     logger->tinc(l_bluestore_wal_queued_lat,
       mono_clock::now() - t0);
   }
+  auto& op = *op_ptr;
   dout(7) << __func__ << " need pages:" << need_pages
-	  << " transact seq:" << transact_seqno
+	  << " transact seq:" << op.transact_seqno
 	  << " transact len:" << t_len
 	  << dendl;
 
-  auto& op = *op_ptr;
 
   auto csum = ceph_crc32c(op.transact_seqno,
     (const unsigned char*)t.c_str(),
@@ -435,13 +429,13 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
 
     logger->inc(l_bluestore_wal_output_bytes, bl.length());
 
-    aio_write(offs, bl, ioc, false);
     dout(7) << __func__
             << " simple op submitted " << op.transact_seqno
             << " wiping " << op.wiping_pages
             << " write 0x" << std::hex << offs
             << "~" << bl.length() << std::dec
             << dendl;
+    aio_write(offs, bl, ioc, false);
     return &op;
   } // if(!need_pages)
 

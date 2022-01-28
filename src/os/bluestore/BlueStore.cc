@@ -5051,6 +5051,9 @@ void BlueStore::_init_logger()
   b.add_time_avg(l_bluestore_state_going_wal_lat, "state_going_wal_lat",
 		 "Average going wal state latency",
 		 "sgwl", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_state_wal_done_lat, "state_wal_done_lat",
+		 "Average wal done state latency",
+		 "swdl", PerfCountersBuilder::PRIO_USEFUL);
   b.add_time_avg(l_bluestore_state_kv_queued_lat, "state_kv_queued_lat",
 		"Average kv_queued state latency",
 		"skql", PerfCountersBuilder::PRIO_USEFUL);
@@ -12698,7 +12701,7 @@ void BlueStore::_txc_state_proc(TransContext *txc)
     switch (txc->get_state()) {
     case TransContext::STATE_PREPARE:
       throttle.log_state_latency(*txc, logger, l_bluestore_state_prepare_lat);
-      if (txc->ioc.has_pending_aios() || wal) {
+      if (txc->ioc.has_pending_aios()) {
 	txc->set_state(TransContext::STATE_AIO_WAIT);
 #ifdef WITH_BLKIN
         if (txc->trace) {
@@ -12706,10 +12709,6 @@ void BlueStore::_txc_state_proc(TransContext *txc)
         }
 #endif
 	txc->had_ios = true;
-	if (wal) {
-          ceph_assert(!txc->wal_op_ctx);
-          txc->wal_op_ctx = wal->log(&(txc->ioc), txc, txc->t->get_as_bytes());
-        }
 
 	_txc_aio_submit(txc);
 	return;
@@ -12737,21 +12736,37 @@ void BlueStore::_txc_state_proc(TransContext *txc)
       }
 
       throttle.log_state_latency(*txc, logger, l_bluestore_state_io_done_lat);
-
-      if (txc->wal_op_ctx) {
-        ceph_assert(wal);
+      if (wal) {
+        ceph_assert(!txc->wal_op_ctx);
 	txc->set_state(TransContext::STATE_GOING_WAL);
-	// this might not trigger immediate continuation due to
-	// potentially unsorted operations in WAL
-	wal->aio_finish(this, txc->wal_op_ctx);
-      } else {
-        _txc_queue_kv(txc);
+        txc->wal_op_ctx = wal->log(&(txc->ioc2), txc, txc->t->get_as_bytes());
+        if (txc->wal_op_ctx) {
+          wal->aio_submit(&(txc->ioc2)); //NB: it's crucial to call submit after wal_op_ctx
+                                        // assignment to avoid a race condition with
+                                        // completing coming before that
+          return;
+        }
       }
+      _txc_queue_kv(txc);
       return;
     case TransContext::STATE_GOING_WAL:
+
+      ceph_assert(txc->wal_op_ctx);
+      if (txc->wal_op_ctx) {
+        ceph_assert(wal);
+        ceph_assert(txc->ioc2.num_running == 0);
+        txc->ioc2.release_running_aios();
+	// this might not trigger immediate continuation due to
+	// potentially unsorted operations in WAL
+        throttle.log_state_latency(*txc, logger, l_bluestore_state_going_wal_lat);
+	txc->set_state(TransContext::STATE_WAL_DONE);
+	wal->aio_finish(this, txc->wal_op_ctx);
+      }
+      return;
+    case TransContext::STATE_WAL_DONE:
       ceph_assert(wal); // paranoic
       {
-        OpSequencer *osr = txc->osr.get();
+        //OpSequencer *osr = txc->osr.get();
         //FIXME: std::lock_guard l(osr->qlock);
         if (txc->ch->commit_queue) {
           txc->ch->commit_queue->queue(txc->oncommits);
@@ -12759,12 +12774,10 @@ void BlueStore::_txc_state_proc(TransContext *txc)
           finisher.queue(txc->oncommits);
         }
       }
-      throttle.log_state_latency(*txc, logger, l_bluestore_state_going_wal_lat);
+      throttle.log_state_latency(*txc, logger, l_bluestore_state_wal_done_lat);
       logger->tinc(l_bluestore_wal_commit_lat, mono_clock::now() - txc->start);
-      {
-        _txc_queue_kv(txc);
-      }
-      return;
+      _txc_queue_kv(txc);
+       return;
     case TransContext::STATE_KV_SUBMITTED:
       _txc_committed_kv(txc);
       // ** fall-thru **
