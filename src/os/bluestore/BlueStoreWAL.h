@@ -149,7 +149,6 @@ protected:
 			 bufferlist& bl,
 			 IOContext* ioc,
 			 bool buffered);
-  virtual void aio_submit(IOContext* ioc);
 
   void aio_finish(BlueStore* store, Op& op);
 
@@ -175,6 +174,9 @@ public:
   void* log(IOContext* ioc, void* txc, const std::string& txc_payload);
   void submitted(uint64_t outdated_page_seqno, KeyValueDB& db);
 
+  void aio_submit(IOContext* ioc) {
+    bdev->aio_submit(ioc);
+  }
   void aio_finish(BlueStore* store, void* op);
 
   void shutdown();
