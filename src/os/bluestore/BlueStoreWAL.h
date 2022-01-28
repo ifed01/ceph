@@ -98,6 +98,21 @@ protected:
 
   std::atomic<uint64_t> last_submitted_page_seqno = 0;// last page seq got DB submit confirmation
   std::atomic<uint64_t> num_pending_free = 0;         // amount of ops waiting for free pages
+  std::atomic<uint64_t> num_knocking = 0;
+
+  struct chest_t {
+    size_t l1 = 0;
+    size_t l2 = 0;
+
+    bool full() const {
+	return  l1 !=0 && l2 != 0;
+    }
+    void reset() {
+      *this = chest_t();
+    }
+  };
+  ceph::mutex gate_lock = ceph::make_mutex("BlueStoreWAL::lock_gateway");
+  std::array<chest_t, 8> gate_chest;
 
   ceph::mutex lock = ceph::make_mutex("BlueStoreWAL::lock");
   ceph::condition_variable flush_cond;   ///< wait here for transactions in WAL to commit
