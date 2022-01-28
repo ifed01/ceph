@@ -28,10 +28,16 @@
 // =======================================================
 enum {
   l_bluestore_wal_first = l_bluestore_last,
+  l_bluestore_wal_input_ops,
+  l_bluestore_wal_matched_ops,
+  l_bluestore_wal_not_matched_ops,
+  l_bluestore_wal_match_miss_ops,
   l_bluestore_wal_input_bytes,
   l_bluestore_wal_pad_bytes,
   l_bluestore_wal_output_bytes,
   l_bluestore_wal_wipe_bytes,
+  l_bluestore_wal_knocking_avg,
+  l_bluestore_wal_queued_lat,
   l_bluestore_wal_aio_finish_lat,
   l_bluestore_submitted_lat, // FIXME: unused
   l_bluestore_submitted_locking_lat, // FIXME: unused
@@ -70,6 +76,14 @@ BluestoreWAL::BluestoreWAL(CephContext* _cct,
 
   PerfCountersBuilder b(cct, "bluestoreWAL",
     l_bluestore_wal_first, l_bluestore_wal_last);
+    b.add_u64_counter(l_bluestore_wal_input_ops, "input_ops",
+      "Ops count submitted to WAL");
+    b.add_u64_counter(l_bluestore_wal_matched_ops, "matched_ops",
+      "Amount of ops merged into a single disk block");
+    b.add_u64_counter(l_bluestore_wal_not_matched_ops, "not_matched_ops",
+      "Amount of ops lacked merging due to full chest");
+    b.add_u64_counter(l_bluestore_wal_match_miss_ops, "match_miss_ops",
+      "Amount of ops lacked merging due to missing matching op");
     b.add_u64_counter(l_bluestore_wal_input_bytes, "input_bytes",
       "Byte count submitted to WAL");
     b.add_u64_counter(l_bluestore_wal_pad_bytes, "pad_bytes",
@@ -80,6 +94,13 @@ BluestoreWAL::BluestoreWAL(CephContext* _cct,
       "Byte count written by WAL to disk when wiping");
    b.add_time_avg(l_bluestore_wal_aio_finish_lat, "aio_finish_lat",
     "Average aio_finish latency");
+
+   b.add_u64_avg(
+    l_bluestore_wal_knocking_avg, "knocking_avg",
+    "Average amount of ops acquiring entrance lock");
+
+   b.add_time_avg(l_bluestore_wal_queued_lat, "queued_lat",
+    "Average queued latency");
    b.add_time_avg(l_bluestore_submitted_lat, "submitted_lat",
     "Average DB submission processing latency");
    b.add_time_avg(l_bluestore_submitted_locking_lat, "submitted_locking_lat",
@@ -298,19 +319,65 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
 
   header.uuid = uuid;
 
+  logger->inc(l_bluestore_wal_input_ops);
   logger->inc(l_bluestore_wal_input_bytes, t_len);
-
-  std::unique_lock l(lock);
+  logger->inc(l_bluestore_wal_knocking_avg, num_knocking ? 1 : 0);
+  ++num_knocking;
+  std::unique_lock l(lock, std::try_to_lock);
+  if (!l.owns_lock()) {
+    int chest_pos = -1;
+    std::unique_lock l2(gate_lock);
+    bool found_match = false;
+    for(size_t i = 0; i < gate_chest.size(); i++) {
+      if (gate_chest[i].l1 == 0) {
+        if (chest_pos < 0) {
+          chest_pos = i;
+        }
+      } else if (gate_chest[i].l1 + t.size() + 2 * thead_size <= block_size) {
+        found_match = true;
+        gate_chest[i].l2 = t.size();
+        chest_pos = -1;
+        break;
+      }
+    }
+    if (!found_match && chest_pos >= 0) {
+      gate_chest[chest_pos].l1 = t.size();
+    } else if (!found_match) {
+      logger->inc(l_bluestore_wal_not_matched_ops);
+    }
+    l2.unlock();
+    /*if (found_match) {
+      return;
+    }*/
+    l.lock();
+    if (chest_pos >= 0) {
+      l2.lock();
+      if (gate_chest[chest_pos].full()) {
+	logger->inc(l_bluestore_wal_matched_ops, 2);
+      } else {
+        logger->inc(l_bluestore_wal_match_miss_ops);
+      }
+      gate_chest[chest_pos].reset();
+    }
+  }
+  --num_knocking;
 
   uint64_t need_pages = 0;
   Op* op_ptr = nullptr;
+  bool was_queued = false;
+  auto t0 = mono_clock::now();
   while (!init_op(t_len, &need_pages, &op_ptr)) {
     ++num_pending_free;
+    was_queued = true;
     dout(8) << __func__ << " - no op, waiting: "
             << num_pending_free << dendl;
     flush_cond.wait(l);
     --num_pending_free;
     dout(8) << __func__ << " wait done" << dendl;
+  }
+  if (was_queued) {
+    logger->tinc(l_bluestore_wal_queued_lat,
+      mono_clock::now() - t0);
   }
   dout(7) << __func__ << " need pages:" << need_pages
 	  << " transact seq:" << transact_seqno
