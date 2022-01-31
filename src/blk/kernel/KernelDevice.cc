@@ -68,6 +68,7 @@ KernelDevice::KernelDevice(CephContext* cct, aio_callback_t cb, void *cbpriv, ai
     discard_started(false),
     discard_stop(false),
     aio_thread(this),
+    aio_thread2(this),
     discard_thread(this),
     injecting_crash(0)
 {
@@ -515,6 +516,7 @@ int KernelDevice::_aio_start()
       return r;
     }
     aio_thread.create("bstore_aio");
+    aio_thread2.create("bstore_aio2");
   }
   return 0;
 }
@@ -525,6 +527,7 @@ void KernelDevice::_aio_stop()
     dout(10) << __func__ << dendl;
     aio_stop = true;
     aio_thread.join();
+    aio_thread2.join();
     aio_stop = false;
     io_queue->shutdown();
   }
@@ -581,6 +584,8 @@ void KernelDevice::_aio_thread()
 {
   dout(10) << __func__ << " start" << dendl;
   int inject_crash_count = 0;
+  std::unique_lock main_lock(lock);
+
   while (!aio_stop) {
     dout(40) << __func__ << " polling" << dendl;
     int max = cct->_conf->bdev_aio_reap_max;
@@ -593,6 +598,8 @@ void KernelDevice::_aio_thread()
     }
     if (r > 0) {
       dout(30) << __func__ << " got " << r << " completed aios" << dendl;
+      main_lock.unlock();
+
       for (int i = 0; i < r; ++i) {
 	IOContext *ioc = static_cast<IOContext*>(aio[i]->priv);
 	_aio_log_finish(ioc, aio[i]->offset, aio[i]->length);
@@ -656,12 +663,15 @@ void KernelDevice::_aio_thread()
 	// may free it.
 	if (ioc->priv) {
 	  if (--ioc->num_running == 0) {
+	    dout(5) << __func__ << " before cb, ioc " << ioc << dendl;
 	    aio_callback(aio_callback_priv, ioc->priv);
+	    dout(5) << __func__ << " after cb ioc " << ioc << dendl;
 	  }
 	} else {
           ioc->try_aio_wake();
 	}
       }
+      main_lock.lock();
     }
     if (cct->_conf->bdev_debug_aio) {
       utime_t now = ceph_clock_now();
@@ -1026,7 +1036,9 @@ int KernelDevice::aio_write(
 	aio.pwritev(off, len);
 	dout(30) << aio << dendl;
 	dout(5) << __func__ << " 0x" << std::hex << off << "~" << len
-		<< std::dec << " aio " << &aio << dendl;
+		<< std::dec << " aio " << &aio
+		<< " ioc " << ioc
+		<< dendl;
       } else {
 	// write in RW_IO_MAX-sized chunks
 	uint64_t prev_len = 0;

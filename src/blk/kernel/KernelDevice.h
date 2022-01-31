@@ -40,6 +40,8 @@ private:
 
   std::string devname;  ///< kernel dev name (/sys/block/$devname), if any
 
+  ceph::mutex lock = ceph::make_mutex("KernelDevice::main_lock");
+
   ceph::mutex debug_lock = ceph::make_mutex("KernelDevice::debug_lock");
   interval_set<uint64_t> debug_inflight;
 
@@ -66,7 +68,7 @@ private:
       bdev->_aio_thread();
       return NULL;
     }
-  } aio_thread;
+  } aio_thread, aio_thread2;
 
   struct DiscardThread : public Thread {
     KernelDevice *bdev;
