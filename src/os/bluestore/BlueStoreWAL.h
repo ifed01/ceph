@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <vector>
+#include <functional>
 
 #include "include/ceph_assert.h"
 #include "include/buffer.h"
@@ -30,7 +31,6 @@
 #include "kv/KeyValueDB.h"
 
 class BlockDevice;
-class BlueStore;
 
 struct bluewal_head_t {
   ///
@@ -65,16 +65,18 @@ protected:
     uint64_t transact_seqno = 0;
     uint64_t wiping_pages = 0;
     uint64_t prev_page_seqno = 0;
-    void* txc = nullptr;
+    BlueStore::TransContext* txc = nullptr;
     bool running = false;
 
-    void run(uint64_t wp, uint64_t prev, void* _txc) {
+    void run(uint64_t wp, uint64_t prev, BlueStore::TransContext* _txc) {
       wiping_pages = wp;
       prev_page_seqno = prev;
       txc = _txc;
       running = true;
     }
   };
+
+  typedef std::function<void (BlueStore::TransContext*)> txc_completion_fn;
 
 protected:
 
@@ -138,13 +140,14 @@ protected:
 
 protected:
   // following funcs made virtual to be able to make UT stubs for them
-  virtual void notify_store(BlueStore* store, uint64_t seqno, void* txc);
   virtual void aio_write(uint64_t off,
 			 bufferlist& bl,
 			 IOContext* ioc,
 			 bool buffered);
 
-  void aio_finish(BlueStore* store, Op& op);
+  void _notify_txc(Op& op, txc_completion_fn on_finish);
+  void _aio_finish(Op& op, txc_completion_fn on_finish);
+  Op* _log(BlueStore::TransContext* txc);
 
 public:
   static const size_t DEF_PAGE_SIZE = 1ull << 24; // 16MB
@@ -165,13 +168,13 @@ public:
   }
   void init_add_pages(uint64_t offset, uint64_t len);
 
-  void* log(IOContext* ioc, void* txc, const std::string& txc_payload);
+  void log(BlueStore::TransContext* txc);
   void submitted(uint64_t outdated_page_seqno, KeyValueDB& db);
 
   void aio_submit(IOContext* ioc) {
     bdev->aio_submit(ioc);
   }
-  void aio_finish(BlueStore* store, void* op);
+  void aio_finish(BlueStore::TransContext* txc, txc_completion_fn on_finish);
 
   void shutdown();
 

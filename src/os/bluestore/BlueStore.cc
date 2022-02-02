@@ -12737,34 +12737,33 @@ void BlueStore::_txc_state_proc(TransContext *txc)
 
       throttle.log_state_latency(*txc, logger, l_bluestore_state_io_done_lat);
       if (wal) {
-        ceph_assert(!txc->wal_op_ctx);
 	txc->set_state(TransContext::STATE_GOING_WAL);
-        txc->wal_op_ctx = wal->log(&(txc->ioc2), txc, txc->t->get_as_bytes());
-        if (txc->wal_op_ctx) {
-          wal->aio_submit(&(txc->ioc2)); //NB: it's crucial to call submit after wal_op_ctx
-                                        // assignment to avoid a race condition with
-                                        // completing coming before that
-          return;
-        }
+        wal->log(txc);
+      } else {
+        _txc_queue_kv(txc);
       }
-      _txc_queue_kv(txc);
       return;
     case TransContext::STATE_GOING_WAL:
-
+      ceph_assert(wal); // paranoic
       ceph_assert(txc->wal_op_ctx);
-      if (txc->wal_op_ctx) {
-        ceph_assert(wal);
-        ceph_assert(txc->ioc2.num_running == 0);
-        txc->ioc2.release_running_aios();
-	// this might not trigger immediate continuation due to
-	// potentially unsorted operations in WAL
-        throttle.log_state_latency(*txc, logger, l_bluestore_state_going_wal_lat);
-	txc->set_state(TransContext::STATE_WAL_DONE);
-	wal->aio_finish(this, txc->wal_op_ctx);
-      }
+      // this might trigger continuation for
+      // a bunch of contexts due to
+      // a. potentially unsorted operations in WAL
+      // b. having a bunch of transactions piggy-backing WAL I/O
+      // within this specific txc (WAL could merge them to better utilize
+      // disk block when calling wal->log(...))
+
+      wal->aio_finish(txc,
+        [&] (TransContext* _txc) {
+          ceph_assert(_txc);
+          ceph_assert(_txc->get_state() == TransContext::STATE_GOING_WAL);
+          throttle.log_state_latency(*_txc, logger,
+            l_bluestore_state_going_wal_lat);
+          _txc->set_state(TransContext::STATE_WAL_DONE);
+          _txc_state_proc(_txc);
+         });
       return;
     case TransContext::STATE_WAL_DONE:
-      ceph_assert(wal); // paranoic
       {
         //OpSequencer *osr = txc->osr.get();
         //FIXME: std::lock_guard l(osr->qlock);

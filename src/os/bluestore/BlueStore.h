@@ -1804,7 +1804,6 @@ private:
     uint64_t osd_pool_id = META_POOL_ID;    ///< osd pool id we're operating on
 
     IOContext ioc;
-    IOContext ioc2;
     bool had_ios = false;  ///< true if we submitted IOs before our kv txn
 
     uint64_t seq = 0;
@@ -1832,7 +1831,6 @@ private:
       : ch(c),
 	osr(o),
 	ioc(cct, this),
-	ioc2(cct, this),
 	start(ceph::mono_clock::now()) {
       last_stamp = start;
       if (on_commits) {
@@ -2745,13 +2743,6 @@ private:
 public:
   void txc_aio_finish(TransContext *txc, bool last) {
     txc->last_aio_finish = last;
-    _txc_state_proc(txc);
-  }
-  void txc_wal_finish(uint64_t seq, void* p) {
-    TransContext* txc = static_cast<TransContext*>(p);
-    txc->wal_seq = seq;
-    //OpSequencer *osr = txc->osr.get();
-    //std::lock_guard l(osr->qlock);
     _txc_state_proc(txc);
   }
 private:
