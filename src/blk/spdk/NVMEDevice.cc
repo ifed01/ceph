@@ -662,7 +662,7 @@ void io_complete(void *t, const struct spdk_nvme_cpl *completion)
     // destroy this ioc).
     if (ctx->priv) {
       if (!--ctx->num_running) {
-        task->device->aio_callback(task->device->aio_callback_priv, ctx->priv);
+        task->device->aio_callback(task->device->aio_callback_priv, ctx->priv, true);
       }
     } else {
       ctx->try_aio_wake();
@@ -678,7 +678,7 @@ void io_complete(void *t, const struct spdk_nvme_cpl *completion)
     if (!task->return_code) {
       if (ctx->priv) {
 	if (!--ctx->num_running) {
-          task->device->aio_callback(task->device->aio_callback_priv, ctx->priv);
+          task->device->aio_callback(task->device->aio_callback_priv, ctx->priv, true);
 	}
       } else {
         ctx->try_aio_wake();

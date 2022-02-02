@@ -616,20 +616,20 @@ void KernelDevice::_aio_thread()
 	// later flush() occurs.
 	io_since_flush.store(true);
 
-	long r = aio[i]->get_return_value();
-        if (r < 0) {
-          derr << __func__ << " got r=" << r << " (" << cpp_strerror(r) << ")"
+	long r1 = aio[i]->get_return_value();
+        if (r1 < 0) {
+          derr << __func__ << " got r=" << r1 << " (" << cpp_strerror(r1) << ")"
 	       << dendl;
-          if (ioc->allow_eio && is_expected_ioerr(r)) {
+          if (ioc->allow_eio && is_expected_ioerr(r1)) {
             derr << __func__ << " translating the error to EIO for upper layer"
 		 << dendl;
             ioc->set_return_value(-EIO);
           } else {
-	    if (is_expected_ioerr(r)) {
+	    if (is_expected_ioerr(r1)) {
 	      note_io_error_event(
 		devname.c_str(),
 		path.c_str(),
-		r,
+		r1,
 #if defined(HAVE_POSIXAIO)
                 aio[i]->aio.aiocb.aio_lio_opcode,
 #else
@@ -646,14 +646,14 @@ void KernelDevice::_aio_thread()
 	      "Unexpected IO error. "
 	      "This may suggest HW issue. Please check your dmesg!");
           }
-        } else if (aio[i]->length != (uint64_t)r) {
+        } else if (aio[i]->length != (uint64_t)r1) {
           derr << "aio to 0x" << std::hex << aio[i]->offset
 	       << "~" << aio[i]->length << std::dec
-               << " but returned: " << r << dendl;
+               << " but returned: " << r1 << dendl;
           ceph_abort_msg("unexpected aio return value: does not match length");
         }
 
-        dout(10) << __func__ << " finished aio " << aio[i] << " r " << r
+        dout(10) << __func__ << " finished aio " << aio[i] << " r1 " << r
                  << " ioc " << ioc
                  << " with " << (ioc->num_running.load() - 1)
                  << " aios left" << dendl;
@@ -663,8 +663,9 @@ void KernelDevice::_aio_thread()
 	// may free it.
 	if (ioc->priv) {
 	  if (--ioc->num_running == 0) {
-	    dout(5) << __func__ << " before cb, ioc " << ioc << dendl;
-	    aio_callback(aio_callback_priv, ioc->priv);
+	    dout(5) << __func__ << " before cb, ioc " << ioc
+	            << dendl;
+	    aio_callback(aio_callback_priv, ioc->priv, i == (r - 1));
 	    dout(5) << __func__ << " after cb ioc " << ioc << dendl;
 	  }
 	} else {
@@ -732,7 +733,7 @@ void KernelDevice::_discard_thread()
 	_discard(p.get_start(), p.get_len());
       }
 
-      discard_callback(discard_callback_priv, static_cast<void*>(&discard_finishing));
+      discard_callback(discard_callback_priv, static_cast<void*>(&discard_finishing), true);
       discard_finishing.clear();
       l.lock();
       discard_running = false;
