@@ -60,17 +60,11 @@ BluestoreWAL::BluestoreWAL(CephContext* _cct,
   curpage_pos = psize; //assign position which enforces new page selection
 
   // estimate header size(s)
-  bluewal_transact_head_t theader;
-  theader.uuid = uuid;
+  bluewal_head_t header;
+  header.uuid = uuid;
   bufferlist bl;
-  encode(theader, bl);
-  thead_size = bl.length();
-
-  bluewal_page_head_t pheader;
-  pheader.uuid = uuid;
-  bl.clear();
-  encode(pheader, bl);
-  phead_size = bl.length();
+  encode(header, bl);
+  head_size = bl.length();
 
   ops.resize(128 * 1024); //FIXME: make configurable/dependable of WAL size
 
@@ -133,8 +127,8 @@ bool BluestoreWAL::init_op(size_t need, uint64_t* _need_pages, Op** op)
     return false;
   }
   size_t need_pages = 0;
-  if (need + thead_size + curpage_pos > page_size) {
-    auto psize = page_size - phead_size - thead_size;
+  if (need + head_size + curpage_pos > page_size) {
+    auto psize = page_size - head_size;
     need_pages = round_up_to(need, psize) / psize;
     ceph_assert(need_pages <= get_total_pages());
 
@@ -304,7 +298,7 @@ void BluestoreWAL::aio_finish(BlueStore* store, Op& op)
 void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
 {
   bufferlist bl;
-  bluewal_transact_head_t header;
+  bluewal_head_t header;
 
   ceph_assert(txc);
 
@@ -327,7 +321,7 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
         if (chest_pos < 0) {
           chest_pos = i;
         }
-      } else if (gate_chest[i].l1 + t.size() + 2 * thead_size <= block_size) {
+      } else if (gate_chest[i].l1 + t.size() + 2 * head_size <= block_size) {
         found_match = true;
         gate_chest[i].l2 = t.size();
         chest_pos = -1;
@@ -388,7 +382,10 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
   // always put the whole length into the first transaction header
   header.len = t_len;
   // first transaction's header keeps csum for the whole payload
-    header.csum = csum;
+  header.csum = csum;
+
+  header.page_count = need_pages;
+  header.page_seq = page_seqno;
 
   size_t wiping = 0;
   if (last_wiping_page_seqno < last_committed_page_seqno) {
@@ -404,7 +401,7 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
   if (likely(!need_pages)) {
     uint64_t offs = curpage_pos + page_offsets[get_page_idx(page_seqno)];
 
-    size_t to_write = p2roundup(thead_size + t_len, block_size);
+    size_t to_write = p2roundup(head_size + t_len, block_size);
 
     auto appender = bl.get_page_aligned_appender(to_write / block_size);
     bl.reserve(to_write);
@@ -441,25 +438,24 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
 
   // we need to use next page(s)
   op.prev_page_seqno = page_seqno++;
+
+  header.page_seq = page_seqno;
   {
-    bluewal_page_head_t pheader;
+
+    //bluewal_page_head_t pheader;
     size_t t_written = 0;
 
     // "utilize" page's leftovers
     avail -= page_size - curpage_pos;
     curpage_pos = 0;
 
-    pheader.uuid = uuid;
-    pheader.following_pages = need_pages;
-    pheader.seq = page_seqno;
 
     if (likely(need_pages == 1)) {
-      size_t to_write = p2roundup(phead_size + thead_size + t_len, block_size);
+      size_t to_write = p2roundup(head_size + t_len, block_size);
 
       auto appender = bl.get_page_aligned_appender(to_write / block_size);
       bl.reserve(to_write);
 
-      encode(pheader, bl);
       encode(header, bl);
       appender.append(t.c_str(), t_len);
       auto pad = p2nphase(size_t(bl.length()), block_size);
@@ -489,25 +485,23 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
       bl.clear();
 
       size_t payload_len =
-        std::min(t_len - t_written, page_size - phead_size - thead_size);
-
+        std::min(t_len - t_written, page_size - head_size);
       size_t to_write =
-        p2roundup(phead_size + thead_size + payload_len, block_size);
+        p2roundup(head_size + payload_len, block_size);
       auto appender = bl.get_page_aligned_appender(to_write / block_size);
       bl.reserve(to_write);
 
       ceph_assert( 0 == (curpage_pos % page_size));
       curpage_pos = 0;
       if (page != 0) {
-        pheader.seq = ++page_seqno;
-        pheader.following_pages = 0; // this is a marker for "follower" pages,
-		                     // i.e. ones that do contain non-first part of
-				     // a splitted op at the beginning
+        header.page_seq = ++page_seqno;
+        // page_count for "follower" pages contain amount of left pages
+        // in the bunch (including the current page)
+        header.page_count = need_pages - page;
 
 	header.len = payload_len;    // note just a portion which fits into the current page
 	header.csum = 0;             // don't care about csum of the portion
       }
-      encode(pheader, bl);
       encode(header, bl);
       appender.append(t.c_str() + t_written, payload_len);
       t_written += payload_len;
