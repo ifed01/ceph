@@ -119,7 +119,7 @@ void BluestoreWAL::init_add_pages(uint64_t offset, uint64_t len)
 
 bool BluestoreWAL::init_op(size_t need, uint64_t* _need_pages, Op** op)
 {
-  auto &op_res = ops[(transact_seqno + 1) % ops.size()];
+  auto &op_res = ops[(cur_op_seqno + 1) % ops.size()];
   if (op_res.running) {
     dout(7) << __func__
             << " no more ops, need waiting"
@@ -179,7 +179,7 @@ bool BluestoreWAL::init_op(size_t need, uint64_t* _need_pages, Op** op)
     last_wiped_page_seqno += non_wiped_advance;
   }
 
-  op_res.transact_seqno = ++transact_seqno;
+  op_res.op_seqno = ++cur_op_seqno;
   *_need_pages = need_pages;
   *op = &op_res;
   return true;
@@ -238,10 +238,10 @@ void BluestoreWAL::aio_finish(BlueStore::TransContext* txc,
   ceph_assert(txc->ioc.num_running == 0);
   txc->ioc.release_running_aios();
   Op& op = *static_cast<Op*>(txc->wal_op_ctx);
-  dout(7) << __func__ << " " << op.transact_seqno << dendl;
+  dout(7) << __func__ << " " << op.op_seqno << dendl;
   std::unique_lock l(lock);
   op.running = false;
-  if (op.transact_seqno == min_pending_io_seqno) {
+  if (op.op_seqno == min_pending_io_seqno) {
     _finish_op(op, on_finish, true);
 
     //awake pending submits if any
@@ -256,8 +256,8 @@ void BluestoreWAL::aio_finish(BlueStore::TransContext* txc,
 void BluestoreWAL::_finish_op(Op& op, txc_completion_fn on_finish, bool deep)
 {
   ceph_assert(!op.running);
-  ceph_assert(op.transact_seqno == min_pending_io_seqno);
-  dout(7) << __func__ << " processing " << op.transact_seqno
+  ceph_assert(op.op_seqno == min_pending_io_seqno);
+  dout(7) << __func__ << " processing " << op.op_seqno
           << " prev seqno " << op.prev_page_seqno
           << dendl;
   for (size_t i = 0; i < op.num_txcs; i++) {
@@ -280,13 +280,13 @@ void BluestoreWAL::_finish_op(Op& op, txc_completion_fn on_finish, bool deep)
     ceph_assert(last_wiped_page_seqno <= last_wiping_page_seqno);
   }
   ++min_pending_io_seqno;
-  dout(7) << __func__ << " processed " << op.transact_seqno
+  dout(7) << __func__ << " processed " << op.op_seqno
           << dendl;
   op.reset();
   if (deep) {
-    while (min_pending_io_seqno <= transact_seqno) {
+    while (min_pending_io_seqno <= cur_op_seqno) {
       auto& op2 = ops[min_pending_io_seqno % ops.size()];
-      dout(7) << __func__ << " may be processing " << op2.transact_seqno
+      dout(7) << __func__ << " may be processing " << op2.op_seqno
 	      << " prev seqno " << op2.prev_page_seqno
 	      << " running " << op2.running
 	      << " num_txcs " << op2.num_txcs
@@ -384,17 +384,18 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueStore::TransContext* txc)
       mono_clock::now() - t0);
   }
   auto& op = *op_ptr;
+  ++cur_txc_seqno;
   dout(7) << __func__ << " need pages:" << need_pages
-	  << " transact seq:" << op.transact_seqno
+	  << " op seq:" << op.op_seqno
+	  << " transact seq:" << cur_txc_seqno
 	  << " transact len:" << t_len
 	  << dendl;
 
-
-  auto csum = ceph_crc32c(op.transact_seqno,
+  auto csum = ceph_crc32c(cur_txc_seqno,
     (const unsigned char*)t.c_str(),
     t_len);
 
-  header.seq = op.transact_seqno;
+  header.seq = cur_txc_seqno;
   // always put the whole length into the first transaction header
   header.len = t_len;
   // first transaction's header keeps csum for the whole payload
@@ -443,7 +444,7 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueStore::TransContext* txc)
     logger->inc(l_bluestore_wal_output_bytes, bl.length());
 
     dout(7) << __func__
-            << " simple op submitted " << op.transact_seqno
+            << " simple op submitted " << op.op_seqno
             << " wiping " << op.wiping_pages
             << " write 0x" << std::hex << offs
             << "~" << bl.length() << std::dec
@@ -484,7 +485,7 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueStore::TransContext* txc)
       curpage_pos += bl.length();
       l.unlock();
       dout(7) << __func__
-              << " op submitted " << op.transact_seqno
+              << " op submitted " << op.op_seqno
 	      << " prev_page_seqno " << op.prev_page_seqno
 	      << " wiping " << op.wiping_pages
               << " write 0x" << std::hex << offs
@@ -553,7 +554,7 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueStore::TransContext* txc)
     op.prev_page_seqno = page_seqno;
   }
 
-  dout(7) << __func__ << " op submitted " << op.transact_seqno
+  dout(7) << __func__ << " op submitted " << op.op_seqno
 	  << " wiping " << op.wiping_pages
 	  << " prev_page_seqno " << op.prev_page_seqno
 	  << dendl;

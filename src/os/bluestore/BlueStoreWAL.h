@@ -63,7 +63,8 @@ class BluestoreWAL {
 protected:
   static const size_t MAX_TXCS_PER_OP = 16;
   struct Op {
-    uint64_t transact_seqno = 0;
+    uint64_t op_seqno = 0;
+    uint64_t txc_seqno = 0;
     uint64_t wiping_pages = 0;
     uint64_t prev_page_seqno = 0;
     bool running = false;
@@ -87,7 +88,8 @@ protected:
       return num_txcs >= MAX_TXCS_PER_OP;
     }
     void reset() {
-      transact_seqno = 0;
+      op_seqno = 0;
+      txc_seqno = 0;
       wiping_pages = 0;
       prev_page_seqno = 0;
       running = false;
@@ -134,7 +136,8 @@ protected:
   uint64_t avail = 0;
   uint64_t page_seqno = 0;
   uint64_t curpage_pos = 0;
-  uint64_t transact_seqno = 0;
+  uint64_t cur_op_seqno = 0;
+  uint64_t cur_txc_seqno = 0;
   uint64_t last_committed_page_seqno = 0;             // last page seq committed to DB
   uint64_t last_wiping_page_seqno = 0; 		      // last page seq wiping has been triggered for
   uint64_t last_wiped_page_seqno = 0;		      // last page seq which has been wiped
