@@ -248,7 +248,7 @@ public:
   typedef boost::intrusive_ptr<Collection> CollectionRef;
 
   struct AioContext {
-    virtual void aio_finish(BlueStore *store) = 0;
+    virtual void aio_finish(BlueStore *store, bool last) = 0;
     virtual ~AioContext() {}
   };
 
@@ -1739,6 +1739,9 @@ public:
     uint64_t last_nid = 0;     ///< if non-zero, highest new nid we allocated
     uint64_t last_blobid = 0;  ///< if non-zero, highest new blobid we allocated
 
+    bool last_aio_finish = false; ///< this has got the last aio_finish
+                                  ///< inidication within a bunch of
+                                  ///< completions from BlockDevice.
     uint64_t wal_seq = 0;      ///< WAL seq to return back once txc is committed
     void* wal_op_ctx = nullptr;///< opaque WAL I/O context
 #if defined(WITH_LTTNG)
@@ -1801,8 +1804,8 @@ public:
     }
 #endif
 
-    void aio_finish(BlueStore *store) override {
-      store->txc_aio_finish(this);
+    void aio_finish(BlueStore *store, bool last) override {
+      store->txc_aio_finish(this, last);
     }
   private:
     state_t state = STATE_PREPARE;
@@ -1946,7 +1949,7 @@ public:
 		       uint64_t seq, uint64_t offset, uint64_t length,
 		       ceph::buffer::list::const_iterator& p);
 
-    void aio_finish(BlueStore *store) override {
+    void aio_finish(BlueStore *store, bool /*last*/) override {
       store->_deferred_aio_finish(osr);
     }
   };
@@ -2663,8 +2666,9 @@ private:
   void _txc_aio_submit(TransContext *txc);
 
 public:
-  void txc_aio_finish(void *p) {
-    _txc_state_proc(static_cast<TransContext*>(p));
+  void txc_aio_finish(TransContext *txc, bool last) {
+    txc->last_aio_finish = last;
+    _txc_state_proc(txc);
   }
   void txc_wal_finish(uint64_t seq, void* p) {
     TransContext* txc = static_cast<TransContext*>(p);
