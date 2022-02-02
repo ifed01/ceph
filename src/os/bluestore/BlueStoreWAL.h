@@ -32,29 +32,24 @@
 class BlockDevice;
 class BlueStore;
 
-struct bluewal_page_head_t {
-  uint64_t seq = 0;
-  uuid_d uuid;
-  uint32_t following_pages = 0;
+struct bluewal_head_t {
+  ///
+  /// Each header embeds optional page part which is valid
+  /// (and hence indicates the beginning of the next page)
+  /// if page_count is greater than 0
+  ///
+  uint64_t page_seq = 0;
+  uint32_t page_count = 0;
 
-  DENC(bluewal_page_head_t, v, p) {
-    DENC_START(1, 1, p);
-    denc(v.seq, p);
-    denc(v.uuid, p);
-    denc(v.following_pages, p);
-    DENC_FINISH(p);
-  }
-};
-WRITE_CLASS_DENC(bluewal_page_head_t)
-
-struct bluewal_transact_head_t {
   uint64_t seq = 0;
   uint32_t len = 0;
   uuid_d uuid;
   uint32_t csum = 0;
 
-  DENC(bluewal_transact_head_t, v, p) {
+  DENC(bluewal_head_t, v, p) {
     DENC_START(1, 1, p);
+    denc(v.page_seq, p);
+    denc(v.page_count, p);
     denc(v.seq, p);
     denc(v.len, p);
     denc(v.uuid, p);
@@ -62,7 +57,7 @@ struct bluewal_transact_head_t {
     DENC_FINISH(p);
   }
 };
-WRITE_CLASS_DENC(bluewal_transact_head_t)
+WRITE_CLASS_DENC(bluewal_head_t)
 
 class BluestoreWAL {
 protected:
@@ -91,8 +86,7 @@ protected:
   size_t page_size = 0;
   size_t block_size = 0;
 
-  size_t phead_size = 0;
-  size_t thead_size = 0;
+  size_t head_size = 0;
 
   std::vector<uint64_t> page_offsets;
 
@@ -190,11 +184,8 @@ public:
   uint64_t get_page_size() const {
     return page_size;
   }
-  uint64_t get_page_header_size() const {
-    return phead_size;
-  }
-  uint64_t get_transact_header_size() const {
-    return thead_size;
+  uint64_t get_header_size() const {
+    return head_size;
   }
 };
 
