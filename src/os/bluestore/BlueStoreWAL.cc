@@ -213,15 +213,6 @@ size_t BluestoreWAL::wipe_pages(IOContext* ioc)
   return wiping;
 }
 
-void BluestoreWAL::notify_store(BlueStore* store,
-				uint64_t seqno,
-				void* txc)
-{
-  if (txc) {
-    store->txc_wal_finish(seqno, txc);
-  }
-}
-
 void BluestoreWAL::aio_write(uint64_t off,
   bufferlist& bl,
   IOContext* ioc,
@@ -230,12 +221,24 @@ void BluestoreWAL::aio_write(uint64_t off,
   bdev->aio_write(off, bl, ioc, false);
 }
 
-void BluestoreWAL::aio_finish(BlueStore* store, void* o)
+void BluestoreWAL::aio_finish(BlueStore::TransContext* txc,
+                              txc_completion_fn on_finish)
 {
-  aio_finish(store, *static_cast<Op*>(o));
+  ceph_assert(txc);
+  ceph_assert(txc->wal_op_ctx);
+  ceph_assert(txc->ioc.num_running == 0);
+  txc->ioc.release_running_aios();
+  _aio_finish(*static_cast<Op*>(txc->wal_op_ctx), on_finish);
 }
 
-void BluestoreWAL::aio_finish(BlueStore* store, Op& op)
+void BluestoreWAL::_notify_txc(Op& op, txc_completion_fn on_finish)
+{
+  ceph_assert(op.txc);
+  op.txc->wal_seq = op.prev_page_seqno;
+  on_finish(op.txc);
+}
+
+void BluestoreWAL::_aio_finish(Op& op, txc_completion_fn on_finish)
 {
   mono_clock::time_point t0 = mono_clock::now();
   uint64_t wiped = 0;
@@ -247,7 +250,7 @@ void BluestoreWAL::aio_finish(BlueStore* store, Op& op)
     dout(7) << __func__ << " processing " << op.transact_seqno
 	    << " prev seqno " << op.prev_page_seqno
 	    << dendl;
-    notify_store(store, op.prev_page_seqno, op.txc);
+    _notify_txc(op, on_finish);
     dout(7) << __func__ << " processed " << op.transact_seqno
             << dendl;
 
@@ -263,7 +266,7 @@ void BluestoreWAL::aio_finish(BlueStore* store, Op& op)
 	break;
       }
 
-      notify_store(store, op2.prev_page_seqno, op2.txc);
+      _notify_txc(op2, on_finish);
       dout(7) << __func__ << " processed " << op2.transact_seqno
 	      << dendl;
 
@@ -295,13 +298,24 @@ void BluestoreWAL::aio_finish(BlueStore* store, Op& op)
   logger->tinc(l_bluestore_wal_aio_finish_lat, mono_clock::now() - t0);
 }
 
-void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
+void BluestoreWAL::log(BlueStore::TransContext* txc)
+{
+  ceph_assert(txc);
+  ceph_assert(!txc->wal_op_ctx);
+
+  Op* op = _log(txc);
+  if (op) {
+    txc->wal_op_ctx = op;
+    aio_submit(&txc->ioc);
+  }
+}
+
+BluestoreWAL::Op* BluestoreWAL::_log(BlueStore::TransContext* txc)
 {
   bufferlist bl;
   bluewal_head_t header;
 
-  ceph_assert(txc);
-
+  auto& t = txc->t->get_as_bytes();
   size_t t_len = t.length();
   dout(7) << __func__ << " transact payload len:" << t_len << dendl;
 
@@ -389,7 +403,7 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
 
   size_t wiping = 0;
   if (last_wiping_page_seqno < last_committed_page_seqno) {
-    wiping = wipe_pages(ioc);
+    wiping = wipe_pages(&txc->ioc);
   }
 
   op.run(
@@ -432,7 +446,7 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
             << " write 0x" << std::hex << offs
             << "~" << bl.length() << std::dec
             << dendl;
-    aio_write(offs, bl, ioc, false);
+    aio_write(offs, bl, &txc->ioc, false);
     return &op;
   } // if(!need_pages)
 
@@ -476,7 +490,7 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
 	      << dendl;
 
       logger->inc(l_bluestore_wal_output_bytes, bl.length());
-      aio_write(offs, bl, ioc, false);
+      aio_write(offs, bl, &txc->ioc, false);
       return &op;
     }
 
@@ -518,7 +532,7 @@ void* BluestoreWAL::log(IOContext* ioc, void* txc, const std::string& t)
       curpage_pos += bl.length();
       ++page;
       logger->inc(l_bluestore_wal_output_bytes, bl.length());
-      aio_write(offs, bl, ioc, false);
+      aio_write(offs, bl, &txc->ioc, false);
     } while (page < need_pages);
   }
 
