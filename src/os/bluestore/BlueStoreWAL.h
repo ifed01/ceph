@@ -61,18 +61,37 @@ WRITE_CLASS_DENC(bluewal_head_t)
 
 class BluestoreWAL {
 protected:
+  static const size_t MAX_TXCS_PER_OP = 16;
   struct Op {
     uint64_t transact_seqno = 0;
     uint64_t wiping_pages = 0;
     uint64_t prev_page_seqno = 0;
-    BlueStore::TransContext* txc = nullptr;
     bool running = false;
+    size_t num_txcs = 0;
+    BlueStore::TransContext* txc[MAX_TXCS_PER_OP] = {nullptr};
 
     void run(uint64_t wp, uint64_t prev, BlueStore::TransContext* _txc) {
+      ceph_assert(!running);
+      ceph_assert(num_txcs == 0);
       wiping_pages = wp;
       prev_page_seqno = prev;
-      txc = _txc;
+      txc[num_txcs++] = _txc;
       running = true;
+    }
+    bool run_more(BlueStore::TransContext* _txc) {
+      ceph_assert(running);
+      ceph_assert(num_txcs != 0);
+      if (num_txcs < MAX_TXCS_PER_OP) {
+        txc[num_txcs++] = _txc;
+      }
+      return num_txcs >= MAX_TXCS_PER_OP;
+    }
+    void reset() {
+      transact_seqno = 0;
+      wiping_pages = 0;
+      prev_page_seqno = 0;
+      running = false;
+      num_txcs = 0;
     }
   };
 
@@ -145,8 +164,10 @@ protected:
 			 IOContext* ioc,
 			 bool buffered);
 
-  void _notify_txc(Op& op, txc_completion_fn on_finish);
-  void _aio_finish(Op& op, txc_completion_fn on_finish);
+  void _notify_txc(uint64_t prev_page_seqno,
+                   BlueStore::TransContext* txc,
+                   txc_completion_fn on_finish);
+  void _finish_op(Op& op, txc_completion_fn on_finish, bool deep);
   Op* _log(BlueStore::TransContext* txc);
 
 public:
