@@ -4598,14 +4598,14 @@ bufferlist BlueStore::OmapIteratorImpl::value()
 #define dout_context cct
 
 
-static void aio_cb(void *priv, void *priv2)
+static void aio_cb(void *priv, void *priv2, bool last)
 {
   BlueStore *store = static_cast<BlueStore*>(priv);
   BlueStore::AioContext *c = static_cast<BlueStore::AioContext*>(priv2);
-  c->aio_finish(store);
+  c->aio_finish(store, last);
 }
 
-static void discard_cb(void *priv, void *priv2)
+static void discard_cb(void *priv, void *priv2, bool /*last*/)
 {
   BlueStore *store = static_cast<BlueStore*>(priv);
   interval_set<uint64_t> *tmp = static_cast<interval_set<uint64_t>*>(priv2);

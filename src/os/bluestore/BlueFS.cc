@@ -45,19 +45,19 @@ MEMPOOL_DEFINE_OBJECT_FACTORY(BlueFS::FileReaderBuffer,
 MEMPOOL_DEFINE_OBJECT_FACTORY(BlueFS::FileReader, bluefs_file_reader, bluefs_file_reader);
 MEMPOOL_DEFINE_OBJECT_FACTORY(BlueFS::FileLock, bluefs_file_lock, bluefs);
 
-static void wal_discard_cb(void *priv, void* priv2) {
+static void wal_discard_cb(void *priv, void* priv2, bool /*last*/) {
   BlueFS *bluefs = static_cast<BlueFS*>(priv);
   interval_set<uint64_t> *tmp = static_cast<interval_set<uint64_t>*>(priv2);
   bluefs->handle_discard(BlueFS::BDEV_WAL, *tmp);
 }
 
-static void db_discard_cb(void *priv, void* priv2) {
+static void db_discard_cb(void *priv, void* priv2, bool /*last*/) {
   BlueFS *bluefs = static_cast<BlueFS*>(priv);
   interval_set<uint64_t> *tmp = static_cast<interval_set<uint64_t>*>(priv2);
   bluefs->handle_discard(BlueFS::BDEV_DB, *tmp);
 }
 
-static void slow_discard_cb(void *priv, void* priv2) {
+static void slow_discard_cb(void *priv, void* priv2, bool /*last*/) {
   BlueFS *bluefs = static_cast<BlueFS*>(priv);
   interval_set<uint64_t> *tmp = static_cast<interval_set<uint64_t>*>(priv2);
   bluefs->handle_discard(BlueFS::BDEV_SLOW, *tmp);

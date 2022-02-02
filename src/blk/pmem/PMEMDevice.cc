@@ -266,7 +266,7 @@ void PMEMDevice::aio_submit(IOContext *ioc)
 {
   if (ioc->priv) {
     ceph_assert(ioc->num_running == 0);
-    aio_callback(aio_callback_priv, ioc->priv);
+    aio_callback(aio_callback_priv, ioc->priv, true);
   } else {
     ioc->try_aio_wake();
   }

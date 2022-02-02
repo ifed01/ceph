@@ -147,7 +147,7 @@ public:
 class BlockDevice {
 public:
   CephContext* cct;
-  typedef void (*aio_callback_t)(void *handle, void *aio);
+  typedef void (*aio_callback_t)(void *handle, void *aio, bool last);
 private:
   ceph::mutex ioc_reap_lock = ceph::make_mutex("BlockDevice::ioc_reap_lock");
   std::vector<IOContext*> ioc_reap_queue;
