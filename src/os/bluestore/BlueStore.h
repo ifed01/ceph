@@ -1813,9 +1813,10 @@ private:
     uint64_t last_nid = 0;     ///< if non-zero, highest new nid we allocated
     uint64_t last_blobid = 0;  ///< if non-zero, highest new blobid we allocated
 
-    bool last_aio_finish = false; ///< this has got the last aio_finish
-                                  ///< inidication within a bunch of
-                                  ///< completions from BlockDevice.
+    bool more_aio_finish = false; ///< interim flag for during aio_finish
+                                  ///< processing: more aio_finish indications
+                                  ///< expected as there is a bunch of ready
+                                  ///< completions at BlockDevice.
     uint64_t wal_seq = 0;      ///< WAL seq to return back once txc is committed
     void* wal_op_ctx = nullptr;///< opaque WAL I/O context
 #if defined(WITH_LTTNG)
@@ -2742,7 +2743,7 @@ private:
 
 public:
   void txc_aio_finish(TransContext *txc, bool last) {
-    txc->last_aio_finish = last;
+    txc->more_aio_finish = !last;
     _txc_state_proc(txc);
   }
 private:
