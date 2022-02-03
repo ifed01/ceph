@@ -79,13 +79,11 @@ protected:
       txc[num_txcs++] = _txc;
       running = true;
     }
-    bool run_more(BlueStore::TransContext* _txc) {
+    void run_more(BlueStore::TransContext* _txc) {
       ceph_assert(running);
       ceph_assert(num_txcs != 0);
-      if (num_txcs < MAX_TXCS_PER_OP) {
-        txc[num_txcs++] = _txc;
-      }
-      return num_txcs >= MAX_TXCS_PER_OP;
+      ceph_assert (num_txcs < MAX_TXCS_PER_OP);
+      txc[num_txcs++] = _txc;
     }
     void reset() {
       op_seqno = 0;
@@ -117,19 +115,101 @@ protected:
   std::atomic<uint64_t> num_pending_free = 0;         // amount of ops waiting for free pages
   std::atomic<uint64_t> num_knocking = 0;
 
-  struct chest_t {
-    size_t l1 = 0;
-    size_t l2 = 0;
-
-    bool full() const {
-	return  l1 !=0 && l2 != 0;
+  struct chest_entry_t {
+    size_t payload_len = 0;
+    size_t entry_count =0;
+    std::array<BlueStore::TransContext*, MAX_TXCS_PER_OP> txcs;
+    bool maybe_add(BlueStore::TransContext* txc, size_t len, size_t max_len) {
+      // a single txc longer than max_size is allowed in a free slot
+      bool ret = entry_count < txcs.size() &&
+        (payload_len == 0 || (payload_len + len <= max_len));
+      if (ret) {
+        txcs[entry_count++] = txc;
+        payload_len += len;
+      }
+      return ret;
+    }
+    BlueStore::TransContext* maybe_get(size_t pos) {
+      return pos < entry_count ? txcs[pos]: nullptr;
     }
     void reset() {
-      *this = chest_t();
+      payload_len = 0;
+      entry_count = 0;
     }
   };
+
+  class chest_t {
+    // total number of entries in the chest
+    std::atomic<size_t> total_entry_count = 0;
+
+    // amount of valid array elements in entries array
+    size_t row_count = 0;
+
+    // keep one txc less than Op can fit
+    std::array<chest_entry_t, MAX_TXCS_PER_OP> entries;
+  public:
+    size_t get_payload_len(size_t alignment) const {
+      size_t res = 0;
+      for (size_t row = 0; row < row_count; row++) {
+        res += p2roundup(entries[row].payload_len, alignment);
+      }
+      return res;
+    }
+    size_t get_entry_count() const {
+      return total_entry_count;
+    }
+    bool add(BlueStore::TransContext* txc, size_t len,
+      size_t max_len, bool permit_last) {
+      bool ret = false;
+      size_t max_entries = entries.size();
+      if (!permit_last) {
+        --max_entries;
+      }
+      if (total_entry_count < max_entries) {
+        for(size_t i = 0; i < row_count; i++) {
+          if (entries[i].maybe_add(txc, len, max_len)) {
+            total_entry_count++;
+            return true;
+          }
+        }
+        ceph_assert(row_count < entries.size());
+        entries[row_count].reset();
+        ret = entries[row_count].maybe_add(txc, len, max_len);
+        if (ret) {
+          total_entry_count++;
+          row_count++;
+        }
+      }
+      return ret;
+    }
+    BlueStore::TransContext* get_next_if_any(size_t* ret_pos) {
+      BlueStore::TransContext* ret = nullptr;
+
+      size_t row = *ret_pos / entries.size();
+      size_t pos = *ret_pos %  entries.size();
+      while (row < row_count && !ret) {
+        ret = entries[row].maybe_get(pos);
+        if (ret) {
+          ++pos;
+        } else {
+          ++row;
+          pos = 0;
+        }
+      }
+
+      *ret_pos = row * entries.size() + pos;
+      return ret;
+    }
+    void claim(chest_t& from) {
+      ceph_assert(row_count == 0);
+      row_count = from.row_count;
+      entries.swap(from.entries);
+
+      from.row_count = 0;
+      total_entry_count = from.total_entry_count.fetch_and(0);
+    }
+  } gate_chest;
   ceph::mutex gate_lock = ceph::make_mutex("BlueStoreWAL::lock_gateway");
-  std::array<chest_t, 8> gate_chest;
 
   ceph::mutex lock = ceph::make_mutex("BlueStoreWAL::lock");
   ceph::condition_variable flush_cond;   ///< wait here for transactions in WAL to commit
@@ -172,6 +252,11 @@ protected:
                    txc_completion_fn on_finish);
   void _finish_op(Op& op, txc_completion_fn on_finish, bool deep);
   Op* _log(BlueStore::TransContext* txc);
+  void _prepare_submit_txc(bluewal_head_t& header,
+                           uint64_t txc_seqno,
+                           BlueStore::TransContext* txc,
+                           bufferlist::page_aligned_appender& appender,
+                           bufferlist& bl);
 
 public:
   static const size_t DEF_PAGE_SIZE = 1ull << 24; // 16MB
