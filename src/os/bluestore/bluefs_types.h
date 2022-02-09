@@ -213,6 +213,7 @@ struct bluefs_super_t {
   uuid_d osd_uuid;  ///< matches the osd that owns us
   uint64_t version;
   uint32_t block_size;
+  bluefs_extent_t ext_wal_region;
 
   bluefs_fnode_t log_fnode;
 
