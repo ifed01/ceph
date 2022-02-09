@@ -184,28 +184,30 @@ bool BluestoreWAL::init_op(size_t need, uint64_t* _need_pages, Op** op)
 size_t BluestoreWAL::wipe_pages(IOContext* ioc)
 {
   size_t wiping = 0;
-  dout(7) << __func__ << " " << last_wiping_page_seqno << "->"
-	  << last_committed_page_seqno
-	  << dendl;
-  ceph_assert(last_wiping_page_seqno < last_committed_page_seqno);
-  wiping = last_committed_page_seqno - last_wiping_page_seqno;
-  ceph_assert(wiping < get_total_pages());
-  ceph_assert(page_size * wiping <= avail);
-  avail -= page_size * wiping;
+  if (last_wiping_page_seqno < last_committed_page_seqno) {
 
-  auto* buf = calloc(block_size, 1);
+    dout(7) << __func__ << " " << last_wiping_page_seqno << "->"
+	    << last_committed_page_seqno
+	    << dendl;
+    wiping = last_committed_page_seqno - last_wiping_page_seqno;
+    ceph_assert(wiping < get_total_pages());
+    ceph_assert(page_size * wiping <= avail);
+    avail -= page_size * wiping;
 
-  do {
-    // need to be done on each iteration since aio_write claims the buffer
-    bufferptr bp = buffer::claim_char(block_size, (char*)buf);
-    bufferlist bl;
-    bl.append(bp);
-    // piggy-back the write with wiping req for outdated pages
-    ++last_wiping_page_seqno;
-    logger->inc(l_bluestore_wal_wipe_bytes, bl.length());
-    aio_write(page_offsets[get_page_idx(last_wiping_page_seqno)], bl, ioc, false);
-  } while (last_wiping_page_seqno < last_committed_page_seqno);
-  free(buf);
+    auto* buf = calloc(block_size, 0xff);
+
+    do {
+      // need to be done on each iteration since aio_write claims the buffer
+      bufferptr bp = buffer::claim_char(block_size, (char*)buf);
+      bufferlist bl;
+      bl.append(bp);
+      // piggy-back the write with wiping req for outdated pages
+      ++last_wiping_page_seqno;
+      logger->inc(l_bluestore_wal_wipe_bytes, bl.length());
+      aio_write(page_offsets[get_page_idx(last_wiping_page_seqno)], bl, ioc, false);
+    } while (last_wiping_page_seqno < last_committed_page_seqno);
+    free(buf);
+  }
   return wiping;
 }
 
@@ -451,10 +453,7 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueStore::TransContext* txc)
   size_t chest_pos = 0;
   auto* first_txc = my_chest.get_next_if_any(&chest_pos);
 
-  size_t wiping = 0;
-  if (last_wiping_page_seqno < last_committed_page_seqno) {
-    wiping = wipe_pages(&first_txc->ioc);
-  }
+  size_t wiping = wipe_pages(&first_txc->ioc);
 
   op.run(
     wiping,
@@ -670,8 +669,25 @@ void BluestoreWAL::submitted(uint64_t submitted_page_seqno,
 }
 
 
-void BluestoreWAL::shutdown()
+void BluestoreWAL::shutdown(KeyValueDB& db)
 {
-  //FIXME
+  std::unique_lock l(lock);
+  ceph_assert(num_pending_free == 0);
+  db.flush_all();
+  last_committed_page_seqno = last_submitted_page_seqno;
+
+  IOContext ioctx(cct, nullptr);
+  auto wiping = wipe_pages(&ioctx);
+  if (wiping) {
+    dout(7) << __func__
+            << "wiping " << wiping
+            << dendl;
+
+    aio_submit(&ioctx);
+    ioctx.aio_wait();
+
+    dout(7) << __func__
+            << "wiped " << dendl;
+  }
 }
 // =======================================================
