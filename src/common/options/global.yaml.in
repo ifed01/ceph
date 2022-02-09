@@ -4910,10 +4910,10 @@ options:
   - create
   with_legacy: true
 - name: bluestore_wal
-  type: bool
+  type: size
   level: dev
-  desc: Enables additional write-ahead log at BlueStore level which should improve writing requests latency.
-  default: false
+  desc: If non-zero enables additional write-ahead log at BlueStore level which should improve write operation latencies.
+  default: 0
   flags:
   - create
   with_legacy: true

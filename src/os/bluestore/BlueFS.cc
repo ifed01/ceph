@@ -474,34 +474,16 @@ uint64_t BlueFS::get_block_device_size(unsigned id) const
   return 0;
 }
 
-int64_t BlueFS::get_extra(
-    uint64_t want,
-    uint64_t min_want,
-    uint64_t unit,
-    BlockDevice **dev,
-    PExtentVector *extents)
+BlockDevice* BlueFS::get_external_wal(
+    bluefs_extent_t* ret_ext_wal_region)
 {
-    int64_t got = 0;
-    if (extra.empty()) {
-      unsigned id = _get_fastest_device_id();
-      ceph_assert(bdev[id]);
-      *dev = bdev[id];
-
-      ceph_assert((want % unit) == 0);
-      ceph_assert((unit % alloc_size[id]) == 0);
-
-      got = alloc[id]->allocate(want, unit, 0, extents);
-      if (got > 0 && (uint64_t)got < min_want) {
-        alloc[id]->release(*extents);
-        got = 0;
-      }
-      if (got > 0) {
-        extra = *extents;
-      }
-    } else {
-      ceph_assert(false); //unsupported and unexpected for now
-    }
-    return got;
+  BlockDevice* dev = nullptr;
+  if (super.ext_wal_region.length) {
+    *ret_ext_wal_region = super.ext_wal_region;
+    dev = bdev[ret_ext_wal_region->bdev];
+    ceph_assert(dev);
+  }
+  return dev;
 }
 
 void BlueFS::handle_discard(unsigned id, interval_set<uint64_t>& to_release)
@@ -592,6 +574,9 @@ void BlueFS::foreach_block_extents(
   std::lock_guard nl(nodes.lock);
   dout(10) << __func__ << " bdev " << id << dendl;
   ceph_assert(id < alloc.size());
+  if (super.ext_wal_region.length && super.ext_wal_region.bdev == id) {
+    fn(super.ext_wal_region.offset, super.ext_wal_region.length);
+  }
   for (auto& p : nodes.file_map) {
     for (auto& q : p.second->fnode.extents) {
       if (q.bdev == id) {
@@ -601,10 +586,13 @@ void BlueFS::foreach_block_extents(
   }
 }
 
-int BlueFS::mkfs(uuid_d osd_uuid, const bluefs_layout_t& layout)
+int BlueFS::mkfs(uuid_d osd_uuid,
+                 const bluefs_layout_t& layout,
+                 uint64_t external_wal_size)
 {
   dout(1) << __func__
 	  << " osd_uuid " << osd_uuid
+	  << " ext wal " << external_wal_size
 	  << dendl;
 
   // set volume selector if not provided before/outside
@@ -624,6 +612,19 @@ int BlueFS::mkfs(uuid_d osd_uuid, const bluefs_layout_t& layout)
   super.osd_uuid = osd_uuid;
   super.uuid.generate_random();
   dout(1) << __func__ << " uuid " << super.uuid << dendl;
+
+  // init external wal
+  if (external_wal_size) {
+    unsigned id = _get_fastest_device_id();
+    ceph_assert(bdev[id]);
+    ceph_assert(external_wal_size % alloc_size[id] == 0);
+    uint64_t offs0 = p2roundup(block_reserved[id], alloc_size[id]);
+    ceph_assert(alloc[id]->get_free() > offs0 + external_wal_size);
+    super.ext_wal_region.bdev = id;
+    super.ext_wal_region.offset = offs0;
+    super.ext_wal_region.length = external_wal_size;
+    alloc[id]->init_rm_free(offs0, external_wal_size);
+  }
 
   // init log
   FileRef log_file = ceph::make_ref<File>();
@@ -745,6 +746,21 @@ void BlueFS::_stop_alloc()
       delete alloc[i];
       alloc[i] = nullptr;
     }
+  }
+}
+
+void BlueFS::_init_external_wal()
+{
+  dout(20) << __func__
+           << " ext wal:" << super.ext_wal_region
+           << dendl;
+
+  if (super.ext_wal_region.length) {
+    ceph_assert(bdev[super.ext_wal_region.bdev]);
+    ceph_assert(alloc[super.ext_wal_region.bdev]);
+    ceph_assert(alloc[super.ext_wal_region.bdev]->get_free() >= super.ext_wal_region.length);
+    alloc[super.ext_wal_region.bdev]->init_rm_free(super.ext_wal_region.offset,
+      super.ext_wal_region.length);
   }
 }
 
@@ -949,6 +965,7 @@ int BlueFS::mount()
     goto out;
   }
 
+  _init_external_wal();
   // init freelist
   for (auto& p : nodes.file_map) {
     dout(30) << __func__ << " noting alloc for " << p.second->fnode << dendl;

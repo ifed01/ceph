@@ -417,6 +417,8 @@ private:
 
   ///< pad ceph::buffer::list to max(block size, pad_size) w/ zeros
   void _pad_bl(ceph::buffer::list& bl, uint64_t pad_size = 0);
+  void _init_external_wal();
+
 
   uint64_t _get_used(unsigned id) const;
   uint64_t _get_total(unsigned id) const;
@@ -548,7 +550,9 @@ public:
   ~BlueFS();
 
   // the super is always stored on bdev 0
-  int mkfs(uuid_d osd_uuid, const bluefs_layout_t& layout);
+  int mkfs(uuid_d osd_uuid,
+           const bluefs_layout_t& layout,
+           uint64_t external_wal_size = 0);
   int mount();
   int maybe_verify_layout(const bluefs_layout_t& layout) const;
   void umount(bool avoid_compact = false);
@@ -644,12 +648,7 @@ public:
   bool bdev_support_label(unsigned id);
   uint64_t get_block_device_size(unsigned bdev) const;
 
-  int64_t get_extra(
-    uint64_t want,
-    uint64_t min_want,
-    uint64_t unit,
-    BlockDevice **dev,
-    PExtentVector *res);
+  BlockDevice* get_external_wal(bluefs_extent_t* wal_ext);
 
   // handler for discard event
   void handle_discard(unsigned dev, interval_set<uint64_t>& to_release);

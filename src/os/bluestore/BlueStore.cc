@@ -5612,35 +5612,26 @@ void BlueStore::_close_bdev()
   bdev = NULL;
 }
 
-int BlueStore::_open_wal()
+int BlueStore::_maybe_open_wal()
 {
-  if (cct->_conf->bluestore_wal) {
-    ceph_assert(!wal);
-    PExtentVector extents;
-    BlockDevice *bdev = nullptr;
-    uint64_t want = 1ull << 31; //2GB, FIXME: make configurable, NB: 4+GB needs additional handling since allocator is hard capped 
+  ceph_assert(!wal);
+  bluefs_extent_t wal_ext;
+  BlockDevice* bdev = bluefs->get_external_wal(&wal_ext);
+  if (bdev) {
+    ceph_assert(wal_ext.length &&
+      (wal_ext.length % BluestoreWAL::DEF_PAGE_SIZE) == 0);
 
-    uint64_t got = bluefs->get_extra(
-      want,
-      want / 2,  //FIXME: this is not mandatory, we can configure minimal amount as well
-      BluestoreWAL::DEF_PAGE_SIZE,
-      &bdev,
-      &extents);
-    ceph_assert(bdev);
-    ceph_assert(got > 0);
+    ceph_assert(wal_ext.length != 0);
     wal = new BluestoreWAL(
       cct,
       bdev,
       fsid);
-    for (auto& p : extents) {
-      dout(0) << p << dendl;
-      ceph_assert(p.length &&
-        (p.length % BluestoreWAL::DEF_PAGE_SIZE) == 0);
-      wal->init_add_pages(p.offset, p.length);
-    }
+    dout(1) << __func__ << wal_ext << dendl;
+    wal->init_add_pages(wal_ext.offset, wal_ext.length);
   }
   return 0;
 }
+
 void BlueStore::_close_wal()
 {
   if (wal) {
@@ -6374,7 +6365,7 @@ int BlueStore::_open_bluefs(bool create, bool read_only)
     }    
   }
   if (create) {
-    bluefs->mkfs(fsid, bluefs_layout);
+    bluefs->mkfs(fsid, bluefs_layout, cct->_conf->bluestore_wal);
   }
   bluefs->set_volume_selector(vselector);
   r = bluefs->mount();
@@ -7796,7 +7787,7 @@ int BlueStore::_mount()
     }
   });
 
-  r = _open_wal();
+  r = _maybe_open_wal();
   auto close_wal = make_scope_guard([&] {
     if (!mounted) {
       _close_wal();
