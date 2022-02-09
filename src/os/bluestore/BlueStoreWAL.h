@@ -285,7 +285,7 @@ public:
   }
   void aio_finish(BlueStore::TransContext* txc, txc_completion_fn on_finish);
 
-  void shutdown();
+  void shutdown(KeyValueDB& db);
 
   uint64_t get_total() const {
     return total;
