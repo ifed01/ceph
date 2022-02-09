@@ -5586,7 +5586,7 @@ int BlueStore::_maybe_open_wal()
 void BlueStore::_close_wal()
 {
   if (wal) {
-    wal->shutdown();
+    wal->shutdown(*db);
     delete wal;
   }
 }
