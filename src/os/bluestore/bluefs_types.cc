@@ -67,19 +67,20 @@ void bluefs_layout_t::dump(Formatter *f) const
 
 void bluefs_super_t::encode(bufferlist& bl) const
 {
-  ENCODE_START(2, 1, bl);
+  ENCODE_START(3, 1, bl);
   encode(uuid, bl);
   encode(osd_uuid, bl);
   encode(version, bl);
   encode(block_size, bl);
   encode(log_fnode, bl);
   encode(memorized_layout, bl);
+  encode(ext_wal_region, bl);
   ENCODE_FINISH(bl);
 }
 
 void bluefs_super_t::decode(bufferlist::const_iterator& p)
 {
-  DECODE_START(2, p);
+  DECODE_START(3, p);
   decode(uuid, p);
   decode(osd_uuid, p);
   decode(version, p);
@@ -88,6 +89,10 @@ void bluefs_super_t::decode(bufferlist::const_iterator& p)
   if (struct_v >= 2) {
     decode(memorized_layout, p);
   }
+  if (struct_v >= 3) {
+    decode(ext_wal_region, p);
+  }
+
   DECODE_FINISH(p);
 }
 
@@ -97,6 +102,7 @@ void bluefs_super_t::dump(Formatter *f) const
   f->dump_stream("osd_uuid") << osd_uuid;
   f->dump_unsigned("version", version);
   f->dump_unsigned("block_size", block_size);
+  f->dump_object("ext_wal", ext_wal_region);
   f->dump_object("log_fnode", log_fnode);
 }
 
@@ -106,6 +112,9 @@ void bluefs_super_t::generate_test_instances(list<bluefs_super_t*>& ls)
   ls.push_back(new bluefs_super_t);
   ls.back()->version = 1;
   ls.back()->block_size = 4096;
+  ls.back()->ext_wal_region.offset = 4096;
+  ls.back()->ext_wal_region.length = 1 << 30;
+  ls.back()->ext_wal_region.bdev = 0;
 }
 
 ostream& operator<<(ostream& out, const bluefs_super_t& s)
