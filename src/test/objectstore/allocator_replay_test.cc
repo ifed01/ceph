@@ -690,5 +690,116 @@ int main(int argc, char **argv)
     return export_as_binary(argv[1], argv[3]);
   } else if (strcmp(argv[2], "duplicates") == 0) {
     return check_duplicates(argv[1]);
+  } else if (strcmp(argv[2], "hexdump") == 0) {
+    if (argc < 4) {
+      std::cerr << "Error: insufficient arguments for \"replay_alloc\" option."
+                << std::endl;
+      usage_replay_alloc(argv[0]);
+      return 1;
+    }
+    
+    FILE *src = fopen(argv[3], "rb");
+    if (!src) {
+      std::cerr << "error: unable to open " << argv[3] << std::endl;
+      return -1;
+    }
+    bufferlist bl;
+    while (!feof(src)) {
+      char buf[4096];
+      size_t r = fread(buf, 1, sizeof(buf), src);
+      bl.append(buf, r);
+    }
+    fclose(src);
+    stringstream ss;
+    bl.hexdump(ss);
+    std::cout << ss.str() << std::endl;
+  } else if (strcmp(argv[2], "build_bluefs_file") == 0) {
+    if (argc < 5) {
+      std::cerr << "Error: insufficient arguments for \"replay_alloc\" option."
+                << std::endl;
+      usage_replay_alloc(argv[0]);
+      return 1;
+    }
+    
+    FILE *src = fopen(argv[3], "rt");
+    if (!src) {
+      std::cerr << "error: unable to open " << argv[3] << std::endl;
+      return -1;
+    }
+    FILE *dst = fopen(argv[4], "wb");
+    if (!dst) {
+      std::cerr << "error: unable to open " << argv[4] << std::endl;
+      fclose(src);
+      return -1;
+    }
+    bufferlist bl;
+    string s;
+    s.resize(4096);
+    enum {
+      INIT,
+      //READ_PARAMS,
+      READ_DUMP,
+      READ_DUMP_ZERO,
+    } state = INIT;
+    uint64_t offs0 = 0;
+    while (!feof(src)) {
+      auto p = fgets(&s.at(0), s.size(), src);
+      if (!p) continue;
+      switch (state) {
+        case INIT:
+         if (s.find("_read result chunk") != string::npos) {
+           state = READ_DUMP;
+         } 
+         break;
+        case READ_DUMP:
+        case READ_DUMP_ZERO:
+         if (*p == '*') {
+           state = READ_DUMP_ZERO;
+           ceph_assert(offs0 > 0);
+         } else {
+           uint64_t offs = 0;
+           unsigned char b[16];
+           auto r = sscanf(p,
+            "%lx %hhx %hhx %hhx %hhx %hhx %hhx %hhx %hhx %hhx %hhx %hhx %hhx %hhx %hhx %hhx %hhx %*s",
+              &offs,
+              b + 0,
+              b + 1,
+              b + 2,
+              b + 3,
+              b + 4,
+              b + 5,
+              b + 6,
+              b + 7,
+              b + 8,
+              b + 9,
+              b + 10,
+              b + 11,
+              b + 12,
+              b + 13,
+              b + 14,
+              b + 15);
+           ceph_assert(r > 0);
+           if (state == READ_DUMP_ZERO && offs > offs0) {
+             bl.append_zero(offs - offs0);
+           }
+           if (r < 17) {
+             if (r > 2) {
+               bl.append(reinterpret_cast<char*>(b), r - 1);
+             }
+             fwrite(bl.c_str(), 1, bl.length(), dst);
+             state = INIT;
+             offs0 = 0;
+             bl.clear();
+           } else {
+             bl.append(reinterpret_cast<char*>(b), r - 1);
+             state = READ_DUMP;
+             offs0 = offs + r - 1;
+           }
+         }
+         break;
+      }
+    }
+    fclose(dst);
+    fclose(src);
   }
 }
