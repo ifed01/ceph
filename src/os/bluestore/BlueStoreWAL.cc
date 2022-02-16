@@ -241,72 +241,62 @@ void BluestoreWAL::aio_finish(BlueStore::TransContext* txc,
   std::unique_lock l(lock);
   op.running = false;
   if (op.op_seqno == min_pending_io_seqno) {
-    ceph_assert(min_pending_io_seqno <= cur_op_seqno);
-    do {
-      auto& op2 = ops[min_pending_io_seqno % ops.size()];
-      dout(7) << __func__ << " may be processing " << op2.op_seqno
-              << " prev seqno " << op2.prev_page_seqno
-	      << " running " << op2.running
-	      << " num_txcs " << op2.num_txcs
-              << " wiped " << op2.wiping_pages << " "
-              << last_wiped_page_seqno << " <= "
-              << last_wiping_page_seqno
-	      << dendl;
-      if (op2.running) {
-        break;
-      }
+    _finish_op(op, on_finish, true);
 
-      if (op2.wiping_pages) {
-        avail += op2.wiping_pages * page_size;
-        last_wiped_page_seqno += op2.wiping_pages;
-        //FIXME: sanity!!!
-        if (!(last_wiped_page_seqno <= last_wiping_page_seqno)) {
-          dout(0) << __func__ << " wiped poorly " << op2.wiping_pages << " "
-	          << last_wiped_page_seqno << " <= "
-	          << last_wiping_page_seqno
-                  << dendl;
-        }
-        ceph_assert(last_wiped_page_seqno <= last_wiping_page_seqno);
-      }
-      auto op(op2);
-      op2.reset();
-      ++min_pending_io_seqno;
-      bool last = min_pending_io_seqno > cur_op_seqno;
-      l.unlock();
-      for (size_t i = 0; i < op.num_txcs; i++) {
-        _notify_txc(op.prev_page_seqno, op.txc[i], on_finish);
-      }
-      dout(7) << __func__ << " processed " << op.op_seqno
-              << dendl;
-      if (last) {
-        break;
-      }
-      l.lock();
-    } while (true);
-    /*  auto& op = op2; //FIXME!!!!
-      op2.reset();
-      ++min_pending_io_seqno;
-     // l.unlock();
-      for (size_t i = 0; i < op.num_txcs; i++) {
-        _notify_txc(op.prev_page_seqno, op.txc[i], on_finish);
-      }
-      dout(7) << __func__ << " processed " << op.op_seqno
-              << dendl;
-      if (min_pending_io_seqno > cur_op_seqno) {
-        break;
-      }
-      op2.reset();
-      ++min_pending_io_seqno;
-      //l.lock();
-    } while (true);*/
-    
     //awake pending submits if any
     if (num_pending_free) {
-      //l.unlock();
+      l.unlock();
       flush_cond.notify_all();
     }
   }
   logger->tinc(l_bluestore_wal_aio_finish_lat, mono_clock::now() - t0);
+}
+
+void BluestoreWAL::_finish_op(Op& op, txc_completion_fn on_finish, bool deep)
+{
+  ceph_assert(!op.running);
+  ceph_assert(op.op_seqno == min_pending_io_seqno);
+  dout(7) << __func__ << " processing " << op.op_seqno
+          << " prev seqno " << op.prev_page_seqno
+          << dendl;
+  for (size_t i = 0; i < op.num_txcs; i++) {
+    _notify_txc(op.prev_page_seqno, op.txc[i], on_finish);
+  }
+  if (op.wiping_pages) {
+    dout(7) << __func__ << " wiped " << op.wiping_pages << " "
+            << last_wiped_page_seqno << " <= "
+	    << last_wiping_page_seqno
+	    << dendl;
+      avail += op.wiping_pages * page_size;
+      last_wiped_page_seqno += op.wiping_pages;
+      //FIXME: debug!!!!
+      if (!(last_wiped_page_seqno <= last_wiping_page_seqno)) {
+        dout(0) << __func__ << " wiped poorly " << op.wiping_pages << " "
+	        << last_wiped_page_seqno << " <= "
+	        << last_wiping_page_seqno
+                << dendl;
+    }
+    ceph_assert(last_wiped_page_seqno <= last_wiping_page_seqno);
+  }
+  ++min_pending_io_seqno;
+  dout(7) << __func__ << " processed " << op.op_seqno
+          << dendl;
+  op.reset();
+  if (deep) {
+    while (min_pending_io_seqno <= cur_op_seqno) {
+      auto& op2 = ops[min_pending_io_seqno % ops.size()];
+      dout(7) << __func__ << " may be processing " << op2.op_seqno
+	      << " prev seqno " << op2.prev_page_seqno
+	      << " running " << op2.running
+	      << " num_txcs " << op2.num_txcs
+	      << dendl;
+      if (op2.running) {
+	break;
+      }
+
+      _finish_op(op2, on_finish, false);
+    }
+  }
 }
 
 void BluestoreWAL::_prepare_submit_txc(
