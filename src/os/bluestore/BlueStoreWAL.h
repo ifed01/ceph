@@ -71,17 +71,6 @@ protected:
     size_t num_txcs = 0;
     BlueStore::TransContext* txc[MAX_TXCS_PER_OP] = {nullptr};
 
-    Op() {}
-    Op(const Op& from) : op_seqno(from.op_seqno),
-      txc_seqno(from.txc_seqno),
-      wiping_pages(from.wiping_pages),
-      prev_page_seqno(from.prev_page_seqno),
-      running(from.running),
-      num_txcs(from.num_txcs) {
-      for (size_t i = 0; i < num_txcs; i++) {
-        txc[i] = from.txc[i];
-      }
-    }
     void run(uint64_t wp, uint64_t prev, BlueStore::TransContext* _txc) {
       ceph_assert(!running);
       ceph_assert(num_txcs == 0);
@@ -261,7 +250,7 @@ protected:
   void _notify_txc(uint64_t prev_page_seqno,
                    BlueStore::TransContext* txc,
                    txc_completion_fn on_finish);
-  void _process_finished(txc_completion_fn on_finish);
+  void _finish_op(Op& op, txc_completion_fn on_finish, bool deep);
   Op* _log(BlueStore::TransContext* txc);
   void _prepare_submit_txc(bluewal_head_t& header,
                            uint64_t txc_seqno,
