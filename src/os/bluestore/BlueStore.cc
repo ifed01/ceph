@@ -12755,19 +12755,19 @@ void BlueStore::_txc_state_proc(TransContext *txc)
          });
       return;
     case TransContext::STATE_WAL_DONE:
-    {
-      if (txc->ch->commit_queue) {
-        txc->ch->commit_queue->queue(txc->oncommits);
-      } else {
-        finisher.queue(txc->oncommits);
+      {
+        //OpSequencer *osr = txc->osr.get();
+        //FIXME: std::lock_guard l(osr->qlock);
+        if (txc->ch->commit_queue) {
+          txc->ch->commit_queue->queue(txc->oncommits);
+        } else {
+          finisher.queue(txc->oncommits);
+        }
       }
       throttle.log_state_latency(*txc, logger, l_bluestore_state_wal_done_lat);
       logger->tinc(l_bluestore_wal_commit_lat, mono_clock::now() - txc->start);
-      OpSequencer *osr = txc->osr.get();
-      //std::lock_guard l(osr->qlock);
       _txc_queue_kv(txc);
-      return;
-    }
+       return;
     case TransContext::STATE_KV_SUBMITTED:
       _txc_committed_kv(txc);
       // ** fall-thru **
