@@ -125,7 +125,8 @@ private:
   std::unordered_map<std::string, prefix_shards> cf_handles;
   std::unordered_map<uint32_t, std::string> cf_ids_to_prefix;
   std::unordered_map<std::string, rocksdb::BlockBasedTableOptions> cf_bbt_opts;
-  
+  std::vector<rocksdb::ColumnFamilyHandle *> all_cf_handles;
+
   void add_column_family(const std::string& cf_name, uint32_t hash_l, uint32_t hash_h,
 			 size_t shard_idx, rocksdb::ColumnFamilyHandle *handle);
   bool is_column_family(const std::string& prefix);

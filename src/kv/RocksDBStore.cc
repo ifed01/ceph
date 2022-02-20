@@ -616,6 +616,7 @@ void RocksDBStore::add_column_family(const std::string& cf_name, uint32_t hash_l
     column.handles.resize(shard_idx + 1);
   column.handles[shard_idx] = handle;
   cf_ids_to_prefix.emplace(handle->GetID(), cf_name);
+  all_cf_handles.emplace_back(handle);
 }
 
 bool RocksDBStore::is_column_family(const std::string& prefix) {
@@ -1301,6 +1302,7 @@ void RocksDBStore::close()
       db->DestroyColumnFamilyHandle(p.second.handles[i]);
     }
   }
+  all_cf_handles.clear();
   cf_handles.clear();
   if (must_close_default_cf) {
     db->DestroyColumnFamilyHandle(default_cf);
@@ -2107,17 +2109,15 @@ void RocksDBStore::compact_range(const string& start, const string& end)
 void RocksDBStore::flush_all()
 {
   utime_t start = ceph_clock_now();
-/*  rocksdb::WriteOptions woptions;
-  woptions.sync = false;
-
-  int result = submit_common(woptions, t);*/
   rocksdb::FlushOptions options;
-  //FIXME: pass column families: const std::vector<ColumnFamilyHandle*>& column_families)
+
   db->Flush(options);
+  if (!all_cf_handles.empty()) {
+    db->Flush(options, all_cf_handles);
+  }
 
   utime_t lat = ceph_clock_now() - start;
   logger->tinc(l_rocksdb_flush_latency, lat);
-
 }
 
 RocksDBStore::RocksDBWholeSpaceIteratorImpl::~RocksDBWholeSpaceIteratorImpl()
