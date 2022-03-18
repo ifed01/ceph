@@ -35,8 +35,8 @@ class BlockDevice;
 struct bluewal_head_t {
   ///
   /// Each header embeds optional page part which is valid
-  /// (and hence indicates the beginning of the next page)
   /// if page_count is greater than 0
+  /// (and hence indicates the beginning of the next page)
   ///
   uint64_t page_seq = 0;
   uint32_t page_count = 0;
@@ -258,6 +258,10 @@ protected:
                            bufferlist::page_aligned_appender& appender,
                            bufferlist& bl);
 
+  int _read_page_header(uint64_t offset,
+                        uint64_t expected_page_no,
+                        uint64_t page_count,
+                        bluewal_head_t* header);
 public:
   static const size_t DEF_PAGE_SIZE = 1ull << 24; // 16MB
   static const size_t DEF_BLOCK_SIZE = 4096;
@@ -286,6 +290,7 @@ public:
   void aio_finish(BlueStore::TransContext* txc, txc_completion_fn on_finish);
 
   void shutdown(KeyValueDB& db);
+  int replay(KeyValueDB& db);
 
   uint64_t get_total() const {
     return total;

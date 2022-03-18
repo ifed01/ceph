@@ -11,6 +11,7 @@
  */
 
 #include <utility>
+#include <limits>
 
 #include "include/intarith.h"
 #include "include/crc32c.h"
@@ -23,6 +24,19 @@
 #define dout_subsys ceph_subsys_bluestore
 #undef dout_prefix
 #define dout_prefix *_dout << "BlueWAL: "
+
+std::ostream& operator<<(std::ostream& out, const bluewal_head_t& h)
+{
+  out << "wal_header(" 
+      << " pseq " << h.page_seq
+      << " pc " << h.page_count
+      << " seq " << h.seq
+      << " len " << h.len
+      << " uuid " << h.uuid
+      << " h.csum " << h.csum
+      << ")";
+  return out;
+}
 
 // =======================================================
 enum {
@@ -130,8 +144,8 @@ bool BluestoreWAL::init_op(size_t need, uint64_t* _need_pages, Op** op)
     uint64_t avail_pages = get_total_pages() - (page_seqno - last_wiped_page_seqno);
     uint64_t non_wiped_avail_pages = 0;
 
-    // pending wiping pages can't be used and prevent
-    // following committed pages from usage as well
+    // pending wiping pages can't be used and they prevent
+    // following committed pages from being used as well.
     // hence measuring how many committed pages are available
     if (last_wiped_page_seqno == last_wiping_page_seqno) {
       non_wiped_avail_pages = last_committed_page_seqno - last_wiping_page_seqno;
@@ -690,4 +704,134 @@ void BluestoreWAL::shutdown(KeyValueDB& db)
             << "wiped " << dendl;
   }
 }
+
+int BluestoreWAL::_read_page_header(uint64_t offset,
+                                    uint64_t expected_page_no,
+                                    uint64_t page_count,
+                                    bluewal_head_t* header)
+{
+  bufferlist bl;
+  IOContext ioc(cct, NULL);
+  int r = bdev->read(offset, DEF_BLOCK_SIZE, &bl, &ioc, false);
+  ceph_assert(r == DEF_BLOCK_SIZE);
+  r = -1;    
+  try {
+    auto pp = bl.front().begin_deep();
+    header->decode(pp);
+    dout(15) << __func__ << " got page header " << *header
+             << " at " << offset
+             << dendl;
+      
+    if (!header->page_count ||
+        (header->page_seq % page_count) != expected_page_no) {
+      dout(15) << __func__ << " page information is inconsistent, ignoring"
+               << dendl;
+    } else if (header->uuid != uuid) {
+      dout(15) << __func__ << " unexpected header uuid, ignoring"
+               << dendl;
+    } else {
+      r = 0;
+    }
+  } catch (ceph::buffer::error& e) {
+    dout(15) << __func__ << " unable to decode page header at offset " << offset
+             << ": " << e.what()
+	     << dendl;
+  }
+  return r;
+}
+
+int BluestoreWAL::replay(KeyValueDB& db)
+{
+  size_t page_no = 0;
+  auto page_count = page_offsets.size();
+  std::deque<bluewal_head_t> valid_page_headers;
+  for (auto poffs : page_offsets) {
+    bluewal_head_t header;
+    int r = _read_page_header(poffs, page_no, page_count, &header);
+    if (r == 0) {
+      valid_page_headers.emplace_back(header);
+      ceph_assert(header.page_count == 1); //FIXME add support for multi-page ops
+    }
+    ++page_no;
+  }
+  if (valid_page_headers.empty()) {
+    dout(15) << __func__ << " wal is empty, replay completed." << dendl;
+    return 0;
+  } 
+  std::sort(valid_page_headers.begin(), valid_page_headers.end(),
+    [&](const bluewal_head_t& a, const bluewal_head_t& b) {
+      return a.page_seq < b.page_seq;
+    });
+  //sanity check that page sequence numbering is monotonically increasing
+  auto it0 = valid_page_headers.begin();  
+  auto it = it0;
+  ++it;
+  while (it <  valid_page_headers.end()) {
+    if (it->page_seq != it0->page_seq + 1) {
+      derr << __func__ << " page sequencing is broken, found a gap: "
+           << it0->page_seq << " <-> " << it->page_seq
+	   << dendl;
+      return -1;
+    }
+    it0 = it;
+    ++it;
+  }
+
+  uint64_t next_txc_seqno = valid_page_headers.front().seq;
+  for (auto& h0 : valid_page_headers) {
+    uint64_t o = page_offsets[h0.page_seq % page_count];
+    uint64_t last_offset = o + DEF_PAGE_SIZE;
+    bluewal_head_t h;
+    do {
+      bufferlist bl;
+      bufferlist bl2;
+      IOContext ioc(cct, NULL);
+      int r = bdev->read(o, DEF_BLOCK_SIZE, &bl, &ioc, false);
+      ceph_assert(r == DEF_BLOCK_SIZE);
+      o += r;
+      try {
+        auto pp = bl.front().begin_deep();
+        h.decode(pp);
+        dout(15) << __func__ << " got txc header " << h
+             << " at " << o
+             << dendl;
+        if (h.seq != next_txc_seqno) {
+          dout(15) << __func__ << " misordered txc header at " << o << dendl;
+        } else if (h.uuid != uuid) {
+          dout(15) << __func__ << " unexpected txc header uuid, ignoring"
+                   << dendl;
+        } else {
+          int64_t delta = h.len - (bl.length() - pp.get_offset());
+          bl2.substr_of(bl, pp.get_offset(), bl.length() - pp.get_offset());
+          if (delta > 0) {
+            delta = p2roundup((uint64_t)delta, DEF_BLOCK_SIZE);
+            bl.clear();
+            r = bdev->read(o, delta, &bl, &ioc, false);
+            ceph_assert(r == DEF_BLOCK_SIZE);
+            o += r;
+            bl2.claim_append(bl);
+          }
+          ceph_assert(bl2.length() >= h.len);
+
+          auto t = db.get_transaction();
+          t->set_from_bytes(bl2.c_str());
+          r = db.submit_transaction_sync(t);
+          if (r != 0) {
+           derr << __func__ << " txc submit failed, txc header " << h
+                << " at offset " << o
+                << dendl;
+            return r;
+          }
+        }
+      } catch (ceph::buffer::error& e) {
+        dout(15) << __func__ << " unable to decode txc header at offset " << o
+                 << ": " << e.what()
+                 << dendl;
+      }
+      ++next_txc_seqno;
+    } while(o < last_offset);
+  }
+  return 0;
+}
+
 // =======================================================
