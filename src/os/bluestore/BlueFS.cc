@@ -568,6 +568,7 @@ int BlueFS::mkfs(uuid_d osd_uuid, const bluefs_layout_t& layout)
   super.block_size = bdev[BDEV_DB]->get_block_size();
   super.osd_uuid = osd_uuid;
   super.uuid.generate_random();
+  super.memorized_layout = layout;
   dout(1) << __func__ << " uuid " << super.uuid << dendl;
 
   // init log
@@ -590,7 +591,6 @@ int BlueFS::mkfs(uuid_d osd_uuid, const bluefs_layout_t& layout)
 
   // write supers
   super.log_fnode = log_file->fnode;
-  super.memorized_layout = layout;
   _write_super(BDEV_DB);
   _flush_bdev();
 
@@ -864,12 +864,12 @@ int BlueFS::_bdev_read_random(uint8_t ndev, uint64_t off, uint64_t len,
   return bdev[ndev]->read_random(off, len, buf, buffered);
 }
 
-int BlueFS::mount()
+int BlueFS::mount(const bluefs_layout_t* layout)
 {
   dout(1) << __func__ << dendl;
 
   _init_logger();
-  int r = _open_super();
+  int r = _open_super(layout->superb_lbas);
   if (r < 0) {
     derr << __func__ << " failed to open super: " << cpp_strerror(r) << dendl;
     goto out;
@@ -939,7 +939,10 @@ int BlueFS::maybe_verify_layout(const bluefs_layout_t& layout) const
     if (layout == *super.memorized_layout) {
       dout(10) << __func__ << " bluefs layout verified positively" << dendl;
     } else {
-      derr << __func__ << " memorized layout doesn't fit current one" << dendl;
+      derr << __func__ << " memorized layout doesn't fit current one: "
+        << *super.memorized_layout
+        << " vs. " << layout
+        << dendl;
       return -EIO;
     }
   } else {
@@ -1032,51 +1035,76 @@ int BlueFS::_write_super(int dev)
   encode(super, bl);
   uint32_t crc = bl.crc32c(-1);
   encode(crc, bl);
-  dout(10) << __func__ << " super block length(encoded): " << bl.length() << dendl;
-  dout(10) << __func__ << " superblock " << super.version << dendl;
-  dout(10) << __func__ << " log_fnode " << super.log_fnode << dendl;
+  dout(0) << __func__ << " superblock encoded length: " << bl.length()
+           << " superblock " << super << dendl;
   ceph_assert_always(bl.length() <= get_super_length());
   bl.append_zero(get_super_length() - bl.length());
 
-  bdev[dev]->write(get_super_offset(), bl, false, WRITE_LIFE_SHORT);
-  dout(20) << __func__ << " v " << super.version
-           << " crc 0x" << std::hex << crc
-           << " offset 0x" << get_super_offset() << std::dec
-           << dendl;
+  ceph_assert(super.memorized_layout);
+  size_t count = super.memorized_layout->superb_lbas.size();
+  size_t left = count;
+  for (size_t i = super_pos; left > 0; left--) {
+    auto lba = super.memorized_layout->superb_lbas[i % count];
+    bdev[dev]->write(lba, bl, false, WRITE_LIFE_SHORT);
+    dout(10) << __func__ << " v " << super.version
+             << " crc 0x" << std::hex << crc
+             << " lba 0x" << lba  << std::dec
+             << dendl;
+  }
   return 0;
 }
 
-int BlueFS::_open_super()
+int BlueFS::_open_super(const std::vector<uint64_t> lbas)
 {
   dout(10) << __func__ << dendl;
 
   bufferlist bl;
   uint32_t expected_crc, crc;
   int r;
+  std::vector<bluefs_super_t> supers;
+  supers.resize(lbas.size());
+  int best_idx = -1;
 
-  // always the second block
-  r = _bdev_read(BDEV_DB, get_super_offset(), get_super_length(),
+  for (size_t i = 0; i < lbas.size(); i++) {
+    r = _bdev_read(BDEV_DB, lbas[i], get_super_length(),
 		 &bl, ioc[BDEV_DB], false);
-  if (r < 0)
-    return r;
 
-  auto p = bl.cbegin();
-  decode(super, p);
-  {
-    bufferlist t;
-    t.substr_of(bl, 0, p.get_off());
-    crc = t.crc32c(-1);
+    if (r >=0 ) {
+      auto p = bl.cbegin();
+      decode(supers[i], p);
+      bufferlist t;
+      t.substr_of(bl, 0, p.get_off());
+      crc = t.crc32c(-1);
+      decode(expected_crc, p);
+      if (crc != expected_crc) {
+        derr << __func__
+             << " bad crc on superblock at " << lbas[i]
+             << " expected 0x" << std::hex << expected_crc
+             << " != actual 0x" << crc
+             << std::dec << dendl;
+        r = -EIO;
+      }
+    }
+    if (r >= 0) {
+      if (best_idx < 0 ||
+          supers[i].version > supers[best_idx].version) {
+        best_idx = i;
+      }
+    }
   }
-  decode(expected_crc, p);
-  if (crc != expected_crc) {
-    derr << __func__ << " bad crc on superblock, expected 0x"
-         << std::hex << expected_crc << " != actual 0x" << crc << std::dec
-         << dendl;
-    return -EIO;
+  if (best_idx < 0) {
+    derr << __func__ << " unable to get superblock" << dendl;
+    r = -EIO;
+  } else {
+    super = supers[best_idx];
+    super_pos = best_idx; // keep the best super location
+                          // to avoid its overwriting before 
+                          // all other superblock locations
+                          // which might corrupt the last valid superblock
+    dout(0) << __func__ << " superblock " << super << dendl;
+    r = 0;
   }
-  dout(10) << __func__ << " superblock " << super.version << dendl;
-  dout(10) << __func__ << " log_fnode " << super.log_fnode << dendl;
-  return 0;
+  return r;
 }
 
 int BlueFS::_check_allocations(const bluefs_fnode_t& fnode,
@@ -1677,12 +1705,12 @@ int BlueFS::_replay(bool noop, bool to_stdout)
   return 0;
 }
 
-int BlueFS::log_dump()
+int BlueFS::log_dump(std::vector<uint64_t> lbas)
 {
   // only dump log file's content
   ceph_assert(log.writer == nullptr && "cannot log_dump on mounted BlueFS");
   _init_logger();
-  int r = _open_super();
+  int r = _open_super(lbas);
   if (r < 0) {
     derr << __func__ << " failed to open super: " << cpp_strerror(r) << dendl;
     return r;

@@ -173,6 +173,7 @@ struct bluefs_layout_t {
   unsigned shared_bdev = 0;         ///< which bluefs bdev we are sharing
   bool dedicated_db = false;        ///< whether block.db is present
   bool dedicated_wal = false;       ///< whether block.wal is present
+  std::vector<uint64_t> superb_lbas;///< bluefs superblock locations
 
   bool single_shared_device() const {
     return !dedicated_db && !dedicated_wal;
@@ -181,7 +182,8 @@ struct bluefs_layout_t {
   bool operator==(const bluefs_layout_t& other) const {
     return shared_bdev == other.shared_bdev &&
            dedicated_db == other.dedicated_db &&
-           dedicated_wal == other.dedicated_wal;
+           dedicated_wal == other.dedicated_wal &&
+           superb_lbas == other.superb_lbas;
   }
 
   void encode(ceph::buffer::list& bl) const;
@@ -189,6 +191,8 @@ struct bluefs_layout_t {
   void dump(ceph::Formatter *f) const;
 };
 WRITE_CLASS_ENCODER(bluefs_layout_t)
+
+std::ostream& operator<<(std::ostream&, const bluefs_layout_t& s);
 
 struct bluefs_super_t {
   uuid_d uuid;      ///< unique to this bluefs instance

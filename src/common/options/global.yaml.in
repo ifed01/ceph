@@ -4131,6 +4131,14 @@ options:
   flags:
   - startup
   with_legacy: true
+- name: bluestore_alternate_label_location
+  type: size
+  level: advanced
+  desc: Backup bdev label location (offset at main device)
+  default: 64_M
+  with_legacy: true
+  flags:
+  - startup
 - name: bluestore_bluefs
   type: bool
   level: dev

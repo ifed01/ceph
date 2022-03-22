@@ -40,19 +40,23 @@ ostream& operator<<(ostream& out, const bluefs_extent_t& e)
 
 void bluefs_layout_t::encode(bufferlist& bl) const
 {
-  ENCODE_START(1, 1, bl);
+  ENCODE_START(2, 1, bl);
   encode(shared_bdev, bl);
   encode(dedicated_db, bl);
   encode(dedicated_wal, bl);
+  encode(superb_lbas, bl);
   ENCODE_FINISH(bl);
 }
 
 void bluefs_layout_t::decode(bufferlist::const_iterator& p)
 {
-  DECODE_START(1, p);
+  DECODE_START(2, p);
   decode(shared_bdev, p);
   decode(dedicated_db, p);
   decode(dedicated_wal, p);
+  if (struct_v >= 2) {
+    decode(superb_lbas, p);
+  }
   DECODE_FINISH(p);
 }
 
@@ -61,6 +65,30 @@ void bluefs_layout_t::dump(Formatter *f) const
   f->dump_stream("shared_bdev") << shared_bdev;
   f->dump_stream("dedicated_db") << dedicated_db;
   f->dump_stream("dedicated_wal") << dedicated_wal;
+  f->open_array_section("superb_lbas");
+  for (auto o : superb_lbas) {
+    f->dump_unsigned("lba", o);
+  }
+  f->close_section();
+}
+
+ostream& operator<<(ostream& out, const bluefs_layout_t& s)
+{
+  out << " (shared_bdev " << s.shared_bdev
+      << " dedicated_db " << s.dedicated_db
+      << " dedicated_wal " << s.dedicated_wal
+      << " superb_lbas[";
+  bool non_first = false;
+  for (auto o : s.superb_lbas) {
+    if (non_first) {
+      out << ',' << o;
+    } else {
+      out << o;
+      non_first = true;
+    }
+  }
+  out << "]";
+  return out;
 }
 
 // bluefs_super_t
@@ -98,6 +126,7 @@ void bluefs_super_t::dump(Formatter *f) const
   f->dump_unsigned("version", version);
   f->dump_unsigned("block_size", block_size);
   f->dump_object("log_fnode", log_fnode);
+  f->dump_object("layout", *memorized_layout);
 }
 
 void bluefs_super_t::generate_test_instances(list<bluefs_super_t*>& ls)
@@ -114,7 +143,8 @@ ostream& operator<<(ostream& out, const bluefs_super_t& s)
 	     << " osd " << s.osd_uuid
 	     << " v " << s.version
 	     << " block_size 0x" << std::hex << s.block_size
-	     << " log_fnode 0x" << s.log_fnode
+	     << " log_fnode " << s.log_fnode
+	     << " layout" << *s.memorized_layout
 	     << std::dec << ")";
 }
 

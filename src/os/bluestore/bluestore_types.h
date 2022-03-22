@@ -39,6 +39,7 @@ struct bluestore_bdev_label_t {
   uint64_t size = 0;   ///< device size
   utime_t btime;       ///< birth time
   std::string description;  ///< device description
+  uint64_t seq = 0;     ///< superblock's update sequence no
 
   std::map<std::string,std::string> meta; ///< {read,write}_meta() content from ObjectStore
 

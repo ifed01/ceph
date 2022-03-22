@@ -2127,6 +2127,7 @@ public:
   // --------------------------------------------------------
   // members
 private:
+  std::vector<uint64_t> label_loc;
   BlueFS *bluefs = nullptr;
   bluefs_layout_t bluefs_layout;
   utime_t next_dump_on_bluefs_alloc_failure;
@@ -2603,9 +2604,16 @@ public:
   }
 
   static int _write_bdev_label(CephContext* cct,
-			       const std::string &path, bluestore_bdev_label_t label);
-  static int _read_bdev_label(CephContext* cct, const std::string &path,
+			       const std::string &path,
+			       std::vector<uint64_t> lbas,
+			       bluestore_bdev_label_t label);
+  static int _read_bdev_label(CephContext* cct,
+                              const std::string &path,
+                              std::vector<uint64_t> lbas,
 			      bluestore_bdev_label_t *label);
+  static void _init_bdev_label_locations(std::vector<uint64_t>& out);
+  static void _setup_bdev_label_locations(std::vector<uint64_t>& out);
+			      
 private:
   int _check_or_set_bdev_label(std::string path, uint64_t size, std::string desc,
 			       bool create);
@@ -2766,7 +2774,7 @@ private:
   int32_t ondisk_format = 0;  ///< value detected on mount
 
   int _upgrade_super();  ///< upgrade (called during open_super)
-  uint64_t _get_ondisk_reserved() const;
+  std::pair<uint64_t, uint32_t> _get_ondisk_reserved(uint64_t base = 0) const;
   void _prepare_ondisk_format_super(KeyValueDB::Transaction& t);
 
   // --- public interface ---

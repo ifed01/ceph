@@ -341,6 +341,7 @@ private:
   } nodes;
 
   bluefs_super_t super;        ///< latest superblock (as last written)
+  uint64_t super_pos = 0;      ///< latest superblock location index
   uint64_t ino_last = 0;       ///< last assigned ino (this one is in use)
 
   struct {
@@ -492,7 +493,7 @@ private:
     uint64_t len,    ///< [in] this many bytes
     char *out);      ///< [out] optional: or copy it here
 
-  int _open_super();
+  int _open_super(std::vector<uint64_t> lbas);
   int _write_super(int dev);
   int _check_allocations(const bluefs_fnode_t& fnode,
     boost::dynamic_bitset<uint64_t>* used_blocks,
@@ -507,11 +508,7 @@ private:
   void _drain_writer(FileWriter *h);
   void _close_writer(FileWriter *h);
 
-  // always put the super in the second 4k block.  FIXME should this be
-  // block size independent?
-  unsigned get_super_offset() {
-    return 4096;
-  }
+  //FIXME should this be block size independent?
   unsigned get_super_length() {
     return 4096;
   }
@@ -526,12 +523,12 @@ public:
 
   // the super is always stored on bdev 0
   int mkfs(uuid_d osd_uuid, const bluefs_layout_t& layout);
-  int mount();
+  int mount(const bluefs_layout_t* = nullptr);
   int maybe_verify_layout(const bluefs_layout_t& layout) const;
   void umount(bool avoid_compact = false);
   int prepare_new_device(int id, const bluefs_layout_t& layout);
-  
-  int log_dump();
+
+  int log_dump(std::vector<uint64_t> lbas);
 
   void collect_metadata(std::map<std::string,std::string> *pm, unsigned skip_bdev_id);
   void get_devices(std::set<std::string> *ls);

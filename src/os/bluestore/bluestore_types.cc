@@ -35,25 +35,30 @@ void bluestore_bdev_label_t::encode(bufferlist& bl) const
   bl.append("bluestore block device\n");
   bl.append(stringify(osd_uuid));
   bl.append("\n");
-  ENCODE_START(2, 1, bl);
+  ENCODE_START(3, 1, bl);
   encode(osd_uuid, bl);
   encode(size, bl);
   encode(btime, bl);
   encode(description, bl);
   encode(meta, bl);
+  encode(seq, bl);
   ENCODE_FINISH(bl);
 }
 
 void bluestore_bdev_label_t::decode(bufferlist::const_iterator& p)
 {
   p += 60u; // see above
-  DECODE_START(2, p);
+  DECODE_START(3, p);
   decode(osd_uuid, p);
   decode(size, p);
   decode(btime, p);
   decode(description, p);
   if (struct_v >= 2) {
     decode(meta, p);
+  }
+  seq = 0;
+  if (struct_v >= 3) {
+    decode(seq, p);
   }
   DECODE_FINISH(p);
 }
@@ -64,6 +69,7 @@ void bluestore_bdev_label_t::dump(Formatter *f) const
   f->dump_unsigned("size", size);
   f->dump_stream("btime") << btime;
   f->dump_string("description", description);
+  f->dump_unsigned("seq", seq);
   for (auto& i : meta) {
     f->dump_string(i.first.c_str(), i.second);
   }
@@ -77,6 +83,7 @@ void bluestore_bdev_label_t::generate_test_instances(
   o.back()->size = 123;
   o.back()->btime = utime_t(4, 5);
   o.back()->description = "fakey";
+  o.back()->seq = 5;
   o.back()->meta["foo"] = "bar";
 }
 
@@ -87,6 +94,7 @@ ostream& operator<<(ostream& out, const bluestore_bdev_label_t& l)
 	     << ", btime " << l.btime
 	     << ", desc " << l.description
 	     << ", " << l.meta.size() << " meta"
+	     << ", seq " << l.seq
 	     << ")";
 }
 
