@@ -1828,7 +1828,12 @@ void RocksDBStore::RocksDBTransactionImpl::merge(
 
 const std::string& RocksDBStore::RocksDBTransactionImpl::get_as_bytes()
 {
-    return bat.Data();
+  return bat.Data();
+}
+
+void RocksDBStore::RocksDBTransactionImpl::set_from_bytes(const std::string& s)
+{
+  bat = rocksdb::WriteBatch(s);
 }
 
 int RocksDBStore::get(
