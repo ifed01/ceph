@@ -139,6 +139,9 @@ public:
     virtual const std::string& get_as_bytes() {
       ceph_assert(false); // unsupported
     }
+    virtual void set_from_bytes(const std::string&) {
+      ceph_assert(false); // unsupported
+    }
   };
   typedef std::shared_ptr< TransactionImpl > Transaction;
 
