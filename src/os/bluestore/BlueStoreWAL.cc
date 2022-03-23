@@ -742,7 +742,6 @@ int BluestoreWAL::_read_page_header(uint64_t offset,
 
 int BluestoreWAL::replay(KeyValueDB& db)
 {
-/*  typedef 
   size_t page_no = 0;
   auto page_count = page_offsets.size();
   std::deque<bluewal_head_t> valid_page_headers;
@@ -785,23 +784,44 @@ int BluestoreWAL::replay(KeyValueDB& db)
     bluewal_head_t h;
     do {
       bufferlist bl;
+      bufferlist bl2;
       IOContext ioc(cct, NULL);
       int r = bdev->read(o, DEF_BLOCK_SIZE, &bl, &ioc, false);
       ceph_assert(r == DEF_BLOCK_SIZE);
+      o += r;
       try {
         auto pp = bl.front().begin_deep();
-        header->decode(pp);
-        dout(15) << __func__ << " got txc header " << *header
+        h.decode(pp);
+        dout(15) << __func__ << " got txc header " << h
              << " at " << o
              << dendl;
         if (h.seq != next_txc_seqno) {
-          dout(15) << __func__ << " misordered header at " << o << dendl;
-          break;
-        } else if (header->uuid != uuid) {
-          dout(15) << __func__ << " unexpected header uuid, ignoring"
+          dout(15) << __func__ << " misordered txc header at " << o << dendl;
+        } else if (h.uuid != uuid) {
+          dout(15) << __func__ << " unexpected txc header uuid, ignoring"
                    << dendl;
         } else {
-          r = 0;
+          int64_t delta = h.len - (bl.length() - pp.get_offset());
+          bl2.substr_of(bl, pp.get_offset(), bl.length() - pp.get_offset());
+          if (delta > 0) {
+            delta = p2roundup((uint64_t)delta, DEF_BLOCK_SIZE);
+            bl.clear();
+            r = bdev->read(o, delta, &bl, &ioc, false);
+            ceph_assert(r == DEF_BLOCK_SIZE);
+            o += r;
+            bl2.claim_append(bl);
+          }
+          ceph_assert(bl2.length() >= h.len);
+
+          auto t = db.get_transaction();
+          t->set_from_bytes(bl2.c_str());
+          r = db.submit_transaction_sync(t);
+          if (r != 0) {
+           derr << __func__ << " txc submit failed, txc header " << h
+                << " at offset " << o
+                << dendl;
+            return r;
+          }
         }
       } catch (ceph::buffer::error& e) {
         dout(15) << __func__ << " unable to decode txc header at offset " << o
@@ -810,7 +830,7 @@ int BluestoreWAL::replay(KeyValueDB& db)
       }
       ++next_txc_seqno;
     } while(o < last_offset);
-  }*/
+  }
   return 0;
 }
 
