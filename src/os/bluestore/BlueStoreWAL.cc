@@ -13,6 +13,7 @@
 #include <utility>
 #include <limits>
 
+#include "common/errno.h"
 #include "include/intarith.h"
 #include "include/crc32c.h"
 #include "blk/BlockDevice.h"
@@ -29,8 +30,8 @@ std::ostream& operator<<(std::ostream& out, const bluewal_head_t& h)
 {
   out << "wal_header(" 
       << " pseq " << h.page_seq
-      << " pc " << h.page_count
-      << " seq " << h.seq
+      << " pcnt " << h.page_count
+      << " tseq " << h.seq
       << " len " << h.len
       << " uuid " << h.uuid
       << " h.csum " << h.csum
@@ -60,16 +61,20 @@ BluestoreWAL::BluestoreWAL(CephContext* _cct,
   BlockDevice* _bdev,
   const uuid_d& _uuid,
   uint64_t psize,
-  uint64_t bsize) :
+  uint64_t bsize,
+  uint64_t fsize) :
     cct(_cct),
     bdev(_bdev),
     uuid(_uuid),
     page_size(psize),
-    block_size(bsize)
+    block_size(bsize),
+    flush_size(fsize)
 {
   ceph_assert(psize >= bsize);
+  ceph_assert(fsize >= psize);
 
   curpage_pos = psize; //assign position which enforces new page selection
+  page_seqno = 0;
 
   // estimate header size(s)
   bluewal_head_t header;
@@ -126,7 +131,29 @@ void BluestoreWAL::init_add_pages(uint64_t offset, uint64_t len)
   }
 }
 
-bool BluestoreWAL::init_op(size_t need, uint64_t* _need_pages, Op** op)
+void BluestoreWAL::assess_payload(const chest_t& chest, uint64_t* need_pages)
+{
+  *need_pages = 0;
+  auto page_pos = curpage_pos;
+  chest.foreach_row(
+    [&](size_t _need) {
+      if (_need + page_pos <= page_size) {
+        page_pos += _need;
+        page_pos += p2nphase(page_pos, block_size);
+      } else {
+        if (page_pos + _need <= page_size) {
+          (*need_pages)++;
+          page_pos = p2roundup(_need, block_size);
+        } else {
+          auto tail = _need % page_size;
+          *need_pages += _need / page_size + (tail ? 1 : 0);
+          page_pos = 0;
+        }
+      }
+    });
+}
+
+bool BluestoreWAL::init_op(const chest_t& chest, size_t* _need_pages, Op** op)
 {
   auto &op_res = ops[(cur_op_seqno + 1) % ops.size()];
   if (op_res.running) {
@@ -135,62 +162,62 @@ bool BluestoreWAL::init_op(size_t need, uint64_t* _need_pages, Op** op)
             << dendl;
     return false;
   }
-  size_t need_pages = 0;
-  if (need + head_size + curpage_pos > page_size) {
-    auto psize = page_size - head_size;
-    need_pages = round_up_to(need, psize) / psize;
-    ceph_assert(need_pages <= get_total_pages());
+  assess_payload(chest, _need_pages);
+  if (*_need_pages == 0) {
+    op_res.op_seqno = ++cur_op_seqno;
+    *op = &op_res;
+    return true;
+  }
+  ceph_assert(*_need_pages <= get_total_pages());
 
-    uint64_t avail_pages = get_total_pages() - (page_seqno - last_wiped_page_seqno);
-    uint64_t non_wiped_avail_pages = 0;
+  uint64_t avail_pages = get_total_pages() - (page_seqno - last_wiped_page_seqno);
+  uint64_t non_wiped_avail_pages = 0;
 
-    // pending wiping pages can't be used and they prevent
-    // following committed pages from being used as well.
-    // hence measuring how many committed pages are available
-    if (last_wiped_page_seqno == last_wiping_page_seqno) {
-      non_wiped_avail_pages = last_committed_page_seqno - last_wiping_page_seqno;
-    }
-    if (avail_pages + non_wiped_avail_pages < need_pages) {
-      return false;
-    }
-
-    //FIXME: sanity!!!
-    if (!(avail_pages + non_wiped_avail_pages  == avail / page_size) ||
-        !(last_submitted_page_seqno <= page_seqno) ||
-        !(last_committed_page_seqno <= last_submitted_page_seqno) ||
-        !(last_wiping_page_seqno <= last_committed_page_seqno) ||
-        !(last_wiped_page_seqno <= last_wiping_page_seqno)) {
-      derr << __func__ << " before assertion:"
-           << " need pages:" << need_pages
-           << " avail pages:" << avail_pages
-           << " avail:" << avail
-           << " avail/page_size:" << avail / page_size
-           << " page seqno:" << page_seqno
-           << " page pos: " << curpage_pos
-           << " last submitted:" << last_submitted_page_seqno
-           << " last committed:" << last_committed_page_seqno
-           << " wiping: " << last_wiping_page_seqno
-           << " wiped: " << last_wiped_page_seqno
-           <<dendl;
-    }
-    ceph_assert(avail_pages + non_wiped_avail_pages == avail / page_size);
-    ceph_assert(last_submitted_page_seqno <= page_seqno);
-    ceph_assert(last_committed_page_seqno <= last_submitted_page_seqno);
-    ceph_assert(last_wiping_page_seqno <= last_committed_page_seqno);
-    ceph_assert(last_wiped_page_seqno <= last_wiping_page_seqno);
-    ceph_assert(avail_pages + non_wiped_avail_pages == avail / page_size);
-
-    // we can use non-wiped pages as we're planning to overwrite them
-    // but we need to adjust relevant last sequences to avoid
-    // confusion
-    uint64_t non_wiped_advance = need_pages > avail_pages ? need_pages - avail_pages : 0;
-    ceph_assert(non_wiped_advance <= non_wiped_avail_pages);
-    last_wiping_page_seqno += non_wiped_advance;
-    last_wiped_page_seqno += non_wiped_advance;
+  // pending wiping pages can't be used and they prevent
+  // following committed pages from being used as well.
+  // hence measuring how many committed pages are available
+  if (last_wiped_page_seqno == last_wiping_page_seqno) {
+    non_wiped_avail_pages = last_committed_page_seqno - last_wiping_page_seqno;
+  }
+  if (avail_pages + non_wiped_avail_pages < *_need_pages) {
+    return false;
   }
 
+  //FIXME: sanity!!!
+  if (!(avail_pages + non_wiped_avail_pages  == avail / page_size) ||
+      !(last_submitted_page_seqno <= page_seqno) ||
+      !(last_committed_page_seqno <= last_submitted_page_seqno) ||
+      !(last_wiping_page_seqno <= last_committed_page_seqno) ||
+      !(last_wiped_page_seqno <= last_wiping_page_seqno)) {
+    derr << __func__ << " before assertion:"
+         << " need pages:" << *_need_pages
+         << " avail pages:" << avail_pages
+         << " avail:" << avail
+         << " avail/page_size:" << avail / page_size
+         << " page seqno:" << page_seqno
+         << " page pos: " << curpage_pos
+         << " last submitted:" << last_submitted_page_seqno
+         << " last committed:" << last_committed_page_seqno
+         << " wiping: " << last_wiping_page_seqno
+         << " wiped: " << last_wiped_page_seqno
+         <<dendl;
+  }
+  ceph_assert(avail_pages + non_wiped_avail_pages == avail / page_size);
+  ceph_assert(last_submitted_page_seqno <= page_seqno);
+  ceph_assert(last_committed_page_seqno <= last_submitted_page_seqno);
+  ceph_assert(last_wiping_page_seqno <= last_committed_page_seqno);
+  ceph_assert(last_wiped_page_seqno <= last_wiping_page_seqno);
+  ceph_assert(avail_pages + non_wiped_avail_pages == avail / page_size);
+
+  // we can use non-wiped pages as we're planning to overwrite them
+  // but we need to adjust relevant last sequences to avoid
+  // confusion
+  uint64_t non_wiped_advance = *_need_pages > avail_pages ? *_need_pages - avail_pages : 0;
+  ceph_assert(non_wiped_advance <= non_wiped_avail_pages);
+  last_wiping_page_seqno += non_wiped_advance;
+  last_wiped_page_seqno += non_wiped_advance;
+
   op_res.op_seqno = ++cur_op_seqno;
-  *_need_pages = need_pages;
   *op = &op_res;
   return true;
 }
@@ -198,6 +225,7 @@ bool BluestoreWAL::init_op(size_t need, uint64_t* _need_pages, Op** op)
 size_t BluestoreWAL::wipe_pages(IOContext* ioc)
 {
   size_t wiping = 0;
+
   if (last_wiping_page_seqno < last_committed_page_seqno) {
 
     dout(7) << __func__ << " " << last_wiping_page_seqno << "->"
@@ -225,6 +253,48 @@ size_t BluestoreWAL::wipe_pages(IOContext* ioc)
   return wiping;
 }
 
+void BluestoreWAL::wipe_pages()
+{
+  IOContext ioctx(cct, NULL);
+  auto wiping = wipe_pages(&ioctx);
+  if (wiping) {
+    ceph_assert(curpage_pos == 0);
+    ceph_assert(page_seqno != 0);
+    bluewal_head_t header;
+    header.uuid = uuid;
+    header.page_seq = page_seqno;
+    header.page_count = 1;
+    header.seq = ++cur_txc_seqno;
+    header.len = 0;
+    header.csum = 0;
+
+    bufferlist bl;
+    encode(header, bl);
+    curpage_pos = bl.length();
+
+    auto ap = bl.get_page_aligned_appender(
+      p2roundup(block_size, size_t(CEPH_PAGE_SIZE)) / CEPH_PAGE_SIZE);
+
+    IOContext ioctx0(cct, NULL);
+    _maybe_write_unlock(
+      &ioctx0,
+      0,
+      ap,
+      bl,
+      nullptr);
+
+    aio_submit(&ioctx0);
+    //write out dummy block txc first
+    ioctx0.aio_wait();
+    //then do the wiping
+    aio_submit(&ioctx);
+    ioctx.aio_wait();
+
+    last_wiped_page_seqno = last_wiping_page_seqno;
+    avail += page_size * wiping;
+  }
+}
+
 void BluestoreWAL::aio_write(uint64_t off,
   bufferlist& bl,
   IOContext* ioc,
@@ -233,12 +303,21 @@ void BluestoreWAL::aio_write(uint64_t off,
   bdev->aio_write(off, bl, ioc, false);
 }
 
-void BluestoreWAL::_notify_txc(uint64_t prev_page_seqno,
+int BluestoreWAL::read(uint64_t off,
+  uint64_t len,
+  bufferlist* bl,
+  IOContext* ioc,
+  bool buffered)
+{
+  return bdev->read(off, len, bl, ioc, buffered);
+}
+
+void BluestoreWAL::_notify_txc(uint64_t pseq,
                                BlueStore::TransContext* txc,
                                txc_completion_fn on_finish)
 {
   ceph_assert(txc);
-  txc->wal_seq = prev_page_seqno;
+  txc->wal_seq = pseq;
   on_finish(txc);
 }
 void BluestoreWAL::aio_finish(BlueStore::TransContext* txc,
@@ -250,15 +329,16 @@ void BluestoreWAL::aio_finish(BlueStore::TransContext* txc,
   ceph_assert(txc->ioc.num_running == 0);
   txc->ioc.release_running_aios();
   Op& op = *static_cast<Op*>(txc->wal_op_ctx);
-  dout(7) << __func__ << " " << op.op_seqno
-          << " min " << min_pending_io_seqno << dendl;
+  txc->wal_op_ctx = nullptr;
+  dout(7) << __func__ << " Op " << op.op_seqno
+          << " min Op  " << min_pending_io_seqno << dendl;
   std::unique_lock l(lock);
   op.running = false;
   if (op.op_seqno == min_pending_io_seqno) {
     _finish_op(op, on_finish, true);
 
     //awake pending submits if any
-    if (num_pending_free) {
+    if (num_queued) {
       l.unlock();
       flush_cond.notify_all();
     }
@@ -270,11 +350,11 @@ void BluestoreWAL::_finish_op(Op& op, txc_completion_fn on_finish, bool deep)
 {
   ceph_assert(!op.running);
   ceph_assert(op.op_seqno == min_pending_io_seqno);
-  dout(7) << __func__ << " processing " << op.op_seqno
-          << " prev seqno " << op.prev_page_seqno
+  dout(7) << __func__ << " processing Op " << op.op_seqno
+          << ", pseq " << op.page_seqno
           << dendl;
   for (size_t i = 0; i < op.num_txcs; i++) {
-    _notify_txc(op.prev_page_seqno, op.txc[i], on_finish);
+    _notify_txc(op.page_seqno, op.txc[i], on_finish);
   }
   if (op.wiping_pages) {
     dout(7) << __func__ << " wiped " << op.wiping_pages << " "
@@ -293,14 +373,14 @@ void BluestoreWAL::_finish_op(Op& op, txc_completion_fn on_finish, bool deep)
     ceph_assert(last_wiped_page_seqno <= last_wiping_page_seqno);
   }
   ++min_pending_io_seqno;
-  dout(7) << __func__ << " processed " << op.op_seqno
+  dout(7) << __func__ << " processed Op " << op.op_seqno
           << dendl;
   op.reset();
   if (deep) {
     while (min_pending_io_seqno <= cur_op_seqno) {
       auto& op2 = ops[min_pending_io_seqno % ops.size()];
-      dout(7) << __func__ << " may be processing " << op2.op_seqno
-	      << " prev seqno " << op2.prev_page_seqno
+      dout(7) << __func__ << " may be processing Op " << op2.op_seqno
+	      << ", page seqno " << op2.page_seqno
 	      << " running " << op2.running
 	      << " num_txcs " << op2.num_txcs
 	      << dendl;
@@ -313,43 +393,109 @@ void BluestoreWAL::_finish_op(Op& op, txc_completion_fn on_finish, bool deep)
   }
 }
 
-void BluestoreWAL::_prepare_submit_txc(
-  bluewal_head_t& header,
-  uint64_t txc_seqno,
-  BlueStore::TransContext* txc,
-  bufferlist::page_aligned_appender& appender,
-  bufferlist& bl)
+void BluestoreWAL::_prepare_txc_submit(bluewal_head_t& header,
+                                       BlueStore::TransContext* txc,
+                                       bufferlist::page_aligned_appender& ap,
+                                       bufferlist& bl)
 {
   auto& t = txc->t->get_as_bytes();
   size_t t_len = t.length();
-
-  auto csum = ceph_crc32c(txc_seqno,
+  auto csum = ceph_crc32c(++cur_txc_seqno,
     (const unsigned char*)t.c_str(),
     t_len);
 
-  header.seq = txc_seqno;
-  // always put the whole length into the first transaction header
+  header.seq = cur_txc_seqno;
   header.len = t_len;
-  // first transaction's header keeps csum for the whole payload
   header.csum = csum;
 
-  size_t to_write = head_size + t_len;
-
-  auto left = p2nphase(size_t(bl.length()), block_size);
-  size_t pad = 0;
-  if (left && left < to_write) {
-    pad = left;
-    to_write += pad;
-  } else if (left) {
-    logger->inc(l_bluestore_wal_matched_ops); //NB: this doesn't account the first
-  }
-
-  if (pad) {
-    appender.append_zero(pad);
-    logger->inc(l_bluestore_wal_pad_bytes, pad);
-  }
   encode(header, bl);
-  appender.append(t.c_str(), t_len);
+  ap.append(t.c_str(), t_len);
+  ceph_assert(bl.length() <= page_size);
+}
+
+uint64_t BluestoreWAL::_submit_huge_txc(bluewal_head_t& header,
+                                        IOContext* anchor_ioc,
+                                        BlueStore::TransContext* txc,
+                                        size_t pages)
+{
+  auto& t = txc->t->get_as_bytes();
+  size_t t_len = t.size();
+  const char* cptr = t.c_str();
+  size_t max_t_len = page_size - head_size;
+  auto csum = ceph_crc32c(++cur_txc_seqno, (const unsigned char*)cptr, t_len);
+
+  // first transaction's header keeps csum and len for the whole payload
+  header.csum = csum;
+  header.seq = cur_txc_seqno;
+
+  // page_seq is to be already incremented outside,
+  // let's decrement it for the sake of the following
+  // loop simplicity
+  ceph_assert(page_seqno);
+  --page_seqno; // adjust for the loop below to use current page
+  uint64_t _curpage_pos;
+  do {
+    bufferlist bl;
+    auto appender = bl.get_page_aligned_appender(
+      p2roundup(page_size, size_t(CEPH_PAGE_SIZE)) / CEPH_PAGE_SIZE);
+    bl.reserve(page_size);
+    ++page_seqno;
+    auto write_offs = page_offsets[get_page_idx(page_seqno)];
+
+    header.len = std::min(max_t_len, t_len);
+    header.page_seq = page_seqno;
+
+    encode(header, bl);
+    appender.append(cptr, header.len);
+    cptr += header.len;
+    ceph_assert(bl.length() <= page_size);
+    _maybe_write_unlock(anchor_ioc,
+                        write_offs,
+                        appender,
+                        bl,
+                        nullptr);
+    _curpage_pos = bl.length();
+    t_len -= header.len;
+    --pages;
+    header.csum = 0;
+    header.seq = 0;
+    header.page_count = 0; // folowup pages keep page_count = 0
+  } while(pages);
+  assert(_curpage_pos < page_size);
+  return _curpage_pos;
+}
+
+void BluestoreWAL::_maybe_write_unlock(IOContext* anchor_ioc,
+                                       uint64_t _page_pos,
+                                       bufferlist::page_aligned_appender& ap,
+                                       bufferlist& _bl,
+                                       wal_unique_lock_t* lck)
+{
+  size_t pad = 0;
+  if (_bl.length()) {
+    uint64_t write_offs = _page_pos + page_offsets[get_page_idx(page_seqno)];
+
+    pad = p2nphase(size_t(_bl.length()), block_size);
+    avail -= _bl.length() + pad;
+    curpage_pos += pad;
+    // unlock earlier if possible
+    if (lck) {
+      lck->unlock();
+    }
+    if (pad) {
+      ap.append_zero(pad);
+      logger->inc(l_bluestore_wal_pad_bytes, pad);
+    }
+    dout(7) << __func__
+            << " tseq next: " << cur_txc_seqno
+            << " write 0x" << std::hex
+            << write_offs << "~" << _bl.length()
+            << std::dec
+            << " cpos " << curpage_pos
+            << dendl;
+    logger->inc(l_bluestore_wal_output_avg, _bl.length());
+    aio_write(write_offs, _bl, anchor_ioc, false);
+  }
 }
 
 void BluestoreWAL::log(BlueStore::TransContext* txc)
@@ -366,22 +512,18 @@ void BluestoreWAL::log(BlueStore::TransContext* txc)
 
 BluestoreWAL::Op* BluestoreWAL::_log(BlueStore::TransContext* txc)
 {
-  bufferlist bl;
-  bluewal_head_t header;
-
   auto& t = txc->t->get_as_bytes();
   size_t t_len = t.length();
-  dout(7) << __func__ << " transact payload len:" << t_len
-          << " more finish ind: " << txc->more_aio_finish
+  dout(7) << __func__ << " txc plen:" << t_len
+          << " more: " << txc->more_aio_finish
           << dendl;
 
   logger->inc(l_bluestore_wal_input_avg, t_len);
 
-  size_t need_len = 0;
   chest_t my_chest;
   if (txc->more_aio_finish) {
     std::unique_lock l(gate_lock);
-    if (gate_chest.add(txc, head_size + t_len, block_size, false)) {
+    if (gate_chest.add(txc, t_len, head_size, block_size, page_size, false)) {
       dout(7) << __func__ << " added to chest, items:" << gate_chest.get_entry_count()
               << dendl;
       return nullptr;
@@ -392,12 +534,8 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueStore::TransContext* txc)
     my_chest.claim(gate_chest);
   }
   // last txc should be added in any case
-  bool b = my_chest.add(txc, head_size + t_len, block_size, true);
+  bool b = my_chest.add(txc, t_len, head_size, block_size, page_size, true);
   ceph_assert(b);
-
-  need_len = my_chest.get_payload_len(block_size);
-
-  header.uuid = uuid;
 
   if (my_chest.get_entry_count() > 1) {
     logger->inc(l_bluestore_wal_chest_avg, my_chest.get_entry_count());
@@ -443,21 +581,29 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueStore::TransContext* txc)
     }
   }
   --num_knocking;*/
+
   std::unique_lock l(lock);
 
-  uint64_t need_pages = 0;
+  size_t need_pages = 0;
   Op* op_ptr = nullptr;
   bool was_queued = false;
   auto t0 = mono_clock::now();
-  while (!init_op(need_len, &need_pages, &op_ptr)) {
-    ++num_pending_free;
+  while (!init_op(my_chest,
+                  &need_pages,
+                  &op_ptr)) {
+    ++num_queued;
     was_queued = true;
     dout(8) << __func__ << " - no op, waiting: "
-            << num_pending_free << dendl;
+            << num_queued << dendl;
     flush_cond.wait(l);
-    --num_pending_free;
+    --num_queued;
     dout(8) << __func__ << " wait done" << dendl;
   }
+  dout(10) << __func__
+           << " tseq: " << cur_txc_seqno + 1 // new txc seq
+           << " need pages: " << need_pages << " pseq: " << page_seqno
+           << " curpage_pos:" << curpage_pos
+           << dendl;
   if (was_queued) {
     logger->tinc(l_bluestore_wal_queued_lat,
       mono_clock::now() - t0);
@@ -465,215 +611,154 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueStore::TransContext* txc)
   auto& op = *op_ptr;
 
   size_t chest_pos = 0;
-  auto* first_txc = my_chest.get_next_if_any(&chest_pos);
+  size_t txc_size = 0;
+  auto* first_txc = my_chest.get_next_if_any(&chest_pos, &txc_size);
 
   size_t wiping = wipe_pages(&first_txc->ioc);
+  auto* cur_txc = first_txc;
 
-  op.run(
-    wiping,
-    page_seqno ? page_seqno - 1 : 0, //NB: we would get delayed submit notification
-                                     // for page seq 0 but that's fine
-    first_txc);
+  bluewal_head_t header;
+  header.uuid = uuid;
 
-  header.page_count = need_pages;
-  header.page_seq = page_seqno;
+  bufferlist bl;
+  auto appender = bl.get_page_aligned_appender(
+    p2roundup(block_size, size_t(CEPH_PAGE_SIZE)) / CEPH_PAGE_SIZE);
+  bl.reserve(block_size);
 
-  if (need_pages <= 1 ) {
-    if (need_pages == 1) {
-      // we need to use next page(s)
-      op.prev_page_seqno = page_seqno++;
-
-      header.page_seq = page_seqno;
-      // "utilize" page's leftovers
-      avail -= page_size - curpage_pos;
-      curpage_pos = 0;
-    }
-    dout(7) << __func__ << " need pages:" << need_pages
-            << " op seq:" << op.op_seqno
-            << " op prev_page_seqno:" << op.prev_page_seqno
-            << " wiping " << op.wiping_pages
-            << dendl;
-
-    auto* cur_txc = first_txc;
-    uint64_t offs = curpage_pos + page_offsets[get_page_idx(page_seqno)];
-
-    auto appender = bl.get_page_aligned_appender(
-      p2roundup(need_len, size_t(CEPH_PAGE_SIZE)) / CEPH_PAGE_SIZE);
-    bl.reserve(need_len);
-    do {
-       _prepare_submit_txc(header,
-                           ++cur_txc_seqno,
-                           cur_txc,
-                           appender,
-                           bl);
-      cur_txc = my_chest.get_next_if_any(&chest_pos);
-      if(!cur_txc) {
-        break;
-      }
-      op.run_more(cur_txc);
-    } while(true);
+  //NB: we need to perform write within the last txc context,
+  // as aio_submit is issued on it by the caller
+  auto* anchor_ioc = &txc->ioc;
+  // offset to perform writing to
+  auto write_pos = curpage_pos;
+  auto op_page_seqno = page_seqno; // page seq bound to Op
+  do {
     auto pad = p2nphase(size_t(bl.length()), block_size);
-    avail -= bl.length() + pad;
-    curpage_pos += bl.length() + pad;
-    l.unlock();
+    if (txc_size <= pad ||
+        txc_size + pad + curpage_pos <= page_size) {
+      header.page_seq = 0;
+      header.page_count = 0;
+      ceph_assert(page_seqno);
 
-    if (pad) {
-      appender.append_zero(pad);
-      logger->inc(l_bluestore_wal_pad_bytes, pad);
-    }
-    dout(7) << __func__
-            << " txc  submitted " << cur_txc_seqno
-            << " write 0x" << std::hex << offs
-            << "~" << bl.length() << std::dec
-            << dendl;
-    logger->inc(l_bluestore_wal_output_avg, bl.length());
-    /*logger->inc(l_bluestore_wal_output_ops);
-    logger->inc(l_bluestore_wal_output_bytes, bl.length());*/
-    //NB: we need to perform write within the last txc context,
-    // as aio_submit is issued on it by the caller
-    aio_write(offs, bl, &txc->ioc, false);
-    return &op;
-  }
-  ceph_assert(false);
-#if 0
-  // we need to use next page(s)
-  op.prev_page_seqno = page_seqno++;
-
-  header.page_seq = page_seqno;
-  {
-    size_t t_written = 0;
-
-    // "utilize" page's leftovers
-    avail -= page_size - curpage_pos;
-    curpage_pos = 0;
-
-
-    if (likely(need_pages == 1)) {
-      size_t to_write = p2roundup(head_size + t_len, block_size);
-
-      auto appender = bl.get_page_aligned_appender(to_write / block_size);
-      bl.reserve(to_write);
-
-      encode(header, bl);
-      appender.append(t.c_str(), t_len);
-      auto pad = p2nphase(size_t(bl.length()), block_size);
-      if (pad) {
-        appender.append_zero(pad);
-        logger->inc(l_bluestore_wal_pad_bytes, pad);
+      if (txc_size > pad) {
+        dout(10) << __func__ << " pad + txc: pad " << pad
+                 << " tsize " << txc_size << " bl " << bl.length()
+                 << " cpos " << curpage_pos
+                 << dendl;
+        if (pad) {
+          appender.append_zero(pad);
+          logger->inc(l_bluestore_wal_pad_bytes, pad);
+          curpage_pos += pad;
+        }
       }
-      avail -= bl.length();
-      auto offs = curpage_pos + page_offsets[get_page_idx(page_seqno)];
-      curpage_pos += bl.length();
-      l.unlock();
-      dout(7) << __func__
-              << " op submitted " << op.op_seqno
-	      << " prev_page_seqno " << op.prev_page_seqno
-	      << " wiping " << op.wiping_pages
-              << " write 0x" << std::hex << offs
-	      << "~" << bl.length() << std::dec
-	      << dendl;
-
-      logger->inc(l_bluestore_wal_output_bytes, bl.length());
-      aio_write(offs, bl, &txc->ioc, false);
-      return &op;
-    }
-
-    size_t page = 0;
-    do {
+      _prepare_txc_submit(header,
+                          cur_txc,
+                          appender,
+                          bl);
+      curpage_pos += txc_size;
+      dout(10) << __func__ << " txc: "
+               << " tsize " << txc_size << " bl " << bl.length()
+               << " cpos " << curpage_pos
+               << dendl;
+    } else {
+      ceph_assert(need_pages);
+      _maybe_write_unlock(anchor_ioc, write_pos, appender, bl, nullptr);
       bl.clear();
 
-      size_t payload_len =
-        std::min(t_len - t_written, page_size - head_size);
-      size_t to_write =
-        p2roundup(head_size + payload_len, block_size);
-      auto appender = bl.get_page_aligned_appender(to_write / block_size);
-      bl.reserve(to_write);
-
-      ceph_assert( 0 == (curpage_pos % page_size));
-      curpage_pos = 0;
-      if (page != 0) {
-        header.page_seq = ++page_seqno;
-        // page_count for "follower" pages contain amount of left pages
-        // in the bunch (including the current page)
-        header.page_count = need_pages - page;
-
-	header.len = payload_len;    // note just a portion which fits into the current page
-	header.csum = 0;             // don't care about csum of the portion
+      // mark page's leftovers as used if new page is required
+      if (curpage_pos) {
+        avail -= page_size - curpage_pos;
+        curpage_pos = 0;
+        ++page_seqno;
+        op_page_seqno = page_seqno;
       }
-      encode(header, bl);
-      appender.append(t.c_str() + t_written, payload_len);
-      t_written += payload_len;
-      auto pad = p2nphase(size_t(bl.length()), block_size);
-      if (pad) {
-        appender.append_zero(pad);
-        logger->inc(l_bluestore_wal_pad_bytes, pad);
+      write_pos = 0;
+      auto txc_size_aligned = p2roundup(txc_size, block_size);
+      auto tail = txc_size_aligned % page_size;
+      auto pages = txc_size_aligned / page_size + (tail ? 1 : 0);
+      header.page_seq = page_seqno;
+      header.page_count = pages;
+
+      if (pages == 1) {
+        ceph_assert(txc_size <= page_size);
+        _prepare_txc_submit(header,
+                            cur_txc,
+                            appender,
+                            bl);
+        curpage_pos += txc_size;
+      } else {
+        curpage_pos = _submit_huge_txc(header,
+                                       anchor_ioc,
+                                       cur_txc,
+                                       pages);
+        // this implements unconditional page change
+        // for huge txc and enforces txc's "self-submission" indication,
+        // i.e. the txc submission to DB marks all the involved pages
+        // submitted
+        if (curpage_pos < page_size) {
+          avail -= page_size - curpage_pos;
+        }
+        curpage_pos = page_size;
+        /*curpage_pos = write_pos = 0;
+        ++page_seqno;
+        op_page_seqno = page_seqno; */
+        op_page_seqno = page_seqno + 1;
       }
-      auto offs = curpage_pos + page_offsets[get_page_idx(page_seqno)];
-      dout(7) << __func__ << " write 0x" << std::hex << offs
-	      << "~" << bl.length() << std::dec << dendl;
-      avail -= bl.length();
-      //it's expected that the previous page has been completely consumed
-      curpage_pos += bl.length();
-      ++page;
-      logger->inc(l_bluestore_wal_output_bytes, bl.length());
-      aio_write(offs, bl, &txc->ioc, false);
-    } while (page < need_pages);
-  }
-
-  //FIXME: do we really need that any more????
-  // when huge op is issues (2+ pages) - mark ending page
-  // as completely consumed
-  // and immediately request completion indication for 
-  // new pages - this is a sort of protection from
-  // huge op deadlocking the WAL while being uncommitted
-  // 
-  if (need_pages > 2) {
-    avail -= page_size - curpage_pos;
-    curpage_pos = page_size;
-    // this will cause the next log() call to request the second submit
-    // indication for the same page seqno - submitted() to handle(i.e. ignore) that
-    op.prev_page_seqno = page_seqno;
-  }
-
-  dout(7) << __func__ << " op submitted " << op.op_seqno
-	  << " wiping " << op.wiping_pages
-	  << " prev_page_seqno " << op.prev_page_seqno
-	  << dendl;
-#endif
+    }
+    if (op.empty()) {
+      op.run(
+        wiping,
+        op_page_seqno,
+        first_txc);
+    } else {
+      // this is a no-op unless op_page_seqno is modified
+      // to provided "self-submission" indication for huge txc
+      //
+      op.maybe_update_page_seqno(op_page_seqno);
+    }
+    cur_txc = my_chest.get_next_if_any(&chest_pos, &txc_size);
+    if (cur_txc) {
+      op.run_more(cur_txc);
+    }
+  } while(cur_txc);
+  _maybe_write_unlock(anchor_ioc, write_pos, appender, bl, &l);
   return &op;
 }
 
-void BluestoreWAL::submitted(uint64_t submitted_page_seqno,
-			     KeyValueDB& db)
+void BluestoreWAL::submitted(BlueStore::TransContext* txc,
+			     std::function<void()> flush_db_fn)
 {
-  // we might get multiple confirmations for the same page
+  auto cur_page_seqno = txc->wal_seq;
+  dout(7) << __func__ << " " << cur_page_seqno << dendl;
+  // current page seqno indicates all the preceeding pages have been submitted,
+  // current one is still being submitted (i.e. busy)
+  // we might get multiple confirmations for the same current page,
   // just ignore repeated/outdated ones
-  if (submitted_page_seqno > last_submitted_page_seqno) {
+  if (cur_page_seqno > last_submitted_page_seqno + 1) {
 
-    dout(7) << __func__ << " seq: " << submitted_page_seqno
+    dout(7) << __func__ << " pseq: " << cur_page_seqno
             << " last_submitted: " << last_submitted_page_seqno
             << " last_committed: " << last_committed_page_seqno
             << " avail: " << avail
-            << " num_pending_free: " << num_pending_free
+            << " num_queued: " << num_queued
             << dendl;
     auto t0 = mono_clock::now();
 
-    ceph_assert(submitted_page_seqno > last_submitted_page_seqno);
-    last_submitted_page_seqno = submitted_page_seqno;
+    ceph_assert(cur_page_seqno);
+    last_submitted_page_seqno = cur_page_seqno - 1;
 
     ceph_assert(last_submitted_page_seqno >= last_committed_page_seqno);
     auto to_flush = page_size *
      (last_submitted_page_seqno - last_committed_page_seqno);
 
-    //FIXME: to configure, 1/4 of total for now
-    if (to_flush >= (total >> 2)) {
-      db.flush_all();
+    if (to_flush >= flush_size) {
+      dout(15) << __func__ << " flush db"  << dendl;
+      flush_db_fn();
       std::unique_lock l(lock);
       last_committed_page_seqno = last_submitted_page_seqno;
       avail += to_flush;
 
       //awake pending submits if any
-      if (num_pending_free) {
+      if (num_queued) {
         l.unlock();
         flush_cond.notify_all();
       }
@@ -683,13 +768,13 @@ void BluestoreWAL::submitted(uint64_t submitted_page_seqno,
 }
 
 
-void BluestoreWAL::shutdown(KeyValueDB& db)
+void BluestoreWAL::shutdown(std::function<void()> flush_db_fn)
 {
+  dout(10) << __func__ << " WAL" << dendl;
   std::unique_lock l(lock);
-  ceph_assert(num_pending_free == 0);
-  db.flush_all();
+  ceph_assert(num_queued == 0);
+  flush_db_fn();
   last_committed_page_seqno = last_submitted_page_seqno;
-
   IOContext ioctx(cct, nullptr);
   auto wiping = wipe_pages(&ioctx);
   if (wiping) {
@@ -705,25 +790,35 @@ void BluestoreWAL::shutdown(KeyValueDB& db)
   }
 }
 
-int BluestoreWAL::_read_page_header(uint64_t offset,
+int BluestoreWAL::_read_page_header(uint64_t o,
                                     uint64_t expected_page_no,
-                                    uint64_t page_count,
+                                    uint64_t pcount,
                                     bluewal_head_t* header)
 {
   bufferlist bl;
   IOContext ioc(cct, NULL);
-  int r = bdev->read(offset, DEF_BLOCK_SIZE, &bl, &ioc, false);
-  ceph_assert(r == DEF_BLOCK_SIZE);
+  dout(20) << __func__ << " reading page head at 0x"
+           << std::hex << o << "~" << block_size << std::dec
+           << dendl;
+  int r = read(o, block_size, &bl, &ioc, false);
+  if (r < 0) {
+    derr << __func__ << " failed reading page head at 0x"
+         << std::hex << o << "~" << block_size << std::dec
+         << " : " << cpp_strerror(r)
+         << dendl;
+  }
+  ceph_assert(r == 0);
   r = -1;    
   try {
     auto pp = bl.front().begin_deep();
     header->decode(pp);
-    dout(15) << __func__ << " got page header " << *header
-             << " at " << offset
+    dout(15) << __func__ << " got page " << *header
+             << " at 0x"
+             << std::hex << o << std::dec
              << dendl;
       
     if (!header->page_count ||
-        (header->page_seq % page_count) != expected_page_no) {
+        (expected_page_no && (header->page_seq % pcount) != expected_page_no)) {
       dout(15) << __func__ << " page information is inconsistent, ignoring"
                << dendl;
     } else if (header->uuid != uuid) {
@@ -733,16 +828,19 @@ int BluestoreWAL::_read_page_header(uint64_t offset,
       r = 0;
     }
   } catch (ceph::buffer::error& e) {
-    dout(15) << __func__ << " unable to decode page header at offset " << offset
+    dout(25) << __func__ << " unable to decode page header at offset " << o
              << ": " << e.what()
 	     << dendl;
   }
   return r;
 }
 
-int BluestoreWAL::replay(KeyValueDB& db)
+int BluestoreWAL::replay(bool wipe_on_complete,
+  std::function<int(const std::string&)> submit_db_fn,
+  std::function<void()> flush_db_fn)
 {
-  size_t page_no = 0;
+  dout(10) << __func__ << " WAL" << dendl;
+  size_t page_no = 0; // any no is expected on start
   auto page_count = page_offsets.size();
   std::deque<bluewal_head_t> valid_page_headers;
   for (auto poffs : page_offsets) {
@@ -751,11 +849,14 @@ int BluestoreWAL::replay(KeyValueDB& db)
     if (r == 0) {
       valid_page_headers.emplace_back(header);
       ceph_assert(header.page_count == 1); //FIXME add support for multi-page ops
+      page_no = header.page_seq + 1;
     }
-    ++page_no;
   }
   if (valid_page_headers.empty()) {
-    dout(15) << __func__ << " wal is empty, replay completed." << dendl;
+    dout(15) << __func__ << " wal is empty, completed." << dendl;
+    //FIXME: setup all the sequence numbers properly!
+    //FIXME: actually we need to proceed with increasing txc_seqno to avoid potential issues
+    //with accessing legacy blocks
     return 0;
   } 
   std::sort(valid_page_headers.begin(), valid_page_headers.end(),
@@ -767,6 +868,7 @@ int BluestoreWAL::replay(KeyValueDB& db)
   auto it = it0;
   ++it;
   while (it <  valid_page_headers.end()) {
+    dout(15) << __func__ << " pseq " << it->page_seq << dendl;
     if (it->page_seq != it0->page_seq + 1) {
       derr << __func__ << " page sequencing is broken, found a gap: "
            << it0->page_seq << " <-> " << it->page_seq
@@ -776,62 +878,154 @@ int BluestoreWAL::replay(KeyValueDB& db)
     it0 = it;
     ++it;
   }
-
+  size_t db_submitted = 0;
   uint64_t next_txc_seqno = valid_page_headers.front().seq;
   for (auto& h0 : valid_page_headers) {
-    uint64_t o = page_offsets[h0.page_seq % page_count];
-    uint64_t last_offset = o + DEF_PAGE_SIZE;
+    uint64_t o = page_offsets[get_page_idx(h0.page_seq)];
+    auto o0 = o;
+    uint64_t last_offset = o + page_size;
     bluewal_head_t h;
+    bool read_next;
+    bufferlist bl;
+    size_t pos = 0;
     do {
-      bufferlist bl;
-      bufferlist bl2;
       IOContext ioc(cct, NULL);
-      int r = bdev->read(o, DEF_BLOCK_SIZE, &bl, &ioc, false);
-      ceph_assert(r == DEF_BLOCK_SIZE);
-      o += r;
+      auto o00 = o0 + pos;
+      int r;
+      if (bl.length() - pos < head_size) {
+        dout(20) << __func__ << " reading block head at 0x"
+                 << std::hex << o << "~" << block_size << std::dec
+                 << dendl;
+        r = read(o, block_size, &bl, &ioc, false);
+        if (r < 0) {
+          derr << __func__ << " failed reading block head at 0x"
+               << std::hex << o << "~" << block_size << std::dec
+               << " : " << cpp_strerror(r)
+               << dendl;
+        }
+        ceph_assert(r == 0);
+        o += block_size;
+      }
+      dout(20) << __func__ << " inspecting block head at 0x"
+               << std::hex << o00 << "~" << bl.length() - pos << std::dec
+               << dendl;
+      read_next = false;
       try {
-        auto pp = bl.front().begin_deep();
-        h.decode(pp);
-        dout(15) << __func__ << " got txc header " << h
-             << " at " << o
-             << dendl;
+        auto p = bl.cbegin(pos);
+        decode(h, p);
+        dout(20) << __func__ << " got txc " << h << dendl;
         if (h.seq != next_txc_seqno) {
-          dout(15) << __func__ << " misordered txc header at " << o << dendl;
+          dout(15) << __func__ << " misordered txc at 0x"
+                   << std::hex << o00 << std::dec
+                   << ", stopping"
+                   << dendl;
         } else if (h.uuid != uuid) {
-          dout(15) << __func__ << " unexpected txc header uuid, ignoring"
+          dout(15) << __func__ << " unexpected txc header uuid"
+                   << ", stopping"
                    << dendl;
         } else {
-          int64_t delta = h.len - (bl.length() - pp.get_offset());
-          bl2.substr_of(bl, pp.get_offset(), bl.length() - pp.get_offset());
-          if (delta > 0) {
-            delta = p2roundup((uint64_t)delta, DEF_BLOCK_SIZE);
-            bl.clear();
-            r = bdev->read(o, delta, &bl, &ioc, false);
-            ceph_assert(r == DEF_BLOCK_SIZE);
-            o += r;
-            bl2.claim_append(bl);
-          }
-          ceph_assert(bl2.length() >= h.len);
+          ++next_txc_seqno;
 
-          auto t = db.get_transaction();
-          t->set_from_bytes(bl2.c_str());
-          r = db.submit_transaction_sync(t);
-          if (r != 0) {
-           derr << __func__ << " txc submit failed, txc header " << h
-                << " at offset " << o
-                << dendl;
-            return r;
+          int64_t delta = (int64_t)h.len - (int64_t)p.get_remaining();
+          if (delta > 0) {
+            auto to_read = p2roundup((uint64_t)delta, block_size);
+            dout(20) << __func__ << " reading block tail at 0x"
+                     << std::hex << o << "~" << to_read << std::dec
+                     << dendl;
+            r = read(o, to_read, &bl, &ioc, false);
+            if (r < 0) {
+              derr << __func__ << " failed reading block tail at 0x"
+                   << std::hex << o << "~" << to_read << std::dec
+                   << " : " << cpp_strerror(r)
+                   << dendl;
+            }
+            ceph_assert(r == 0);
+            o += to_read;
           }
+          ceph_assert(p.get_remaining() >= h.len);
+          if (h.len > 0) {
+            std::string content;
+            p.copy(h.len, content);
+            auto csum = ceph_crc32c(h.seq,
+                                    (const unsigned char*)content.c_str(),
+                                    content.size());
+            if (csum != h.csum) {
+              derr << __func__ << " txc checksum failed, txc " << h
+                   << " at offset 0x"
+                   << std::hex << o00 << std::dec
+                   << " actual csum " << csum
+                   << dendl;
+              return r;
+            }
+            ++db_submitted;
+            r = submit_db_fn(content);
+            if (r != 0) {
+              derr << __func__ << " txc submit failed, txc " << h
+                   << " at offset 0x"
+                   << std::hex << o00 << std::dec
+                   << dendl;
+              return r;
+            }
+          } else {
+            dout(15) << __func__ << " dummy txc found."
+                     << dendl;
+          }
+          read_next = o < last_offset;
+          pos = p.get_off();
         }
       } catch (ceph::buffer::error& e) {
-        dout(15) << __func__ << " unable to decode txc header at offset " << o
-                 << ": " << e.what()
+        std::string next_step;
+        read_next = o < last_offset;
+        if (pos % block_size == 0 || !read_next) {
+          next_step = ", trying next page";
+          read_next = false;
+        } else {
+          ceph_assert(bl.length() - pos < block_size);
+          pos = bl.length();
+          next_step = ", trying next block";
+        }
+        dout(15) << __func__ << " undecodable txc header at offset 0x"
+                 << std::hex << o00 << std::dec
+                 << next_step
                  << dendl;
       }
-      ++next_txc_seqno;
-    } while(o < last_offset);
+    } while(read_next);
   }
+  if (db_submitted) {
+    flush_db_fn();
+  }
+  last_submitted_page_seqno = valid_page_headers.back().page_seq;
+  last_committed_page_seqno = last_submitted_page_seqno;
+  page_seqno = last_committed_page_seqno + 1;
+  min_pending_io_seqno = 1;
+
+  curpage_pos = 0;
+  cur_txc_seqno = next_txc_seqno;
+  last_wiping_page_seqno = valid_page_headers.front().page_seq - 1;
+  last_wiped_page_seqno = last_wiping_page_seqno;
+  avail = total; // - page_size * (last_committed_page_seqno - last_wiped_page_seqno);
+  cur_op_seqno = 0;
+  if (wipe_on_complete) {
+    dout(5) << __func__ << " completed, wiping pending:"
+            << " avail:" << avail
+            << " avail/page_size:" << avail / page_size
+            << " page seqno:" << page_seqno
+            << " page pos: " << curpage_pos
+            << " last submitted:" << last_submitted_page_seqno
+            << " last committed:" << last_committed_page_seqno
+            << " wiping: " << last_wiping_page_seqno
+            << " wiped: " << last_wiped_page_seqno
+            << dendl;
+    wipe_pages();
+  }
+  dout(5) << __func__ << " completed:"
+           << " avail:" << avail
+           << " avail/page_size:" << avail / page_size
+           << " last submitted:" << last_submitted_page_seqno
+           << " last committed:" << last_committed_page_seqno
+           << " wiping: " << last_wiping_page_seqno
+           << " wiped: " << last_wiped_page_seqno
+           << dendl; 
   return 0;
 }
-
 // =======================================================

@@ -5638,6 +5638,7 @@ int BlueStore::_maybe_open_wal()
 {
   ceph_assert(!wal);
   bluefs_extent_t wal_ext;
+  int r = -ENXIO;
   BlockDevice* bdev = bluefs->get_external_wal(&wal_ext);
   if (bdev) {
     ceph_assert(wal_ext.length &&
@@ -5650,14 +5651,37 @@ int BlueStore::_maybe_open_wal()
       fsid);
     dout(1) << __func__ << wal_ext << dendl;
     wal->init_add_pages(wal_ext.offset, wal_ext.length);
+    auto t = db->get_transaction();
+    size_t replay_cnt = 0;
+    r = wal->replay(
+      true,
+      [&](const std::string& bytes) {
+        auto t = db->get_transaction();
+        t->set_from_bytes(bytes);
+        ++replay_cnt;
+        return db->submit_transaction_sync(t);
+      },
+      [&]() {
+        db->flush_all();
+      });
+    dout(0) << __func__ << " wal replay returned:" << cpp_strerror(r)
+            << ", replayed txc:" << replay_cnt
+            << dendl;
+    if (r < 0) {
+      delete wal;
+      wal = nullptr;
+    }
   }
-  return 0;
+  return r;
 }
 
 void BlueStore::_close_wal()
 {
   if (wal) {
-    wal->shutdown(*db);
+    wal->shutdown(
+      [&]() {
+        db->flush_all();
+      });
     delete wal;
   }
 }
@@ -6508,7 +6532,12 @@ int BlueStore::_open_db_and_around(bool read_only, bool to_repair)
   if (r < 0) {
     goto out_alloc;
   }
-
+  if (!read_only) {
+    r = _maybe_open_wal();
+    if (r < 0) {
+      goto out_alloc;
+    }
+  }
   if (!read_only && !zone_adjustments.empty()) {
     // for SMR devices that have freelist mismatch with device write pointers
     _post_init_alloc(zone_adjustments);
@@ -6524,7 +6553,7 @@ int BlueStore::_open_db_and_around(bool read_only, bool to_repair)
     r = invalidate_allocation_file_on_bluefs();
     if (r != 0) {
       derr << __func__ << "::NCB::invalidate_allocation_file_on_bluefs() failed!" << dendl;
-      goto out_alloc;
+      goto out_wal;
     }
   }
 
@@ -6542,6 +6571,8 @@ int BlueStore::_open_db_and_around(bool read_only, bool to_repair)
 
   return 0;
 
+out_wal:
+  _close_wal();
 out_alloc:
   _close_alloc();
 out_fm:
@@ -6785,12 +6816,32 @@ int BlueStore::_open_db(bool create, bool to_repair_db, bool read_only)
     return 0;
   if (create) {
     r = db->create_and_open(err, sharding_def);
+  } else if (read_only) {
+    // we pass in cf list here, but it is only used if the db already has
+    // column families created.
+    r = db->open_read_only(err, sharding_def);
   } else {
     // we pass in cf list here, but it is only used if the db already has
     // column families created.
-    r = read_only ?
-      db->open_read_only(err, sharding_def) :
-      db->open(err, sharding_def);
+    r = db->open(err, sharding_def);
+    if (r == 0 && wal) {
+      auto t = db->get_transaction();
+      size_t replay_cnt = 0;
+      int r = wal->replay(
+        true,
+        [&](const std::string& bytes) {
+          auto t = db->get_transaction();
+          t->set_from_bytes(bytes);
+          ++replay_cnt;
+          return db->submit_transaction_sync(t);
+        },
+        [&]() {
+          db->flush_all();
+        });
+      dout(0) << __func__ << " wal replay returned:" << cpp_strerror(r)
+              << " replayed txc:" << replay_cnt
+              <<dendl;
+    }
   }
   if (r) {
     derr << __func__ << " erroring opening db: " << err.str() << dendl;
@@ -7779,13 +7830,6 @@ int BlueStore::_mount()
   auto close_db = make_scope_guard([&] {
     if (!mounted) {
       _close_db_and_around();
-    }
-  });
-
-  r = _maybe_open_wal();
-  auto close_wal = make_scope_guard([&] {
-    if (!mounted) {
-      _close_wal();
     }
   });
 
@@ -13644,7 +13688,10 @@ void BlueStore::_kv_finalize_thread()
       if (wal && !kv_committed.empty()) {
         // use the last txc to confirm all the previous wal pages
 	TransContext *txc = kv_committed.back();
-	wal->submitted(txc->wal_seq, *db);
+	wal->submitted(txc,
+	  [&]() {
+	    db->flush_all();
+	  });
       }
       while (!kv_committed.empty()) {
 	TransContext *txc = kv_committed.front();
