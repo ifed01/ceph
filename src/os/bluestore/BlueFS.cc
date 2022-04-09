@@ -552,7 +552,7 @@ void BlueFS::foreach_block_extents(
   dout(10) << __func__ << " bdev " << id << dendl;
   ceph_assert(id < alloc.size());
   if (super.ext_wal_region.length && super.ext_wal_region.bdev == id) {
-    extents->insert(super.ext_wal_region.offset, super.ext_wal_region.length);
+    fn(super.ext_wal_region.offset, super.ext_wal_region.length);
   }
   for (auto& p : nodes.file_map) {
     for (auto& q : p.second->fnode.extents) {
@@ -596,6 +596,7 @@ int BlueFS::mkfs(uuid_d osd_uuid,
     ceph_assert(bdev[id]);
     ceph_assert(external_wal_size % alloc_size[id] == 0);
     uint64_t offs0 = p2roundup(block_reserved[id], alloc_size[id]);
+
     ceph_assert(alloc[id]->get_free() > offs0 + external_wal_size);
     super.ext_wal_region.bdev = id;
     super.ext_wal_region.offset = offs0;
