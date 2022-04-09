@@ -33,6 +33,7 @@
 class BlockDevice;
 
 struct bluewal_head_t {
+  uuid_d uuid;
   ///
   /// Each header embeds optional page part which is valid
   /// if page_count is greater than 0
@@ -43,7 +44,6 @@ struct bluewal_head_t {
 
   uint64_t seq = 0;
   uint32_t len = 0;
-  uuid_d uuid;
   uint32_t csum = 0;
 
   DENC(bluewal_head_t, v, p) {
@@ -65,19 +65,22 @@ protected:
   struct Op {
     uint64_t op_seqno = 0;
     uint64_t txc_seqno = 0;
+    uint64_t page_seqno = 0;
     uint64_t wiping_pages = 0;
-    uint64_t prev_page_seqno = 0;
     bool running = false;
     size_t num_txcs = 0;
     BlueStore::TransContext* txc[MAX_TXCS_PER_OP] = {nullptr};
 
-    void run(uint64_t wp, uint64_t prev, BlueStore::TransContext* _txc) {
+    void run(uint64_t wp, uint64_t pseq, BlueStore::TransContext* _txc) {
       ceph_assert(!running);
       ceph_assert(num_txcs == 0);
       wiping_pages = wp;
-      prev_page_seqno = prev;
+      page_seqno = pseq;
       txc[num_txcs++] = _txc;
       running = true;
+    }
+    inline void maybe_update_page_seqno(uint64_t pseq) {
+      page_seqno = pseq;
     }
     void run_more(BlueStore::TransContext* _txc) {
       ceph_assert(running);
@@ -89,13 +92,17 @@ protected:
       op_seqno = 0;
       txc_seqno = 0;
       wiping_pages = 0;
-      prev_page_seqno = 0;
+      page_seqno = 0;
       running = false;
       num_txcs = 0;
+    }
+    bool empty() const {
+      return num_txcs == 0;
     }
   };
 
   typedef std::function<void (BlueStore::TransContext*)> txc_completion_fn;
+  typedef std::unique_lock<ceph::mutex> wal_unique_lock_t;
 
 protected:
 
@@ -106,31 +113,56 @@ protected:
   uint64_t total = 0;
   size_t page_size = 0;
   size_t block_size = 0;
+  size_t flush_size = 0;
 
   size_t head_size = 0;
 
   std::vector<uint64_t> page_offsets;
 
-  std::atomic<uint64_t> last_submitted_page_seqno = 0;// last page seq got DB submit confirmation
-  std::atomic<uint64_t> num_pending_free = 0;         // amount of ops waiting for free pages
+  // amount of ops waiting for avail pages to proceed
+  std::atomic<uint64_t> num_queued = 0;
   std::atomic<uint64_t> num_knocking = 0;
 
   struct chest_entry_t {
     size_t payload_len = 0;
     size_t entry_count =0;
     std::array<BlueStore::TransContext*, MAX_TXCS_PER_OP> txcs;
-    bool maybe_add(BlueStore::TransContext* txc, size_t len, size_t max_len) {
+    std::array<size_t, MAX_TXCS_PER_OP> txc_sizes;
+    bool maybe_add(BlueStore::TransContext* txc,
+                   size_t len,
+                   size_t h_len,
+                   size_t b_len,
+                   size_t p_len) {
       // a single txc longer than max_size is allowed in a free slot
-      bool ret = entry_count < txcs.size() &&
-        (payload_len == 0 || (payload_len + len <= max_len));
+      bool ret = entry_count < txcs.size();
       if (ret) {
-        txcs[entry_count++] = txc;
-        payload_len += len;
+        if(payload_len + h_len + len <= b_len) {
+          payload_len += h_len + len;
+          txc_sizes[entry_count] = h_len + len;
+          txcs[entry_count++] = txc;
+        } else if (payload_len == 0) {
+          if (h_len + len <= p_len) {
+            payload_len = h_len + len;
+            txc_sizes[entry_count] = payload_len;
+            txcs[entry_count++] = txc;
+          } else {
+            auto tail = len % (p_len - h_len);
+            auto p_count = len / (p_len - h_len);
+            payload_len = p_count * p_len + (tail ? h_len + tail : 0);
+            txc_sizes[entry_count] = payload_len;
+            txcs[entry_count++] = txc;
+          }
+        } else {
+          ret = false;
+        }
       }
       return ret;
     }
     BlueStore::TransContext* maybe_get(size_t pos) {
       return pos < entry_count ? txcs[pos]: nullptr;
+    }
+    size_t maybe_get_size(size_t pos) {
+      return pos < entry_count ? txc_sizes[pos]: 0;
     }
     void reset() {
       payload_len = 0;
@@ -155,11 +187,24 @@ protected:
       }
       return res;
     }
+    void foreach_row(std::function<void (size_t)> fn) const {
+      size_t row = 0;
+      size_t res;
+      while (row < row_count &&
+              (res = entries[row].payload_len)) {
+        fn(res);
+        row++;
+      }
+    }
     size_t get_entry_count() const {
       return total_entry_count;
     }
-    bool add(BlueStore::TransContext* txc, size_t len,
-      size_t max_len, bool permit_last) {
+    bool add(BlueStore::TransContext* txc,
+      size_t len,
+      size_t h_len,
+      size_t b_len,
+      size_t p_len,
+      bool permit_last) {
       bool ret = false;
       size_t max_entries = entries.size();
       if (!permit_last) {
@@ -167,14 +212,14 @@ protected:
       }
       if (total_entry_count < max_entries) {
         for(size_t i = 0; i < row_count; i++) {
-          if (entries[i].maybe_add(txc, len, max_len)) {
+          if (entries[i].maybe_add(txc, len, h_len, b_len, p_len)) {
             total_entry_count++;
             return true;
           }
         }
         ceph_assert(row_count < entries.size());
         entries[row_count].reset();
-        ret = entries[row_count].maybe_add(txc, len, max_len);
+        ret = entries[row_count].maybe_add(txc, len, h_len, b_len, p_len);
         if (ret) {
           total_entry_count++;
           row_count++;
@@ -182,7 +227,7 @@ protected:
       }
       return ret;
     }
-    BlueStore::TransContext* get_next_if_any(size_t* ret_pos) {
+    BlueStore::TransContext* get_next_if_any(size_t* ret_pos, size_t* ret_size) {
       BlueStore::TransContext* ret = nullptr;
 
       size_t row = *ret_pos / entries.size();
@@ -190,6 +235,8 @@ protected:
       while (row < row_count && !ret) {
         ret = entries[row].maybe_get(pos);
         if (ret) {
+          *ret_size = entries[row].maybe_get_size(pos);
+          ceph_assert(*ret_size);
           ++pos;
         } else {
           ++row;
@@ -214,14 +261,15 @@ protected:
   ceph::mutex lock = ceph::make_mutex("BlueStoreWAL::lock");
   ceph::condition_variable flush_cond;   ///< wait here for transactions in WAL to commit
   uint64_t avail = 0;
-  uint64_t page_seqno = 0;
-  uint64_t curpage_pos = 0;
-  uint64_t cur_op_seqno = 0;
+  uint64_t page_seqno = 0;                            // current page
+  uint64_t curpage_pos = 0;                           // pos within current page
   uint64_t cur_txc_seqno = 0;
+  std::atomic<uint64_t> last_submitted_page_seqno = 0;// last page seq got DB submit confirmation
   uint64_t last_committed_page_seqno = 0;             // last page seq committed to DB
   uint64_t last_wiping_page_seqno = 0; 		      // last page seq wiping has been triggered for
   uint64_t last_wiped_page_seqno = 0;		      // last page seq which has been wiped
 
+  uint64_t cur_op_seqno = 0;
   std::vector<Op> ops;
 
   uint64_t min_pending_io_seqno = 1;
@@ -229,7 +277,8 @@ protected:
   PerfCounters* logger = nullptr;
 
 protected:
-  bool init_op(size_t need, uint64_t* _need_pages, Op**);
+  void assess_payload(const chest_t& chest, size_t* _need_pages);
+  bool init_op(const chest_t& chest, size_t* _need_pages, Op**);
 
   inline size_t get_total_pages() const {
     return page_offsets.size();
@@ -238,26 +287,43 @@ protected:
     ceph_assert(seqno);
     return ((seqno - 1)  % get_total_pages());
   }
+  // stages wiping for any submitted page
   size_t wipe_pages(IOContext* ioc);
+  // stages wiping for any submitted page
+  // and applies it
+  void wipe_pages();
 
 protected:
-  // following funcs made virtual to be able to make UT stubs for them
+  // made virtual to be able to make UT stubs if needed
   virtual void aio_write(uint64_t off,
 			 bufferlist& bl,
 			 IOContext* ioc,
 			 bool buffered);
+  virtual int read(uint64_t off,
+                   uint64_t len,
+		   bufferlist* bl,
+		   IOContext* ioc,
+		   bool buffered);
 
-  void _notify_txc(uint64_t prev_page_seqno,
+  void _notify_txc(uint64_t page_seqno,
                    BlueStore::TransContext* txc,
                    txc_completion_fn on_finish);
   void _finish_op(Op& op, txc_completion_fn on_finish, bool deep);
   Op* _log(BlueStore::TransContext* txc);
-  void _prepare_submit_txc(bluewal_head_t& header,
-                           uint64_t txc_seqno,
+  void _prepare_txc_submit(bluewal_head_t& header,
                            BlueStore::TransContext* txc,
                            bufferlist::page_aligned_appender& appender,
                            bufferlist& bl);
+  uint64_t _submit_huge_txc(bluewal_head_t& header,
+                            IOContext* anchor_ioc,
+                            BlueStore::TransContext* txc,
+                            size_t txc_size0);
 
+  void _maybe_write_unlock(IOContext* anchor_ioc,
+                           uint64_t _offs,
+                           bufferlist::page_aligned_appender& appender,
+                           bufferlist& _bl,
+                           wal_unique_lock_t* lck);
   int _read_page_header(uint64_t offset,
                         uint64_t expected_page_no,
                         uint64_t page_count,
@@ -271,7 +337,8 @@ public:
     BlockDevice* _bdev,
     const uuid_d& _uuid,
     uint64_t psize = DEF_PAGE_SIZE,
-    uint64_t bsize = DEF_BLOCK_SIZE);
+    uint64_t bsize = DEF_BLOCK_SIZE,
+    uint64_t fsize = DEF_PAGE_SIZE);
 
   virtual ~BluestoreWAL() {
     if (logger) {
@@ -282,15 +349,19 @@ public:
   void init_add_pages(uint64_t offset, uint64_t len);
 
   void log(BlueStore::TransContext* txc);
-  void submitted(uint64_t outdated_page_seqno, KeyValueDB& db);
+  void submitted(BlueStore::TransContext* txc,
+    std::function<void()> flush_db_fn);
 
-  void aio_submit(IOContext* ioc) {
+  // made virtual to be able to make UT stubs if needed
+  virtual void aio_submit(IOContext* ioc) {
     bdev->aio_submit(ioc);
   }
   void aio_finish(BlueStore::TransContext* txc, txc_completion_fn on_finish);
 
-  void shutdown(KeyValueDB& db);
-  int replay(KeyValueDB& db);
+  void shutdown(std::function<void()> flush_db_fn);
+  int replay(bool wipe_on_complete,
+    std::function<int(const std::string&)> submit_db_fn,
+    std::function<void()> flush_db_fn);
 
   uint64_t get_total() const {
     return total;
@@ -300,6 +371,9 @@ public:
   }
   uint64_t get_page_size() const {
     return page_size;
+  }
+  uint64_t get_block_size() const {
+    return block_size;
   }
   uint64_t get_header_size() const {
     return head_size;

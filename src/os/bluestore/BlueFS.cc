@@ -619,6 +619,7 @@ int BlueFS::mkfs(uuid_d osd_uuid,
     ceph_assert(bdev[id]);
     ceph_assert(external_wal_size % alloc_size[id] == 0);
     uint64_t offs0 = p2roundup(block_reserved[id], alloc_size[id]);
+
     ceph_assert(alloc[id]->get_free() > offs0 + external_wal_size);
     super.ext_wal_region.bdev = id;
     super.ext_wal_region.offset = offs0;
