@@ -910,6 +910,66 @@ private:
 };
 
 } // anonymous namespace
+void BlueWALContextSync::_notify(int r)
+{
+  {
+    std::lock_guard l(lock);
+    ret = r;
+    completed = true;
+  }
+  cond.notify_all();
+}
+
+int BlueWALContextSync::wait_completed()
+{
+  lock.lock();
+  if (!completed) {
+    cond.wait(lock);
+  }
+  ceph_assert(completed);
+  lock.unlock();
+  return ret;
+}
+
+void BlueWALContextSync::wal_aio_finish()
+{
+  ceph_assert(store);
+  auto *db = store->get_kv();
+  auto *wal = store->get_wal();
+  ceph_assert(db);
+  ceph_assert(wal);
+  int r = db->submit_transaction_sync(t);
+  _notify(r);
+}
+
+void BlueWALContextSync::wal_submitted()
+{
+  ceph_assert(store);
+  auto *db = store->get_kv();
+  auto *wal = store->get_wal();
+  ceph_assert(db);
+  ceph_assert(wal);
+  wal->submitted(this,
+    [&]() {
+      db->flush_all();
+    });
+}
+
+void BlueStore::TransContext::aio_finish(BlueStore *_store, bool last)
+{
+  ceph_assert(_store);
+  store = _store;
+  set_more_aio_finish(!last);
+  store->txc_aio_finish(this);
+}
+
+void BlueStore::TransContext::wal_aio_finish()
+{
+  ceph_assert(store);
+  ceph_assert(state == STATE_GOING_WAL);
+  set_state(TransContext::STATE_WAL_DONE);
+  store->txc_aio_finish(this);
+}
 
 // Garbage Collector
 
@@ -5614,9 +5674,12 @@ void BlueStore::_close_bdev()
 
 int BlueStore::_maybe_open_wal()
 {
-  ceph_assert(!wal);
+  // do nothing if already opened
+  if (wal) {
+    return 0;
+  }
+  int r = 0; // it's OK if there is no WAL
   bluefs_extent_t wal_ext;
-  int r = -ENXIO;
   BlockDevice* bdev = bluefs->get_external_wal(&wal_ext);
   if (bdev) {
     ceph_assert(wal_ext.length &&
@@ -5629,26 +5692,6 @@ int BlueStore::_maybe_open_wal()
       fsid);
     dout(1) << __func__ << wal_ext << dendl;
     wal->init_add_pages(wal_ext.offset, wal_ext.length);
-    auto t = db->get_transaction();
-    size_t replay_cnt = 0;
-    r = wal->replay(
-      true,
-      [&](const std::string& bytes) {
-        auto t = db->get_transaction();
-        t->set_from_bytes(bytes);
-        ++replay_cnt;
-        return db->submit_transaction_sync(t);
-      },
-      [&]() {
-        db->flush_all();
-      });
-    dout(0) << __func__ << " wal replay returned:" << cpp_strerror(r)
-            << ", replayed txc:" << replay_cnt
-            << dendl;
-    if (r < 0) {
-      delete wal;
-      wal = nullptr;
-    }
   }
   return r;
 }
@@ -5661,6 +5704,7 @@ void BlueStore::_close_wal()
         db->flush_all();
       });
     delete wal;
+    wal = nullptr;
   }
 }
 
@@ -6026,7 +6070,7 @@ void BlueStore::_post_init_alloc(const std::map<uint64_t, uint64_t>& zone_adjust
       f->allocate(i.first, i.second, t);
       f->release(i.first, i.second, t);
     }
-    r = db->submit_transaction_sync(t);
+    r = _submit_transaction_sync(t);
   } else
 #endif
   if (fm->is_null_manager()) {
@@ -6041,6 +6085,7 @@ void BlueStore::_post_init_alloc(const std::map<uint64_t, uint64_t>& zone_adjust
 
 void BlueStore::_close_alloc()
 {
+  dout(10) << __func__ << dendl;
   ceph_assert(bdev);
   bdev->discard_drain();
 
@@ -6231,7 +6276,7 @@ bool BlueStore::test_mount_in_use()
   return ret;
 }
 
-int BlueStore::_minimal_open_bluefs(bool create)
+int BlueStore::_minimal_open_bluefs(bool create, bool restricted)
 {
   int r;
   bluefs = new BlueFS(cct);
@@ -6278,21 +6323,23 @@ int BlueStore::_minimal_open_bluefs(bool create)
       goto free_bluefs;
     }
   }
-
-  // shared device
+  // Shared device.
+  // In restricted mode we provide no allocator for shared volume
+  // to prevent any allocations since the relevant allocator is
+  // likely not properly configured yet.
   bfn = path + "/block";
-  // never trim here
-  r = bluefs->add_block_device(bluefs_layout.shared_bdev, bfn, false,
-                               0, // no need to provide valid 'reserved' for shared dev
+  ceph_assert(!restricted || (restricted && !shared_alloc.a));
+  r = bluefs->add_block_device(bluefs_layout.shared_bdev, bfn,
+                               false, //never trim here
+                               SUPER_RESERVED,
                                aio_cb,
                                static_cast<void*>(this),
                                &shared_alloc);
   if (r < 0) {
     derr << __func__ << " add block device(" << bfn << ") returned: "
-	  << cpp_strerror(r) << dendl;
+         << cpp_strerror(r) << dendl;
     goto free_bluefs;
   }
-
   bfn = path + "/block.wal";
   if (::stat(bfn.c_str(), &st) == 0) {
     r = bluefs->add_block_device(BlueFS::BDEV_WAL, bfn,
@@ -6337,9 +6384,9 @@ free_bluefs:
   return r;
 }
 
-int BlueStore::_open_bluefs(bool create, bool read_only)
+int BlueStore::_open_bluefs(bool create, bool bluefs_restricted)
 {
-  int r = _minimal_open_bluefs(create);
+  int r = _minimal_open_bluefs(create, bluefs_restricted);
   if (r < 0) {
     return r;
   }
@@ -6402,12 +6449,14 @@ int BlueStore::_open_bluefs(bool create, bool read_only)
 
 void BlueStore::_close_bluefs()
 {
+dout(0) << __func__ << dendl;
   bluefs->umount(db_was_opened_read_only);
   _minimal_close_bluefs();
 }
 
 void BlueStore::_minimal_close_bluefs()
 {
+dout(0) << __func__ << dendl;
   delete bluefs;
   bluefs = NULL;
 }
@@ -6458,9 +6507,6 @@ int BlueStore::_open_db_and_around(bool read_only, bool to_repair)
     }
   }
 
-  // SMR devices may require a freelist adjustment, but that can only happen after
-  // the db is read-write. we'll stash pending changes here.
-  std::map<uint64_t, uint64_t> zone_adjustments;
 
   int r = _open_path();
   if (r < 0)
@@ -6481,47 +6527,9 @@ int BlueStore::_open_db_and_around(bool read_only, bool to_repair)
   if (r < 0)
     goto out_fsid;
 
-  // GBH: can probably skip open_db step in REad-Only mode when operating in NULL-FM mode
-  // (might need to open if failed to restore from file)
-
-  // open in read-only first to read FM list and init allocator
-  // as they might be needed for some BlueFS procedures
-  r = _open_db(false, false, true);
+  r = _open_db_ex(read_only, to_repair);
   if (r < 0)
     goto out_bdev;
-
-  r = _open_super_meta();
-  if (r < 0) {
-    goto out_db;
-  }
-
-  r = _open_fm(nullptr, true, false);
-  if (r < 0)
-    goto out_db;
-
-  r = _init_alloc(&zone_adjustments);
-  if (r < 0)
-    goto out_fm;
-
-  // Re-open in the proper mode(s).
-
-  // Can't simply bypass second open for read-only mode as we need to
-  // load allocated extents from bluefs into allocator.
-  // And now it's time to do that
-  //
-  _close_db();
-  r = _open_db(false, to_repair, read_only);
-  if (r < 0) {
-    goto out_alloc;
-  }
-
-  if (!read_only) {
-    r = _maybe_open_wal();
-    if (r < 0) {
-      goto out_alloc;
-    }
-    _post_init_alloc(zone_adjustments);
-  }
 
   // when function is called in repair mode (to_repair=true) we skip db->open()/create()
   // we can't change bluestore allocation so no need to invlidate allocation-file
@@ -6533,7 +6541,7 @@ int BlueStore::_open_db_and_around(bool read_only, bool to_repair)
     r = invalidate_allocation_file_on_bluefs();
     if (r != 0) {
       derr << __func__ << "::NCB::invalidate_allocation_file_on_bluefs() failed!" << dendl;
-      goto out_wal;
+      goto out_db_ex;
     }
   }
 
@@ -6551,14 +6559,8 @@ int BlueStore::_open_db_and_around(bool read_only, bool to_repair)
 
   return 0;
 
-out_wal:
-  _close_wal();
-out_alloc:
-  _close_alloc();
-out_fm:
-  _close_fm();
- out_db:
-  _close_db();
+ out_db_ex:
+  _close_db_ex();
  out_bdev:
   _close_bdev();
  out_fsid:
@@ -6568,30 +6570,100 @@ out_fm:
   return r;
 }
 
-void BlueStore::_close_db_and_around()
+int BlueStore::_open_db_ex(bool read_only, bool to_repair)
 {
-  if (db) {
-    _close_db();
+  // SMR devices may require a freelist adjustment, but that can only happen after
+  // the db is read-write. we'll stash pending changes here.
+  std::map<uint64_t, uint64_t> zone_adjustments;
+  int r = 0;
+
+  // we don't enforce read-only mode at this point any more
+  // but rather specify 'restricted' mode which forbids shared device writings.
+  //
+  r = _open_db(false, false, false, true);
+
+  if (r < 0) {
+    return r;
   }
-  _close_around_db();
+  bool close_db = true;
+  auto shutdown_db = make_scope_guard([&] {
+    if (close_db) {
+      _close_db();
+    }
+  });
+
+  r = _open_super_meta();
+  if (r < 0) {
+    return r;
+  }
+
+  r = _open_fm(nullptr, true, false);
+  if (r < 0) {
+    return r;
+  }
+  auto shutdown_fm = make_scope_guard([&] {
+    if (r != 0) {
+      _close_fm();
+    }
+  });
+
+  r = _init_alloc(&zone_adjustments);
+  if (r < 0) {
+    return r;
+  }
+  auto shutdown_alloc = make_scope_guard([&] {
+    if (r != 0) {
+      _close_alloc();
+    }
+  });
+
+  // Re-open in the proper mode(s).
+
+  // Can't simply bypass second open for read-only mode as we need to
+  // load allocated extents from bluefs into allocator.
+  // And now it's time to do that
+  //
+  _close_db();
+  close_db = false;
+  r = _open_db(false, to_repair, read_only);
+  if (r < 0) {
+    return r;
+  }
+  if (!read_only) {
+    r = _maybe_open_wal();
+    if (r < 0) {
+      return r;
+    }
+  }
+  if (!read_only && !zone_adjustments.empty()) {
+    // for SMR devices that have freelist mismatch with device write pointers
+    _post_init_alloc(zone_adjustments);
+  }
+  return r;
 }
 
-void BlueStore::_close_around_db()
+void BlueStore::_close_db_and_around()
 {
-  if (bluefs) {
-    _close_bluefs();
-  }
-  _close_fm();
-  _close_alloc();
+  _close_db_ex();
   _close_bdev();
   _close_fsid();
   _close_path();
 }
 
+void BlueStore::_close_db_ex()
+{
+  _close_db();
+  if (bluefs) {
+    _close_bluefs();
+  }
+  _close_fm();
+  _close_alloc();
+}
+
 int BlueStore::open_db_environment(KeyValueDB **pdb, bool to_repair)
 {
   _kv_only = true;
-  int r = _open_db_and_around(false, to_repair);
+  int r = _open_db_and_around(true, to_repair);
   if (r == 0) {
     *pdb = db;
   } else {
@@ -6602,11 +6674,7 @@ int BlueStore::open_db_environment(KeyValueDB **pdb, bool to_repair)
 
 int BlueStore::close_db_environment()
 {
-  if (db) {
-    delete db;
-    db = nullptr;
-  }
-  _close_around_db();
+  _close_db_and_around();
   return 0;
 }
 
@@ -6615,8 +6683,10 @@ BlueFS* BlueStore::get_bluefs() {
   return bluefs;
 }
 
-int BlueStore::_prepare_db_environment(bool create, bool read_only,
-				       std::string* _fn, std::string* _kv_backend)
+int BlueStore::_prepare_db_environment(bool create,
+                                       bool bluefs_restricted,
+				       std::string* _fn,
+				       std::string* _kv_backend)
 {
   int r;
   ceph_assert(!db);
@@ -6653,12 +6723,10 @@ int BlueStore::_prepare_db_environment(bool create, bool read_only,
       derr << " backend must be rocksdb to use bluefs" << dendl;
       return -EINVAL;
     }
-
-    r = _open_bluefs(create, read_only);
+    r = _open_bluefs(create, bluefs_restricted);
     if (r < 0) {
       return r;
     }
-
     if (cct->_conf->bluestore_bluefs_env_mirror) {
       rocksdb::Env* a = new BlueRocksEnv(bluefs);
       rocksdb::Env* b = rocksdb::Env::Default();
@@ -6764,7 +6832,10 @@ int BlueStore::_prepare_db_environment(bool create, bool read_only,
   return 0;
 }
 
-int BlueStore::_open_db(bool create, bool to_repair_db, bool read_only)
+int BlueStore::_open_db(bool create,
+                        bool to_repair_db,
+                        bool read_only,
+                        bool restricted)
 {
   int r;
   ceph_assert(!(create && read_only));
@@ -6776,13 +6847,40 @@ int BlueStore::_open_db(bool create, bool to_repair_db, bool read_only)
   std::string sharding_def;
   // prevent write attempts to BlueFS in case we failed before BlueFS was opened
   db_was_opened_read_only = true;
-  r = _prepare_db_environment(create, read_only, &kv_dir_fn, &kv_backend);
+  r = _prepare_db_environment(create,
+                              restricted,
+                              &kv_dir_fn,
+                              &kv_backend);
   if (r < 0) {
     derr << __func__ << " failed to prepare db environment: " << err.str() << dendl;
     return -EIO;
   }
+
   // if reached here then BlueFS is already opened
+  if (restricted &&
+      !bluefs_layout.dedicated_db &&
+      !bluefs_layout.dedicated_wal) {
+
+    // GBH: can probably skip open_db step in REad-Only mode when operating in NULL-FM mode
+    // (might need to open if failed to restore from file)
+
+    // open in read-only first to read FM list and init allocator
+    // as they might be needed for some BlueFS procedures
+    read_only = true;
+  }
   db_was_opened_read_only = read_only;
+
+  if (!read_only) {
+    r = _maybe_open_wal();
+    if (r < 0) {
+      derr << __func__ << " failed to open WAL" << dendl;
+      _close_db();
+      return -EIO;
+    }
+  } else {
+    ceph_assert(!wal); //wal & read_only mode are incompatible
+  }
+
   dout(10) << __func__ << "::db_was_opened_read_only was set to " << read_only << dendl;
   if (kv_backend == "rocksdb") {
     options = cct->_conf->bluestore_rocksdb_options;
@@ -6793,6 +6891,13 @@ int BlueStore::_open_db(bool create, bool to_repair_db, bool read_only)
         options += ',';
       }
       options += options_annex;
+    }
+    if (wal) {
+      if (!options.empty() &&
+        *options.rbegin() != ',') {
+        options += ',';
+      }
+      options += "disableWAL=true";
     }
 
     if (cct->_conf.get_val<bool>("bluestore_rocksdb_cf")) {
@@ -6851,6 +6956,9 @@ void BlueStore::_close_db()
            << " pool stats=" << osd_pools.size()
            << dendl;
   _close_wal();
+  if (!db) {
+    return;
+  }
   bool do_destage = !db_was_opened_read_only && need_to_destage_allocation_file;
   if (do_destage && is_statfs_recoverable()) {
     auto t = db->get_transaction();
@@ -6934,6 +7042,7 @@ int BlueStore::_open_collections()
 
   dout(10) << __func__ << dendl;
   collections_had_errors = false;
+ ceph_assert(db);
   KeyValueDB::Iterator it = db->get_iterator(PREFIX_COLL);
   size_t load_cnt = 0;
   for (it->upper_bound(string());
@@ -7366,7 +7475,7 @@ int BlueStore::mkfs()
     
     ondisk_format = latest_ondisk_format;
     _prepare_ondisk_format_super(t);
-    db->submit_transaction_sync(t);
+    _submit_transaction_sync(t);
   }
 
   r = write_meta("kv_backend", cct->_conf->bluestore_kvbackend);
@@ -7921,7 +8030,6 @@ int BlueStore::umount()
     }
     dout(20) << __func__ << " closing" << dendl;
   }
-  _close_wal();
   _close_db_and_around();
   // disable fsck on fast-shutdown
   if (cct->_conf->bluestore_fsck_on_umount && !m_fast_shutdown) {
@@ -8253,7 +8361,7 @@ void BlueStore::_fsck_repair_shared_blobs(
       cnt++;
     }
     if (cnt) {
-      db->submit_transaction_sync(txn);
+      _submit_transaction_sync(txn);
       cnt = 0;
     }
   }
@@ -8269,12 +8377,12 @@ void BlueStore::_fsck_repair_shared_blobs(
     repairer.fix_shared_blob(txn, sbid, nullptr, 0);
     cnt++;
     if (cnt >= max_transactions) {}
-      db->submit_transaction_sync(txn);
+      _submit_transaction_sync(txn);
       txn = db->get_transaction();
       cnt = 0;
     });
   if (cnt > 0) {
-    db->submit_transaction_sync(txn);
+    _submit_transaction_sync(txn);
   }
 
   // amount of repairs to report to be equal to previously
@@ -8927,14 +9035,14 @@ void BlueStore::_fsck_check_object_omap(FSCKDepth depth,
 
 	// submit a portion if cost exceeds 16MB
 	if (txn_cost >= 16 * (1 << 20) ) {
-	  db->submit_transaction_sync(txn);
+	  _submit_transaction_sync(txn);
 	  txn = db->get_transaction();
 	  txn_cost = 0;
 	}
 	it->next();
       }
       if (txn_cost > 0) {
-	db->submit_transaction_sync(txn);
+	_submit_transaction_sync(txn);
       }
     }
     // finalize: remove legacy data
@@ -8950,7 +9058,7 @@ void BlueStore::_fsck_check_object_omap(FSCKDepth depth,
       // set flag
       o->onode.set_flag(bluestore_onode_t::FLAG_PERPOOL_OMAP | bluestore_onode_t::FLAG_PERPG_OMAP);
       _record_onode(o, txn);
-      db->submit_transaction_sync(txn);
+      _submit_transaction_sync(txn);
       repairer->inc_repaired();
       repairer->request_compaction();
     }
@@ -10138,7 +10246,13 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
     }
 
     dout(5) << __func__ << " applying repair results" << dendl;
-    repaired = repairer.apply(db);
+    repaired = repairer.apply(
+      [&](KeyValueDB::Transaction t) {
+        return _submit_transaction_sync(t);
+      },
+      [&]() {
+        db->compact();
+      });
     dout(5) << __func__ << " repair applied" << dendl;
   }
 
@@ -10173,7 +10287,7 @@ void BlueStore::inject_broken_shared_blob_key(const string& key,
   KeyValueDB::Transaction txn;
   txn = db->get_transaction();
   txn->set(PREFIX_SHARED_BLOB, key, bl);
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 };
 
 void BlueStore::inject_no_shared_blob_key()
@@ -10189,7 +10303,7 @@ void BlueStore::inject_no_shared_blob_key()
   dout(5) << __func__<< " " << sbid << dendl;
   get_shared_blob_key(sbid, &key);
   txn->rmkey(PREFIX_SHARED_BLOB, key);
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 };
 
 void BlueStore::inject_stray_shared_blob_key(uint64_t sbid)
@@ -10210,7 +10324,7 @@ void BlueStore::inject_stray_shared_blob_key(uint64_t sbid)
     << dendl;
 
   txn->set(PREFIX_SHARED_BLOB, key, bl);
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 };
 
 
@@ -10231,7 +10345,7 @@ void BlueStore::inject_leaked(uint64_t len)
   for (auto& p : exts) {
     fm->allocate(p.offset, p.length, txn);
   }
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 }
 
 void BlueStore::inject_false_free(coll_t cid, ghobject_t oid)
@@ -10277,7 +10391,7 @@ void BlueStore::inject_false_free(coll_t cid, ghobject_t oid)
     }
   }
   ceph_assert(injected);
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 }
 
 void BlueStore::inject_legacy_omap()
@@ -10287,7 +10401,7 @@ void BlueStore::inject_legacy_omap()
   KeyValueDB::Transaction txn;
   txn = db->get_transaction();
   txn->rmkey(PREFIX_SUPER, "per_pool_omap");
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 }
 
 void BlueStore::inject_legacy_omap(coll_t cid, ghobject_t oid)
@@ -10310,7 +10424,7 @@ void BlueStore::inject_legacy_omap(coll_t cid, ghobject_t oid)
     bluestore_onode_t::FLAG_PGMETA_OMAP);
   txn = db->get_transaction();
   _record_onode(o, txn);
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 }
 
 void BlueStore::inject_stray_omap(uint64_t head, const string& name)
@@ -10324,14 +10438,20 @@ void BlueStore::inject_stray_omap(uint64_t head, const string& name)
   key.append(name);
   txn->set(PREFIX_OMAP, key, bl);
 
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 }
 
 void BlueStore::inject_statfs(const string& key, const store_statfs_t& new_statfs)
 {
   BlueStoreRepairer repairer;
   repairer.fix_statfs(db, key, new_statfs);
-  repairer.apply(db);
+  repairer.apply(
+    [&](KeyValueDB::Transaction t) {
+      return _submit_transaction_sync(t);
+    },
+    [&]() {
+      db->compact();
+    });
 }
 
 void BlueStore::inject_global_statfs(const store_statfs_t& new_statfs)
@@ -10342,7 +10462,7 @@ void BlueStore::inject_global_statfs(const store_statfs_t& new_statfs)
   bufferlist bl;
   v.encode(bl);
   t->set(PREFIX_STAT, BLUESTORE_GLOBAL_STATFS_KEY, bl);
-  db->submit_transaction_sync(t);
+  _submit_transaction_sync(t);
 }
 
 void BlueStore::inject_misreference(coll_t cid1, ghobject_t oid1,
@@ -10389,7 +10509,7 @@ void BlueStore::inject_misreference(coll_t cid1, ghobject_t oid1,
   o2->extent_map.update(txn, false);
 
   _record_onode(o2, txn);
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 }
 
 void BlueStore::inject_zombie_spanning_blob(coll_t cid, ghobject_t oid,
@@ -10413,7 +10533,7 @@ void BlueStore::inject_zombie_spanning_blob(coll_t cid, ghobject_t oid,
   txn = db->get_transaction();
 
   _record_onode(o, txn);
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 }
 
 void BlueStore::inject_bluefs_file(std::string_view dir, std::string_view name, size_t new_size)
@@ -10550,7 +10670,7 @@ int BlueStore::get_devices(set<string> *ls)
   auto close_bdev = make_scope_guard([&] {
     _close_bdev();
   });
-  if (int r = _minimal_open_bluefs(false); r < 0) {
+  if (int r = _minimal_open_bluefs(false, false); r < 0) {
     return r;
   }
   bdev->get_devices(ls);
@@ -11407,6 +11527,27 @@ int BlueStore::_decompress(bufferlist& source, bufferlist* result)
     l_bluestore_decompress_lat,
     mono_clock::now() - start,
     cct->_conf->bluestore_log_op_age);
+  return r;
+}
+
+int BlueStore::_submit_transaction_sync(KeyValueDB::Transaction t)
+{
+  int r = 0;
+  if (wal) {
+    BlueWALContextSync txc(cct, this, t);
+    if (!txc.get_payload().length() == 0) {
+      r = wal->log_submit_sync(&txc,
+        [&](BlueWALContextSync* _txc) {
+          ceph_assert(_txc == &txc);
+          return db->submit_transaction_sync(t);
+        },
+        [&]() {
+          db->flush_all();
+        });
+    }
+  } else {
+    r = db->submit_transaction_sync(t);
+  }
   return r;
 }
 
@@ -12574,7 +12715,7 @@ int BlueStore::_upgrade_super()
     }
     // This to be the last operation
     _prepare_ondisk_format_super(t);
-    int r = db->submit_transaction_sync(t);
+    int r = _submit_transaction_sync(t);
     ceph_assert(r == 0);
   }
   // done
@@ -12607,6 +12748,7 @@ void BlueStore::get_db_statistics(Formatter *f)
 {
   db->get_statistics(f);
 }
+
 
 BlueStore::TransContext *BlueStore::_txc_create(
   Collection *c, OpSequencer *osr,
@@ -12778,34 +12920,27 @@ void BlueStore::_txc_state_proc(TransContext *txc)
       }
       return;
     case TransContext::STATE_GOING_WAL:
-      ceph_assert(wal); // paranoic
-      ceph_assert(txc->wal_op_ctx);
       // this might trigger continuation for
       // a bunch of contexts due to
       // a. potentially unsorted operations in WAL
       // b. having a bunch of transactions piggy-backing WAL I/O
       // within this specific txc (WAL could merge them to better utilize
       // disk block when calling wal->log(...))
-
-      wal->aio_finish(txc,
-        [&] (TransContext* _txc) {
-          ceph_assert(_txc);
-          ceph_assert(_txc->get_state() == TransContext::STATE_GOING_WAL);
-          throttle.log_state_latency(*_txc, logger,
-            l_bluestore_state_going_wal_lat);
-          _txc->set_state(TransContext::STATE_WAL_DONE);
-          _txc_state_proc(_txc);
-         });
+      // So every txc's wal_aio_finish is called by the WAL to update the state 
+      // to STATE_WAL_DONE  and procceed with the txc processing.
+      ceph_assert(wal); // paranoic
+      wal->aio_finish(txc);
       return;
     case TransContext::STATE_WAL_DONE:
-      {
-        //OpSequencer *osr = txc->osr.get();
-        //FIXME: std::lock_guard l(osr->qlock);
-        if (txc->ch->commit_queue) {
-          txc->ch->commit_queue->queue(txc->oncommits);
-        } else {
-          finisher.queue(txc->oncommits);
-        }
+      throttle.log_state_latency(*txc, logger,
+        l_bluestore_state_going_wal_lat);
+      txc->set_state(TransContext::STATE_WAL_DONE);
+      //OpSequencer *osr = txc->osr.get();
+      //FIXME: std::lock_guard l(osr->qlock);
+      if (txc->ch->commit_queue) {
+        txc->ch->commit_queue->queue(txc->oncommits);
+      } else {
+        finisher.queue(txc->oncommits);
       }
       throttle.log_state_latency(*txc, logger, l_bluestore_state_wal_done_lat);
       logger->tinc(l_bluestore_wal_commit_lat, mono_clock::now() - txc->start);
@@ -13504,21 +13639,17 @@ void BlueStore::_kv_sync_thread()
       // we submit.
       uint64_t new_nid_max = 0, new_blobid_max = 0;
       if (nid_last + cct->_conf->bluestore_nid_prealloc/2 > nid_max) {
-	KeyValueDB::Transaction t =
-	  kv_submitting.empty() ? synct : kv_submitting.front()->t;
 	new_nid_max = nid_last + cct->_conf->bluestore_nid_prealloc;
 	bufferlist bl;
 	encode(new_nid_max, bl);
-	t->set(PREFIX_SUPER, "nid_max", bl);
+	synct->set(PREFIX_SUPER, "nid_max", bl);
 	dout(10) << __func__ << " new_nid_max " << new_nid_max << dendl;
       }
       if (blobid_last + cct->_conf->bluestore_blobid_prealloc/2 > blobid_max) {
-	KeyValueDB::Transaction t =
-	  kv_submitting.empty() ? synct : kv_submitting.front()->t;
 	new_blobid_max = blobid_last + cct->_conf->bluestore_blobid_prealloc;
 	bufferlist bl;
 	encode(new_blobid_max, bl);
-	t->set(PREFIX_SUPER, "blobid_max", bl);
+	synct->set(PREFIX_SUPER, "blobid_max", bl);
 	dout(10) << __func__ << " new_blobid_max " << new_blobid_max << dendl;
       }
 
@@ -13545,6 +13676,7 @@ void BlueStore::_kv_sync_thread()
       throttle.release_kv_throttle(costs);
 
       // cleanup sync deferred keys
+      size_t cnt = 0;
       for (auto b : deferred_stable) {
 	for (auto& txc : b->txcs) {
 	  bluestore_deferred_transaction_t& wt = *txc.deferred_txn;
@@ -13552,14 +13684,18 @@ void BlueStore::_kv_sync_thread()
 	  string key;
 	  get_deferred_key(wt.seq, &key);
 	  synct->rm_single_key(PREFIX_DEFERRED, key);
+	  ++cnt;
 	}
       }
+      dout(20) << __func__ << " reaped deferred stable: " << cnt << dendl;
 
 #if defined(WITH_LTTNG)
       auto sync_start = mono_clock::now();
 #endif
+      //FIXME: we don't need sync submit when BlueWAL is in use. May be consider different
+      // location for aux submissions coming with synct: deferred writes del, nid_max update etc?
       // submit synct synchronously (block and wait for it to commit)
-      int r = cct->_conf->bluestore_debug_omit_kv_commit ? 0 : db->submit_transaction_sync(synct);
+      int r = cct->_conf->bluestore_debug_omit_kv_commit ? 0 : _submit_transaction_sync(synct);
       ceph_assert(r == 0);
 
 #ifdef WITH_BLKIN
@@ -13684,8 +13820,8 @@ void BlueStore::_kv_finalize_thread()
       kv_committed.swap(kv_committing_to_finalize);
       deferred_stable.swap(deferred_stable_to_finalize);
       l.unlock();
-      dout(20) << __func__ << " kv_committed " << kv_committed << dendl;
-      dout(20) << __func__ << " deferred_stable " << deferred_stable << dendl;
+      dout(20) << __func__ << " kv_committed " << kv_committed.size() << dendl;
+      dout(20) << __func__ << " deferred_stable " << deferred_stable.size() << dendl;
 
       auto start = mono_clock::now();
 
@@ -18128,51 +18264,53 @@ bool BlueStoreRepairer::preprocess_misreference(KeyValueDB *db)
   return false;
 }
 
-unsigned BlueStoreRepairer::apply(KeyValueDB* db)
+unsigned BlueStoreRepairer::apply(
+  std::function<int(KeyValueDB::Transaction)> submit_fn,
+  std::function<void()> compact_fn)
 {
   //NB: not for use in multithreading mode!!!
   if (fix_per_pool_omap_txn) {
-    auto ok = db->submit_transaction_sync(fix_per_pool_omap_txn) == 0;
+    auto ok = submit_fn(fix_per_pool_omap_txn) == 0;
     ceph_assert(ok);
     fix_per_pool_omap_txn = nullptr;
   }
   if (fix_fm_leaked_txn) {
-    auto ok = db->submit_transaction_sync(fix_fm_leaked_txn) == 0;
+    auto ok = submit_fn(fix_fm_leaked_txn) == 0;
     ceph_assert(ok);
     fix_fm_leaked_txn = nullptr;
   }
   if (fix_fm_false_free_txn) {
-    auto ok = db->submit_transaction_sync(fix_fm_false_free_txn) == 0;
+    auto ok = submit_fn(fix_fm_false_free_txn) == 0;
     ceph_assert(ok);
     fix_fm_false_free_txn = nullptr;
   }
   if (remove_key_txn) {
-    auto ok = db->submit_transaction_sync(remove_key_txn) == 0;
+    auto ok = submit_fn(remove_key_txn) == 0;
     ceph_assert(ok);
     remove_key_txn = nullptr;
   }
   if (fix_misreferences_txn) {
-    auto ok = db->submit_transaction_sync(fix_misreferences_txn) == 0;
+    auto ok = submit_fn(fix_misreferences_txn) == 0;
     ceph_assert(ok);
     fix_misreferences_txn = nullptr;
   }
   if (fix_onode_txn) {
-    auto ok = db->submit_transaction_sync(fix_onode_txn) == 0;
+    auto ok = submit_fn(fix_onode_txn) == 0;
     ceph_assert(ok);
     fix_onode_txn = nullptr;
   }
   if (fix_shared_blob_txn) {
-    auto ok = db->submit_transaction_sync(fix_shared_blob_txn) == 0;
+    auto ok = submit_fn(fix_shared_blob_txn) == 0;
     ceph_assert(ok);
     fix_shared_blob_txn = nullptr;
   }
   if (fix_statfs_txn) {
-    auto ok = db->submit_transaction_sync(fix_statfs_txn) == 0;
+    auto ok = submit_fn(fix_statfs_txn) == 0;
     ceph_assert(ok);
     fix_statfs_txn = nullptr;
   }
   if (need_compact) {
-    db->compact();
+    compact_fn();
     need_compact = false;
   }
   unsigned repaired = to_repair_cnt;
@@ -19534,12 +19672,12 @@ Allocator* BlueStore::clone_allocator_without_bluefs(Allocator *src_allocator)
 }
 
 //---------------------------------------------------------
-static void clear_allocation_objects_from_rocksdb(KeyValueDB *db, CephContext *cct, const std::string &path)
+void BlueStore::clear_allocation_objects_from_rocksdb(KeyValueDB *db, CephContext *cct, const std::string &path)
 {
   dout(5) << "t->rmkeys_by_prefix(PREFIX_ALLOC_BITMAP)" << dendl;
   KeyValueDB::Transaction t = db->get_transaction();
   t->rmkeys_by_prefix(PREFIX_ALLOC_BITMAP);
-  db->submit_transaction_sync(t);
+  _submit_transaction_sync(t);
 }
 
 //---------------------------------------------------------
@@ -19553,13 +19691,13 @@ void BlueStore::copy_allocator_content_to_fm(Allocator *allocator, FreelistManag
     size += length;
     real_fm->release(offset, length, txn);
     if ((++idx % max_txn) == 0) {
-      db->submit_transaction_sync(txn);
+      _submit_transaction_sync(txn);
       txn = db->get_transaction();
     }
   };
   allocator->foreach(iterated_insert);
   if (idx % max_txn != 0) {
-    db->submit_transaction_sync(txn);
+    _submit_transaction_sync(txn);
   }
   dout(5) << "size=" << size << ", num extents=" << idx  << dendl;
 }
@@ -19608,7 +19746,7 @@ int BlueStore::reset_fm_for_restore()
     derr << "Failed _open_fm()" << dendl;
     return -1;
   }
-  db->submit_transaction_sync(t);
+  _submit_transaction_sync(t);
   ceph_assert(!fm->is_null_manager());
   dout(5) << "fm was reactivated in full mode" << dendl;
   return 0;
@@ -19733,7 +19871,7 @@ int BlueStore::commit_freelist_type()
   bl.append(freelist_type);
   t->set(PREFIX_SUPER, "freelist_type", bl);
 
-  int ret = db->submit_transaction_sync(t);
+  int ret = _submit_transaction_sync(t);
   if (ret != 0) {
     derr << "Failed db->submit_transaction_sync(t)" << dendl;
   }

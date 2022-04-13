@@ -530,7 +530,15 @@ uint64_t BlueFS::_get_total(unsigned id) const
 {
   ceph_assert(id < bdev.size());
   ceph_assert(id < block_reserved.size());
-  return get_block_device_size(id) - block_reserved[id];
+  return get_block_device_size(id) - _get_reserved(id);
+}
+
+uint64_t BlueFS::_get_reserved(unsigned id) const
+{
+  ceph_assert(id < bdev.size());
+  ceph_assert(id < block_reserved.size());
+  ceph_assert(id < alloc_size.size());
+  return p2roundup(block_reserved[id], alloc_size[id]);
 }
 
 uint64_t BlueFS::get_total(unsigned id)
@@ -618,7 +626,7 @@ int BlueFS::mkfs(uuid_d osd_uuid,
     unsigned id = _get_fastest_device_id();
     ceph_assert(bdev[id]);
     ceph_assert(external_wal_size % alloc_size[id] == 0);
-    uint64_t offs0 = p2roundup(block_reserved[id], alloc_size[id]);
+    uint64_t offs0 = _get_reserved(id);
 
     ceph_assert(alloc[id]->get_free() > offs0 + external_wal_size);
     super.ext_wal_region.bdev = id;
@@ -653,10 +661,10 @@ int BlueFS::mkfs(uuid_d osd_uuid,
   _flush_bdev();
 
   // clean up
-  super = bluefs_super_t();
   _close_writer(log.writer);
   log.writer = NULL;
   vselector.reset(nullptr);
+  super = bluefs_super_t();
   _stop_alloc();
   _shutdown_logger();
   if (shared_alloc) {
@@ -727,7 +735,7 @@ void BlueFS::_init_alloc()
 				    0, 0,
 				    name);
       alloc[id]->init_add_free(
-        block_reserved[id],
+        _get_reserved(id),
         _get_total(id));
     }
   }
@@ -749,19 +757,32 @@ void BlueFS::_stop_alloc()
     }
   }
 }
+void BlueFS::_mark_allocated(unsigned bdev, uint64_t o, uint32_t l)
+{
+  bool is_shared = is_shared_alloc(bdev);
+  ceph_assert(!is_shared || (is_shared && shared_alloc));
+  if (is_shared && shared_alloc->need_init && shared_alloc->a) {
+    ceph_assert(alloc[bdev]);
+    ceph_assert(alloc[bdev]->get_free() >= o + l);
+    shared_alloc->bluefs_used += l;
+    alloc[bdev]->init_rm_free(o, l);
+  } else if (!is_shared) {
+    ceph_assert(alloc[bdev]);
+    ceph_assert(alloc[bdev]->get_free() >= o + l);
+    alloc[bdev]->init_rm_free(o, l);
+  }
+}
 
 void BlueFS::_init_external_wal()
 {
   dout(20) << __func__
-           << " ext wal:" << super.ext_wal_region
+           << ":" << super.ext_wal_region
            << dendl;
-
   if (super.ext_wal_region.length) {
-    ceph_assert(bdev[super.ext_wal_region.bdev]);
-    ceph_assert(alloc[super.ext_wal_region.bdev]);
-    ceph_assert(alloc[super.ext_wal_region.bdev]->get_free() >= super.ext_wal_region.length);
-    alloc[super.ext_wal_region.bdev]->init_rm_free(super.ext_wal_region.offset,
-      super.ext_wal_region.length);
+    auto id = super.ext_wal_region.bdev;
+    _mark_allocated(id,
+                    super.ext_wal_region.offset,
+                    super.ext_wal_region.length);
   }
 }
 
@@ -958,6 +979,7 @@ int BlueFS::mount()
   }
 
   _init_alloc();
+  _init_external_wal();
 
   r = _replay(false, false);
   if (r < 0) {
@@ -966,19 +988,11 @@ int BlueFS::mount()
     goto out;
   }
 
-  _init_external_wal();
   // init freelist
   for (auto& p : nodes.file_map) {
     dout(30) << __func__ << " noting alloc for " << p.second->fnode << dendl;
     for (auto& q : p.second->fnode.extents) {
-      bool is_shared = is_shared_alloc(q.bdev);
-      ceph_assert(!is_shared || (is_shared && shared_alloc));
-      if (is_shared && shared_alloc->need_init && shared_alloc->a) {
-        shared_alloc->bluefs_used += q.length;
-        alloc[q.bdev]->init_rm_free(q.offset, q.length);
-      } else if (!is_shared) {
-        alloc[q.bdev]->init_rm_free(q.offset, q.length);
-      }
+      _mark_allocated(q.bdev, q.offset, q.length);
     }
   }
   if (shared_alloc) {
