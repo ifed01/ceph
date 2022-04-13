@@ -61,6 +61,7 @@ class FreelistManager;
 class BlueStoreRepairer;
 class SimpleBitmap;
 class BluestoreWAL;
+class BlueStore;
 
 //#define DEBUG_CACHE
 //#define DEBUG_DEFERRED
@@ -223,6 +224,69 @@ enum {
 
 #define META_POOL_ID ((uint64_t)-1ull)
 using bptr_c_it_t = buffer::ptr::const_iterator;
+
+class BlueWALContext {
+  void* wal_op_ctx = nullptr;   ///< opaque WAL I/O context
+  uint64_t wal_seq = 0;         ///< WAL seq to return back once txc is committed
+  bool more_aio_finish = false; ///< interim flag for aio_finish processing:
+                                ///< following aio_finish indications are
+                                ///< expected as there is a bunch of ready
+                                ///< completions at BlockDevice.
+protected:
+  BlueStore* store = nullptr;
+
+public:
+  virtual ~BlueWALContext() {}
+  virtual IOContext* get_ioc() = 0;
+  virtual const std::string& get_payload() = 0;
+
+  void set_wal_op_ctx(void* _ctx) {
+    wal_op_ctx = _ctx;
+  }
+  void* get_wal_op_ctx() {
+    return wal_op_ctx;
+  }
+  void set_wal_seq(uint64_t seq) {
+    wal_seq = seq;
+  }
+  uint64_t get_wal_seq() {
+    return wal_seq;
+  }
+  void set_more_aio_finish(bool more) {
+    more_aio_finish = more;
+  }
+  bool get_more_aio_finish() const {
+    return more_aio_finish;
+  }
+  virtual void wal_aio_finish() = 0;
+};
+class BlueWALContextSync : public BlueWALContext {
+  IOContext ioc;
+  KeyValueDB::Transaction t;
+  std::condition_variable_any cond;
+  ceph::recursive_mutex lock = {
+      ceph::make_recursive_mutex("BlueWALContextSync::lock") };
+  int ret = 0;
+  bool completed = false;
+  void _notify(int r);
+public:
+  BlueWALContextSync(CephContext* cct,
+                     BlueStore* _store,
+                     KeyValueDB::Transaction _t)
+    : ioc(cct, nullptr, false),
+      t(_t) {
+    store = _store;
+  }
+  int wait_completed();
+  void wal_submitted();
+  void wal_aio_finish() override;
+  IOContext* get_ioc() override {
+    return &ioc;
+  };
+  const std::string& get_payload() override {
+    return t->get_as_bytes();
+  }
+};
 
 class BlueStore : public ObjectStore,
 		  public md_config_obs_t {
@@ -1675,7 +1739,8 @@ public:
     }
   };
 
-  struct TransContext final : public AioContext {
+
+  struct TransContext final : public AioContext, public BlueWALContext {
     MEMPOOL_CLASS_HELPERS();
 
     typedef enum {
@@ -1787,12 +1852,6 @@ public:
     uint64_t last_nid = 0;     ///< if non-zero, highest new nid we allocated
     uint64_t last_blobid = 0;  ///< if non-zero, highest new blobid we allocated
 
-    bool more_aio_finish = false; ///< interim flag for aio_finish processing:
-                                  ///< following aio_finish indications are
-                                  ///< expected as there is a bunch of ready
-                                  ///< completions at BlockDevice.
-    uint64_t wal_seq = 0;      ///< WAL seq to return back once txc is committed
-    void* wal_op_ctx = nullptr;///< opaque WAL I/O context
 #if defined(WITH_LTTNG)
     bool tracing = false;
 #endif
@@ -1852,9 +1911,15 @@ public:
     }
 #endif
 
-    void aio_finish(BlueStore *store, bool last) override {
-      store->txc_aio_finish(this, last);
+    void aio_finish(BlueStore *store, bool last) override;
+    void wal_aio_finish() override;
+    IOContext* get_ioc() override {
+      return &ioc;
     }
+    const std::string& get_payload() override {
+      return t->get_as_bytes();
+    }
+
   private:
     state_t state = STATE_PREPARE;
   };
@@ -2622,9 +2687,9 @@ private:
   void _validate_bdev();
   void _close_bdev();
 
-  int _minimal_open_bluefs(bool create);
+  int _minimal_open_bluefs(bool create, bool bluefs_restricted);
   void _minimal_close_bluefs();
-  int _open_bluefs(bool create, bool read_only);
+  int _open_bluefs(bool create, bool bluefs_restricted);
   void _close_bluefs();
 
   int _is_bluefs(bool create, bool* ret);
@@ -2635,7 +2700,10 @@ private:
   int _open_db_and_around(bool read_only, bool to_repair = false);
   void _close_db_and_around();
 
-  int _prepare_db_environment(bool create, bool read_only,
+  int _open_db_ex(bool read_only, bool to_repair = false);
+  void _close_db_ex();
+
+  int _prepare_db_environment(bool create, bool restricted,
 			      std::string* kv_dir, std::string* kv_backend);
 
   /*
@@ -2644,7 +2712,8 @@ private:
    */
   int _open_db(bool create,
 	       bool to_repair_db=false,
-	       bool read_only = false);
+	       bool read_only = false,
+	       bool restricted = false);
   void _close_db();
   void _close_db_leave_bluefs();
   int _maybe_open_wal();
@@ -2716,8 +2785,7 @@ private:
   void _txc_aio_submit(TransContext *txc);
 
 public:
-  void txc_aio_finish(TransContext *txc, bool last) {
-    txc->more_aio_finish = !last;
+  void txc_aio_finish(TransContext *txc) {
     _txc_state_proc(txc);
   }
 private:
@@ -2905,6 +2973,9 @@ public:
   int open_db_environment(KeyValueDB **pdb, bool to_repair);
   int close_db_environment();
   BlueFS* get_bluefs();
+  BluestoreWAL* get_wal() {
+    return wal;
+  }
 
   int write_meta(const std::string& key, const std::string& value) override;
   int read_meta(const std::string& key, std::string *value) override;
@@ -3387,7 +3458,7 @@ private:
     const ceph::buffer::list& bl,
     uint64_t logical_offset) const;
   int _decompress(ceph::buffer::list& source, ceph::buffer::list* result);
-
+  int _submit_transaction_sync(KeyValueDB::Transaction t);
 
   // --------------------------------------------------------
   // write ops
@@ -3790,6 +3861,7 @@ private:
   int  verify_rocksdb_allocations(Allocator *allocator);
   Allocator* clone_allocator_without_bluefs(Allocator *src_allocator);
   Allocator* initialize_allocator_from_freelist(FreelistManager *real_fm);
+  void clear_allocation_objects_from_rocksdb(KeyValueDB *db, CephContext *cct, const std::string &path);
   void copy_allocator_content_to_fm(Allocator *allocator, FreelistManager *real_fm);
 
 
@@ -3982,7 +4054,9 @@ public:
 
   bool preprocess_misreference(KeyValueDB *db);
 
-  unsigned apply(KeyValueDB* db);
+  unsigned apply(
+    std::function<int(KeyValueDB::Transaction)> submit_fn,
+    std::function<void()> compact_fn);
 
   void note_misreference(uint64_t offs, uint64_t len, bool inc_error) {
     std::lock_guard l(lock);
