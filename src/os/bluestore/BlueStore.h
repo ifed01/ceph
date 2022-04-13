@@ -2574,9 +2574,9 @@ private:
   void _validate_bdev();
   void _close_bdev();
 
-  int _minimal_open_bluefs(bool create);
+  int _minimal_open_bluefs(bool create, bool bluefs_restricted);
   void _minimal_close_bluefs();
-  int _open_bluefs(bool create, bool read_only);
+  int _open_bluefs(bool create, bool bluefs_restricted);
   void _close_bluefs();
 
   int _is_bluefs(bool create, bool* ret);
@@ -2587,7 +2587,10 @@ private:
   int _open_db_and_around(bool read_only, bool to_repair = false);
   void _close_db_and_around();
 
-  int _prepare_db_environment(bool create, bool read_only,
+  int _open_db_ex(bool read_only, bool to_repair = false);
+  void _close_db_ex();
+
+  int _prepare_db_environment(bool create, bool restricted,
 			      std::string* kv_dir, std::string* kv_backend);
 
   /*
@@ -2596,7 +2599,8 @@ private:
    */
   int _open_db(bool create,
 	       bool to_repair_db=false,
-	       bool read_only = false);
+	       bool read_only = false,
+	       bool restricted = false);
   void _close_db();
   void _close_db_leave_bluefs();
   int _maybe_open_wal();
