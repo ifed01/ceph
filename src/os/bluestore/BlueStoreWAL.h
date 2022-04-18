@@ -31,6 +31,8 @@
 #include "kv/KeyValueDB.h"
 
 class BlockDevice;
+class BlueWALContext;
+class BlueWALContextSync;
 
 struct bluewal_head_t {
   uuid_d uuid;
@@ -69,9 +71,9 @@ protected:
     uint64_t wiping_pages = 0;
     bool running = false;
     size_t num_txcs = 0;
-    BlueStore::TransContext* txc[MAX_TXCS_PER_OP] = {nullptr};
+    BlueWALContext* txc[MAX_TXCS_PER_OP] = {nullptr};
 
-    void run(uint64_t wp, uint64_t pseq, BlueStore::TransContext* _txc) {
+    void run(uint64_t wp, uint64_t pseq, BlueWALContext* _txc) {
       ceph_assert(!running);
       ceph_assert(num_txcs == 0);
       wiping_pages = wp;
@@ -82,7 +84,7 @@ protected:
     inline void maybe_update_page_seqno(uint64_t pseq) {
       page_seqno = pseq;
     }
-    void run_more(BlueStore::TransContext* _txc) {
+    void run_more(BlueWALContext* _txc) {
       ceph_assert(running);
       ceph_assert(num_txcs != 0);
       ceph_assert (num_txcs < MAX_TXCS_PER_OP);
@@ -101,7 +103,6 @@ protected:
     }
   };
 
-  typedef std::function<void (BlueStore::TransContext*)> txc_completion_fn;
   typedef std::unique_lock<ceph::mutex> wal_unique_lock_t;
 
 protected:
@@ -126,9 +127,9 @@ protected:
   struct chest_entry_t {
     size_t payload_len = 0;
     size_t entry_count =0;
-    std::array<BlueStore::TransContext*, MAX_TXCS_PER_OP> txcs;
+    std::array<BlueWALContext*, MAX_TXCS_PER_OP> txcs;
     std::array<size_t, MAX_TXCS_PER_OP> txc_sizes;
-    bool maybe_add(BlueStore::TransContext* txc,
+    bool maybe_add(BlueWALContext* txc,
                    size_t len,
                    size_t h_len,
                    size_t b_len,
@@ -158,7 +159,7 @@ protected:
       }
       return ret;
     }
-    BlueStore::TransContext* maybe_get(size_t pos) {
+    BlueWALContext* maybe_get(size_t pos) {
       return pos < entry_count ? txcs[pos]: nullptr;
     }
     size_t maybe_get_size(size_t pos) {
@@ -199,7 +200,7 @@ protected:
     size_t get_entry_count() const {
       return total_entry_count;
     }
-    bool add(BlueStore::TransContext* txc,
+    bool add(BlueWALContext* txc,
       size_t len,
       size_t h_len,
       size_t b_len,
@@ -227,8 +228,8 @@ protected:
       }
       return ret;
     }
-    BlueStore::TransContext* get_next_if_any(size_t* ret_pos, size_t* ret_size) {
-      BlueStore::TransContext* ret = nullptr;
+    BlueWALContext* get_next_if_any(size_t* ret_pos, size_t* ret_size) {
+      BlueWALContext* ret = nullptr;
 
       size_t row = *ret_pos / entries.size();
       size_t pos = *ret_pos %  entries.size();
@@ -305,18 +306,15 @@ protected:
 		   IOContext* ioc,
 		   bool buffered);
 
-  void _notify_txc(uint64_t page_seqno,
-                   BlueStore::TransContext* txc,
-                   txc_completion_fn on_finish);
-  void _finish_op(Op& op, txc_completion_fn on_finish, bool deep);
-  Op* _log(BlueStore::TransContext* txc);
+  void _finish_op(Op& op, bool deep);
+  Op* _log(BlueWALContext* txc);
   void _prepare_txc_submit(bluewal_head_t& header,
-                           BlueStore::TransContext* txc,
+                           BlueWALContext* txc,
                            bufferlist::page_aligned_appender& appender,
                            bufferlist& bl);
-  uint64_t _submit_huge_txc(bluewal_head_t& header,
+  void _submit_huge_txc(bluewal_head_t& header,
                             IOContext* anchor_ioc,
-                            BlueStore::TransContext* txc,
+                            BlueWALContext* txc,
                             size_t txc_size0);
 
   void _maybe_write_unlock(IOContext* anchor_ioc,
@@ -348,15 +346,19 @@ public:
   }
   void init_add_pages(uint64_t offset, uint64_t len);
 
-  void log(BlueStore::TransContext* txc);
-  void submitted(BlueStore::TransContext* txc,
+  int log(BlueWALContext* txc);
+  int log_submit_sync(BlueWALContextSync* txc,
+    std::function<int(BlueWALContextSync*)> submit_db_fn,
+    std::function<void()> flush_db_fn);
+
+  void submitted(BlueWALContext* txc,
     std::function<void()> flush_db_fn);
 
   // made virtual to be able to make UT stubs if needed
   virtual void aio_submit(IOContext* ioc) {
     bdev->aio_submit(ioc);
   }
-  void aio_finish(BlueStore::TransContext* txc, txc_completion_fn on_finish);
+  void aio_finish(BlueWALContext* txc);
 
   void shutdown(std::function<void()> flush_db_fn);
   int replay(bool wipe_on_complete,
