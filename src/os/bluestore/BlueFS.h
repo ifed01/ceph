@@ -376,7 +376,7 @@ private:
    */
   std::vector<BlockDevice*> bdev;                  ///< block devices we can use
   std::vector<IOContext*> ioc;                     ///< IOContexts for bdevs
-  std::vector<uint64_t> block_reserved;            ///< starting reserve extent per device
+  std::vector<uint64_t> block_reserved;            ///< per-device extent reserved at the beginning, disk block size aligned
   std::vector<Allocator*> alloc;                   ///< allocators for bdevs
   std::vector<uint64_t> alloc_size;                ///< alloc size for each device
 
@@ -406,13 +406,14 @@ private:
   void _init_alloc();
   void _stop_alloc();
 
+  void _mark_allocated(unsigned bdev, uint64_t o, uint32_t l);
   void _init_external_wal();
 
   void _pad_bl(ceph::buffer::list& bl);  ///< pad ceph::buffer::list to block size w/ zeros
 
   uint64_t _get_used(unsigned id) const;
   uint64_t _get_total(unsigned id) const;
-
+  uint64_t _get_reserved(unsigned id) const;
 
   FileRef _get_file(uint64_t ino);
   void _drop_link_D(FileRef f);

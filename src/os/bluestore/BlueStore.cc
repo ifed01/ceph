@@ -910,6 +910,66 @@ private:
 };
 
 } // anonymous namespace
+void BlueWALContextSync::_notify(int r)
+{
+  {
+    std::lock_guard l(lock);
+    ret = r;
+    completed = true;
+  }
+  cond.notify_all();
+}
+
+int BlueWALContextSync::wait_completed()
+{
+  lock.lock();
+  if (!completed) {
+    cond.wait(lock);
+  }
+  ceph_assert(completed);
+  lock.unlock();
+  return ret;
+}
+
+void BlueWALContextSync::wal_aio_finish()
+{
+  ceph_assert(store);
+  auto *db = store->get_kv();
+  auto *wal = store->get_wal();
+  ceph_assert(db);
+  ceph_assert(wal);
+  int r = db->submit_transaction_sync(t);
+  _notify(r);
+}
+
+void BlueWALContextSync::wal_submitted()
+{
+  ceph_assert(store);
+  auto *db = store->get_kv();
+  auto *wal = store->get_wal();
+  ceph_assert(db);
+  ceph_assert(wal);
+  wal->submitted(this,
+    [&]() {
+      db->flush_all();
+    });
+}
+
+void BlueStore::TransContext::aio_finish(BlueStore *_store, bool last)
+{
+  ceph_assert(_store);
+  store = _store;
+  set_more_aio_finish(!last);
+  store->txc_aio_finish(this);
+}
+
+void BlueStore::TransContext::wal_aio_finish()
+{
+  ceph_assert(store);
+  ceph_assert(state == STATE_GOING_WAL);
+  set_state(TransContext::STATE_WAL_DONE);
+  store->txc_aio_finish(this);
+}
 
 // Garbage Collector
 
@@ -6031,7 +6091,7 @@ void BlueStore::_post_init_alloc(const std::map<uint64_t, uint64_t>& zone_adjust
       f->allocate(i.first, i.second, t);
       f->release(i.first, i.second, t);
     }
-    r = db->submit_transaction_sync(t);
+    r = _submit_transaction_sync(t);
   } else
 #endif
   if (fm->is_null_manager()) {
@@ -6046,6 +6106,7 @@ void BlueStore::_post_init_alloc(const std::map<uint64_t, uint64_t>& zone_adjust
 
 void BlueStore::_close_alloc()
 {
+  dout(10) << __func__ << dendl;
   ceph_assert(bdev);
   bdev->discard_drain();
 
@@ -6291,8 +6352,7 @@ int BlueStore::_minimal_open_bluefs(bool create, bool restricted)
   ceph_assert(!restricted || (restricted && !shared_alloc.a));
   r = bluefs->add_block_device(bluefs_layout.shared_bdev, bfn,
                                false, //never trim here
-                               0, // no need to provide valid 'reserved'
-                                  // for shared dev
+                               SUPER_RESERVED,
                                aio_cb,
                                static_cast<void*>(this),
                                &shared_alloc);
@@ -6621,7 +6681,7 @@ void BlueStore::_close_db_ex()
 int BlueStore::open_db_environment(KeyValueDB **pdb, bool to_repair)
 {
   _kv_only = true;
-  int r = _open_db_and_around(false, to_repair);
+  int r = _open_db_and_around(true, to_repair);
   if (r == 0) {
     *pdb = db;
   } else {
@@ -7441,7 +7501,7 @@ int BlueStore::mkfs()
     
     ondisk_format = latest_ondisk_format;
     _prepare_ondisk_format_super(t);
-    db->submit_transaction_sync(t);
+    _submit_transaction_sync(t);
   }
 
   r = write_meta("kv_backend", cct->_conf->bluestore_kvbackend);
@@ -8327,7 +8387,7 @@ void BlueStore::_fsck_repair_shared_blobs(
       cnt++;
     }
     if (cnt) {
-      db->submit_transaction_sync(txn);
+      _submit_transaction_sync(txn);
       cnt = 0;
     }
   }
@@ -8343,12 +8403,12 @@ void BlueStore::_fsck_repair_shared_blobs(
     repairer.fix_shared_blob(txn, sbid, nullptr, 0);
     cnt++;
     if (cnt >= max_transactions) {}
-      db->submit_transaction_sync(txn);
+      _submit_transaction_sync(txn);
       txn = db->get_transaction();
       cnt = 0;
     });
   if (cnt > 0) {
-    db->submit_transaction_sync(txn);
+    _submit_transaction_sync(txn);
   }
 
   // amount of repairs to report to be equal to previously
@@ -9001,14 +9061,14 @@ void BlueStore::_fsck_check_object_omap(FSCKDepth depth,
 
 	// submit a portion if cost exceeds 16MB
 	if (txn_cost >= 16 * (1 << 20) ) {
-	  db->submit_transaction_sync(txn);
+	  _submit_transaction_sync(txn);
 	  txn = db->get_transaction();
 	  txn_cost = 0;
 	}
 	it->next();
       }
       if (txn_cost > 0) {
-	db->submit_transaction_sync(txn);
+	_submit_transaction_sync(txn);
       }
     }
     // finalize: remove legacy data
@@ -9024,7 +9084,7 @@ void BlueStore::_fsck_check_object_omap(FSCKDepth depth,
       // set flag
       o->onode.set_flag(bluestore_onode_t::FLAG_PERPOOL_OMAP | bluestore_onode_t::FLAG_PERPG_OMAP);
       _record_onode(o, txn);
-      db->submit_transaction_sync(txn);
+      _submit_transaction_sync(txn);
       repairer->inc_repaired();
       repairer->request_compaction();
     }
@@ -10212,7 +10272,13 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
     }
 
     dout(5) << __func__ << " applying repair results" << dendl;
-    repaired = repairer.apply(db);
+    repaired = repairer.apply(
+      [&](KeyValueDB::Transaction t) {
+        return _submit_transaction_sync(t);
+      },
+      [&]() {
+        db->compact();
+      });
     dout(5) << __func__ << " repair applied" << dendl;
   }
 
@@ -10247,7 +10313,7 @@ void BlueStore::inject_broken_shared_blob_key(const string& key,
   KeyValueDB::Transaction txn;
   txn = db->get_transaction();
   txn->set(PREFIX_SHARED_BLOB, key, bl);
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 };
 
 void BlueStore::inject_no_shared_blob_key()
@@ -10263,7 +10329,7 @@ void BlueStore::inject_no_shared_blob_key()
   dout(5) << __func__<< " " << sbid << dendl;
   get_shared_blob_key(sbid, &key);
   txn->rmkey(PREFIX_SHARED_BLOB, key);
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 };
 
 void BlueStore::inject_stray_shared_blob_key(uint64_t sbid)
@@ -10284,7 +10350,7 @@ void BlueStore::inject_stray_shared_blob_key(uint64_t sbid)
     << dendl;
 
   txn->set(PREFIX_SHARED_BLOB, key, bl);
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 };
 
 
@@ -10305,7 +10371,7 @@ void BlueStore::inject_leaked(uint64_t len)
   for (auto& p : exts) {
     fm->allocate(p.offset, p.length, txn);
   }
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 }
 
 void BlueStore::inject_false_free(coll_t cid, ghobject_t oid)
@@ -10351,7 +10417,7 @@ void BlueStore::inject_false_free(coll_t cid, ghobject_t oid)
     }
   }
   ceph_assert(injected);
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 }
 
 void BlueStore::inject_legacy_omap()
@@ -10361,7 +10427,7 @@ void BlueStore::inject_legacy_omap()
   KeyValueDB::Transaction txn;
   txn = db->get_transaction();
   txn->rmkey(PREFIX_SUPER, "per_pool_omap");
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 }
 
 void BlueStore::inject_legacy_omap(coll_t cid, ghobject_t oid)
@@ -10384,7 +10450,7 @@ void BlueStore::inject_legacy_omap(coll_t cid, ghobject_t oid)
     bluestore_onode_t::FLAG_PGMETA_OMAP);
   txn = db->get_transaction();
   _record_onode(o, txn);
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 }
 
 void BlueStore::inject_stray_omap(uint64_t head, const string& name)
@@ -10398,14 +10464,20 @@ void BlueStore::inject_stray_omap(uint64_t head, const string& name)
   key.append(name);
   txn->set(PREFIX_OMAP, key, bl);
 
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 }
 
 void BlueStore::inject_statfs(const string& key, const store_statfs_t& new_statfs)
 {
   BlueStoreRepairer repairer;
   repairer.fix_statfs(db, key, new_statfs);
-  repairer.apply(db);
+  repairer.apply(
+    [&](KeyValueDB::Transaction t) {
+      return _submit_transaction_sync(t);
+    },
+    [&]() {
+      db->compact();
+    });
 }
 
 void BlueStore::inject_global_statfs(const store_statfs_t& new_statfs)
@@ -10416,7 +10488,7 @@ void BlueStore::inject_global_statfs(const store_statfs_t& new_statfs)
   bufferlist bl;
   v.encode(bl);
   t->set(PREFIX_STAT, BLUESTORE_GLOBAL_STATFS_KEY, bl);
-  db->submit_transaction_sync(t);
+  _submit_transaction_sync(t);
 }
 
 void BlueStore::inject_misreference(coll_t cid1, ghobject_t oid1,
@@ -10463,7 +10535,7 @@ void BlueStore::inject_misreference(coll_t cid1, ghobject_t oid1,
   o2->extent_map.update(txn, false);
 
   _record_onode(o2, txn);
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 }
 
 void BlueStore::inject_zombie_spanning_blob(coll_t cid, ghobject_t oid,
@@ -10487,7 +10559,7 @@ void BlueStore::inject_zombie_spanning_blob(coll_t cid, ghobject_t oid,
   txn = db->get_transaction();
 
   _record_onode(o, txn);
-  db->submit_transaction_sync(txn);
+  _submit_transaction_sync(txn);
 }
 
 void BlueStore::inject_bluefs_file(std::string_view dir, std::string_view name, size_t new_size)
@@ -11479,6 +11551,27 @@ int BlueStore::_decompress(bufferlist& source, bufferlist* result)
     l_bluestore_decompress_lat,
     mono_clock::now() - start,
     cct->_conf->bluestore_log_op_age);
+  return r;
+}
+
+int BlueStore::_submit_transaction_sync(KeyValueDB::Transaction t)
+{
+  int r = 0;
+  if (wal) {
+    BlueWALContextSync txc(cct, this, t);
+    if (!txc.get_payload().length() == 0) {
+      r = wal->log_submit_sync(&txc,
+        [&](BlueWALContextSync* _txc) {
+          ceph_assert(_txc == &txc);
+          return db->submit_transaction_sync(t);
+        },
+        [&]() {
+          db->flush_all();
+        });
+    }
+  } else {
+    r = db->submit_transaction_sync(t);
+  }
   return r;
 }
 
@@ -12646,7 +12739,7 @@ int BlueStore::_upgrade_super()
     }
     // This to be the last operation
     _prepare_ondisk_format_super(t);
-    int r = db->submit_transaction_sync(t);
+    int r = _submit_transaction_sync(t);
     ceph_assert(r == 0);
   }
   // done
@@ -12679,6 +12772,7 @@ void BlueStore::get_db_statistics(Formatter *f)
 {
   db->get_statistics(f);
 }
+
 
 BlueStore::TransContext *BlueStore::_txc_create(
   Collection *c, OpSequencer *osr,
@@ -12850,34 +12944,27 @@ void BlueStore::_txc_state_proc(TransContext *txc)
       }
       return;
     case TransContext::STATE_GOING_WAL:
-      ceph_assert(wal); // paranoic
-      ceph_assert(txc->wal_op_ctx);
       // this might trigger continuation for
       // a bunch of contexts due to
       // a. potentially unsorted operations in WAL
       // b. having a bunch of transactions piggy-backing WAL I/O
       // within this specific txc (WAL could merge them to better utilize
       // disk block when calling wal->log(...))
-
-      wal->aio_finish(txc,
-        [&] (TransContext* _txc) {
-          ceph_assert(_txc);
-          ceph_assert(_txc->get_state() == TransContext::STATE_GOING_WAL);
-          throttle.log_state_latency(*_txc, logger,
-            l_bluestore_state_going_wal_lat);
-          _txc->set_state(TransContext::STATE_WAL_DONE);
-          _txc_state_proc(_txc);
-         });
+      // So every txc's wal_aio_finish is called by the WAL to update the state 
+      // to STATE_WAL_DONE  and procceed with the txc processing.
+      ceph_assert(wal); // paranoic
+      wal->aio_finish(txc);
       return;
     case TransContext::STATE_WAL_DONE:
-      {
-        //OpSequencer *osr = txc->osr.get();
-        //FIXME: std::lock_guard l(osr->qlock);
-        if (txc->ch->commit_queue) {
-          txc->ch->commit_queue->queue(txc->oncommits);
-        } else {
-          finisher.queue(txc->oncommits);
-        }
+      throttle.log_state_latency(*txc, logger,
+        l_bluestore_state_going_wal_lat);
+      txc->set_state(TransContext::STATE_WAL_DONE);
+      //OpSequencer *osr = txc->osr.get();
+      //FIXME: std::lock_guard l(osr->qlock);
+      if (txc->ch->commit_queue) {
+        txc->ch->commit_queue->queue(txc->oncommits);
+      } else {
+        finisher.queue(txc->oncommits);
       }
       throttle.log_state_latency(*txc, logger, l_bluestore_state_wal_done_lat);
       logger->tinc(l_bluestore_wal_commit_lat, mono_clock::now() - txc->start);
@@ -13578,21 +13665,17 @@ void BlueStore::_kv_sync_thread()
       // we submit.
       uint64_t new_nid_max = 0, new_blobid_max = 0;
       if (nid_last + cct->_conf->bluestore_nid_prealloc/2 > nid_max) {
-	KeyValueDB::Transaction t =
-	  kv_submitting.empty() ? synct : kv_submitting.front()->t;
 	new_nid_max = nid_last + cct->_conf->bluestore_nid_prealloc;
 	bufferlist bl;
 	encode(new_nid_max, bl);
-	t->set(PREFIX_SUPER, "nid_max", bl);
+	synct->set(PREFIX_SUPER, "nid_max", bl);
 	dout(10) << __func__ << " new_nid_max " << new_nid_max << dendl;
       }
       if (blobid_last + cct->_conf->bluestore_blobid_prealloc/2 > blobid_max) {
-	KeyValueDB::Transaction t =
-	  kv_submitting.empty() ? synct : kv_submitting.front()->t;
 	new_blobid_max = blobid_last + cct->_conf->bluestore_blobid_prealloc;
 	bufferlist bl;
 	encode(new_blobid_max, bl);
-	t->set(PREFIX_SUPER, "blobid_max", bl);
+	synct->set(PREFIX_SUPER, "blobid_max", bl);
 	dout(10) << __func__ << " new_blobid_max " << new_blobid_max << dendl;
       }
 
@@ -13635,8 +13718,10 @@ void BlueStore::_kv_sync_thread()
 #if defined(WITH_LTTNG)
       auto sync_start = mono_clock::now();
 #endif
+      //FIXME: we don't need sync submit when BlueWAL is in use. May be consider different
+      // location for aux submissions coming with synct: deferred writes del, nid_max update etc?
       // submit synct synchronously (block and wait for it to commit)
-      int r = cct->_conf->bluestore_debug_omit_kv_commit ? 0 : db->submit_transaction_sync(synct);
+      int r = cct->_conf->bluestore_debug_omit_kv_commit ? 0 : _submit_transaction_sync(synct);
       ceph_assert(r == 0);
 
 #ifdef WITH_BLKIN
@@ -18097,51 +18182,53 @@ bool BlueStoreRepairer::preprocess_misreference(KeyValueDB *db)
   return false;
 }
 
-unsigned BlueStoreRepairer::apply(KeyValueDB* db)
+unsigned BlueStoreRepairer::apply(
+  std::function<int(KeyValueDB::Transaction)> submit_fn,
+  std::function<void()> compact_fn)
 {
   //NB: not for use in multithreading mode!!!
   if (fix_per_pool_omap_txn) {
-    auto ok = db->submit_transaction_sync(fix_per_pool_omap_txn) == 0;
+    auto ok = submit_fn(fix_per_pool_omap_txn) == 0;
     ceph_assert(ok);
     fix_per_pool_omap_txn = nullptr;
   }
   if (fix_fm_leaked_txn) {
-    auto ok = db->submit_transaction_sync(fix_fm_leaked_txn) == 0;
+    auto ok = submit_fn(fix_fm_leaked_txn) == 0;
     ceph_assert(ok);
     fix_fm_leaked_txn = nullptr;
   }
   if (fix_fm_false_free_txn) {
-    auto ok = db->submit_transaction_sync(fix_fm_false_free_txn) == 0;
+    auto ok = submit_fn(fix_fm_false_free_txn) == 0;
     ceph_assert(ok);
     fix_fm_false_free_txn = nullptr;
   }
   if (remove_key_txn) {
-    auto ok = db->submit_transaction_sync(remove_key_txn) == 0;
+    auto ok = submit_fn(remove_key_txn) == 0;
     ceph_assert(ok);
     remove_key_txn = nullptr;
   }
   if (fix_misreferences_txn) {
-    auto ok = db->submit_transaction_sync(fix_misreferences_txn) == 0;
+    auto ok = submit_fn(fix_misreferences_txn) == 0;
     ceph_assert(ok);
     fix_misreferences_txn = nullptr;
   }
   if (fix_onode_txn) {
-    auto ok = db->submit_transaction_sync(fix_onode_txn) == 0;
+    auto ok = submit_fn(fix_onode_txn) == 0;
     ceph_assert(ok);
     fix_onode_txn = nullptr;
   }
   if (fix_shared_blob_txn) {
-    auto ok = db->submit_transaction_sync(fix_shared_blob_txn) == 0;
+    auto ok = submit_fn(fix_shared_blob_txn) == 0;
     ceph_assert(ok);
     fix_shared_blob_txn = nullptr;
   }
   if (fix_statfs_txn) {
-    auto ok = db->submit_transaction_sync(fix_statfs_txn) == 0;
+    auto ok = submit_fn(fix_statfs_txn) == 0;
     ceph_assert(ok);
     fix_statfs_txn = nullptr;
   }
   if (need_compact) {
-    db->compact();
+    compact_fn();
     need_compact = false;
   }
   unsigned repaired = to_repair_cnt;
@@ -19489,12 +19576,12 @@ Allocator* BlueStore::clone_allocator_without_bluefs(Allocator *src_allocator)
 }
 
 //---------------------------------------------------------
-static void clear_allocation_objects_from_rocksdb(KeyValueDB *db, CephContext *cct, const std::string &path)
+void BlueStore::clear_allocation_objects_from_rocksdb(KeyValueDB *db, CephContext *cct, const std::string &path)
 {
   dout(5) << "t->rmkeys_by_prefix(PREFIX_ALLOC_BITMAP)" << dendl;
   KeyValueDB::Transaction t = db->get_transaction();
   t->rmkeys_by_prefix(PREFIX_ALLOC_BITMAP);
-  db->submit_transaction_sync(t);
+  _submit_transaction_sync(t);
 }
 
 //---------------------------------------------------------
@@ -19508,13 +19595,13 @@ void BlueStore::copy_allocator_content_to_fm(Allocator *allocator, FreelistManag
     size += length;
     real_fm->release(offset, length, txn);
     if ((++idx % max_txn) == 0) {
-      db->submit_transaction_sync(txn);
+      _submit_transaction_sync(txn);
       txn = db->get_transaction();
     }
   };
   allocator->foreach(iterated_insert);
   if (idx % max_txn != 0) {
-    db->submit_transaction_sync(txn);
+    _submit_transaction_sync(txn);
   }
   dout(5) << "size=" << size << ", num extents=" << idx  << dendl;
 }
@@ -19563,7 +19650,7 @@ int BlueStore::reset_fm_for_restore()
     derr << "Failed _open_fm()" << dendl;
     return -1;
   }
-  db->submit_transaction_sync(t);
+  _submit_transaction_sync(t);
   ceph_assert(!fm->is_null_manager());
   dout(5) << "fm was reactivated in full mode" << dendl;
   return 0;
@@ -19688,7 +19775,7 @@ int BlueStore::commit_freelist_type()
   bl.append(freelist_type);
   t->set(PREFIX_SUPER, "freelist_type", bl);
 
-  int ret = db->submit_transaction_sync(t);
+  int ret = _submit_transaction_sync(t);
   if (ret != 0) {
     derr << "Failed db->submit_transaction_sync(t)" << dendl;
   }
