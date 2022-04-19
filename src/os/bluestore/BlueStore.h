@@ -210,6 +210,7 @@ enum {
 };
 
 #define META_POOL_ID ((uint64_t)-1ull)
+using bptr_c_it_t = buffer::ptr::const_iterator;
 
 class BlueStore : public ObjectStore,
 		  public md_config_obs_t {
@@ -708,9 +709,9 @@ public:
       }
     }
     void decode(
-      Collection */*coll*/,
       ceph::buffer::ptr::const_iterator& p,
-      bool include_ref_map) {
+      bool include_ref_map,
+      Collection */*coll*/) {
       const char *start = p.get_pos();
       denc(blob, p);
       const char *end = p.get_pos();
@@ -748,11 +749,11 @@ public:
       }
     }
     void decode(
-      Collection *coll,
       ceph::buffer::ptr::const_iterator& p,
       uint64_t struct_v,
       uint64_t* sbid,
-      bool include_ref_map);
+      bool include_ref_map,
+      Collection *coll);
 #endif
   };
   typedef boost::intrusive_ptr<Blob> BlobRef;
@@ -893,7 +894,7 @@ public:
       void operator()(Extent *e) { delete e; }
     };
 
-    ExtentMap(Onode *o);
+    ExtentMap(Onode *o, size_t inline_shard_prealloc_size);
     ~ExtentMap() {
       extent_map.clear_and_dispose(DeleteDisposer());
     }
@@ -909,12 +910,25 @@ public:
 
     bool encode_some(uint32_t offset, uint32_t length, ceph::buffer::list& bl,
 		     unsigned *pn);
+    static unsigned decode_some_raw(
+      const ceph::buffer::list& bl,
+      std::function<void(unsigned, __u8, bptr_c_it_t&)> decode_extent_fn);
     unsigned decode_some(ceph::buffer::list& bl);
 
+    static void decode_extent(
+      Collection* c,
+      __u8 struct_v,
+      bptr_c_it_t& p,
+      Extent* le,
+      uint64_t& pos,
+      uint64_t& prev_len,
+      std::function<void(bool, uint64_t)> consume_blobid_fn,
+      std::function<void(uint64_t, BlobRef)> consume_blob_fn);
     void bound_encode_spanning_blobs(size_t& p);
     void encode_spanning_blobs(ceph::buffer::list::contiguous_appender& p);
-    void decode_spanning_blobs(ceph::buffer::ptr::const_iterator& p);
-
+    void decode_spanning_blobs(
+      bptr_c_it_t& p,
+      std::function<void (uint64_t, BlobRef)> consume_blob_fn);
     BlobRef get_spanning_blob(int id) {
       auto p = spanning_blob_map.find(id);
       ceph_assert(p != spanning_blob_map.end());
@@ -1014,8 +1028,6 @@ public:
 
     /// split a blob (and referring extents)
     BlobRef split_blob(BlobRef lb, uint32_t blob_offset, uint32_t pos);
-
-    void provide_shard_info_to_onode(bufferlist v, uint32_t shard_id);
   };
 
   /// Compressed Blob Garbage collector
@@ -1165,31 +1177,51 @@ public:
 	exists(false),
         cached(false),
         pinned(false),
-	extent_map(this) {
+	extent_map(this,
+	  c->store->cct->_conf->
+	    bluestore_extent_map_inline_shard_prealloc_size) {
     }
     Onode(Collection* c, const ghobject_t& o,
       const std::string& k)
       : nref(0),
-      c(c),
-      oid(o),
-      key(k),
-      exists(false),
-      cached(false),
-      pinned(false),
-      extent_map(this) {
+        c(c),
+        oid(o),
+        key(k),
+        exists(false),
+        cached(false),
+        pinned(false),
+        extent_map(this,
+	  c->store->cct->_conf->
+	    bluestore_extent_map_inline_shard_prealloc_size) {
     }
     Onode(Collection* c, const ghobject_t& o,
       const char* k)
       : nref(0),
-      c(c),
-      oid(o),
-      key(k),
-      exists(false),
-      cached(false),
-      pinned(false),
-      extent_map(this) {
+        c(c),
+        oid(o),
+        key(k),
+        exists(false),
+        cached(false),
+        pinned(false),
+        extent_map(this,
+	  c->store->cct->_conf->
+	    bluestore_extent_map_inline_shard_prealloc_size) {
     }
-
+    Onode(CephContext* cct)
+      : nref(0),
+        c(nullptr),
+        exists(false),
+        cached(false),
+        pinned(false),
+        extent_map(this,
+	  cct->_conf->
+	    bluestore_extent_map_inline_shard_prealloc_size) {
+    }
+    static void decode_raw(
+      BlueStore::Onode* on,
+      const bufferlist& v,
+      std::function<void (uint64_t, BlobRef)> consume_span_blob_fn,
+      std::function<unsigned (const bufferlist&)> decode_inline_fn);
     static Onode* decode(
       CollectionRef c,
       const ghobject_t& oid,
@@ -2719,6 +2751,7 @@ private:
     int64_t& errors,
     int64_t &warnings,
     BlueStoreRepairer* repairer);
+
   void _fsck_repair_shared_blobs(
     BlueStoreRepairer& repairer,
     shared_blob_2hash_tracker_t& sb_ref_counts,
@@ -2796,7 +2829,7 @@ public:
 
   bool is_rotational() override;
   bool is_journal_rotational() override;
-  bool is_db_rotational() ;
+  bool is_db_rotational();
 
   std::string get_default_device_class() override {
     std::string device_class;
@@ -3661,66 +3694,34 @@ public:
   int  read_allocation_from_drive_for_bluestore_tool();
 #endif
 private:
-#define MAX_BLOBS_IN_ONODE 128
   struct  read_alloc_stats_t {
-    //read_alloc_stats_t() { memset(&this, 0, sizeof(read_alloc_stats_t)); }
     uint32_t onode_count             = 0;
     uint32_t shard_count             = 0;
 
-    uint32_t skipped_repeated_extent = 0;
     uint32_t skipped_illegal_extent  = 0;
 
-    uint32_t collection_search       = 0;
-    uint32_t pad_limit_count         = 0;
-
-    uint64_t shared_blobs_count      = 0;
+    uint64_t shared_blob_count      = 0;
     uint64_t compressed_blob_count   = 0;
     uint64_t spanning_blob_count     = 0;
     uint64_t insert_count            = 0;
     uint64_t extent_count            = 0;
-
-    uint64_t saved_inplace_count     = 0;
-    uint32_t merge_insert_count      = 0;
-    uint32_t merge_inplace_count     = 0;
-
-    std::array<uint32_t, MAX_BLOBS_IN_ONODE+1>blobs_in_onode = {};
-    //uint32_t blobs_in_onode[MAX_BLOBS_IN_ONODE+1];
+    std::map<uint64_t, volatile_statfs> actual_pool_vstatfs;
+    volatile_statfs actual_store_vstatfs;
   };
 
   friend std::ostream& operator<<(std::ostream& out, const read_alloc_stats_t& stats) {
     out << "==========================================================" << std::endl;
     out << "NCB::onode_count             = " ;out.width(10);out << stats.onode_count << std::endl
 	<< "NCB::shard_count             = " ;out.width(10);out << stats.shard_count << std::endl
-	<< "NCB::shared_blobs_count      = " ;out.width(10);out << stats.shared_blobs_count << std::endl
+	<< "NCB::shared_blob_count      = " ;out.width(10);out << stats.shared_blob_count << std::endl
 	<< "NCB::compressed_blob_count   = " ;out.width(10);out << stats.compressed_blob_count << std::endl
 	<< "NCB::spanning_blob_count     = " ;out.width(10);out << stats.spanning_blob_count << std::endl
-	<< "NCB::collection search       = " ;out.width(10);out << stats.collection_search << std::endl
-	<< "NCB::skipped_repeated_extent = " ;out.width(10);out << stats.skipped_repeated_extent << std::endl
 	<< "NCB::skipped_illegal_extent  = " ;out.width(10);out << stats.skipped_illegal_extent << std::endl
 	<< "NCB::extent_count            = " ;out.width(10);out << stats.extent_count << std::endl
 	<< "NCB::insert_count            = " ;out.width(10);out << stats.insert_count << std::endl;
 
-    if (stats.merge_insert_count) {
-      out << "NCB::merge_insert_count      = " ;out.width(10);out << stats.merge_insert_count  << std::endl;
-    }
-    if (stats.merge_inplace_count ) {
-      out << "NCB::merge_inplace_count     = " ;out.width(10);out << stats.merge_inplace_count << std::endl;
-      out << "NCB::saved_inplace_count     = " ;out.width(10);out << stats.saved_inplace_count << std::endl;
-      out << "NCB::saved inplace per call  = " ;out.width(10);out << stats.saved_inplace_count/stats.merge_inplace_count << std::endl;
-    }
     out << "==========================================================" << std::endl;
 
-    for (unsigned i = 0; i < MAX_BLOBS_IN_ONODE; i++ ) {
-      if (stats.blobs_in_onode[i]) {
-	out << "NCB::We had " ;out.width(9); out << stats.blobs_in_onode[i]
-	    << " ONodes with "; out.width(3); out << i << " blobs" << std::endl;
-      }
-    }
-
-    if (stats.blobs_in_onode[MAX_BLOBS_IN_ONODE]) {
-      out << "NCB::We had " ;out.width(9);out << stats.blobs_in_onode[MAX_BLOBS_IN_ONODE]
-	  << " ONodes with more than " << MAX_BLOBS_IN_ONODE << " blobs" << std::endl;
-    }
     return out;
   }
 
@@ -3738,7 +3739,6 @@ private:
   int  read_allocation_from_drive_on_startup();
   int  reconstruct_allocations(SimpleBitmap *smbmp, read_alloc_stats_t &stats);
   int  read_allocation_from_onodes(SimpleBitmap *smbmp, read_alloc_stats_t& stats);
-  void read_allocation_from_single_onode(SimpleBitmap *smbmp, BlueStore::OnodeRef& onode_ref, read_alloc_stats_t&  stats);
   void set_allocation_in_simple_bmap(SimpleBitmap* sbmap, uint64_t offset, uint64_t length);
   int  commit_freelist_type();
   int  commit_to_null_manager();
