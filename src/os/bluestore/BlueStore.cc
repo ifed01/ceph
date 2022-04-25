@@ -15085,11 +15085,6 @@ void BlueStore::_do_write_small(
   return;
 }
 
-bool BlueStore::has_null_fm()
-{
-  return fm->is_null_manager();
-}
-
 bool BlueStore::BigDeferredWriteContext::can_defer(
     BlueStore::extent_map_t::iterator ep,
     uint64_t prefer_deferred_size,
