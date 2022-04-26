@@ -1588,6 +1588,14 @@ public:
     void reset() {
       *this = volatile_statfs();
     }
+    bool empty() const {
+      for (size_t i = 0; i < STATFS_LAST; ++i) {
+	if (values[i]) {
+	  return false;
+	}
+      }
+      return true;
+    }
     void publish(store_statfs_t* buf) const {
       buf->allocated = allocated();
       buf->data_stored = stored();
@@ -2757,12 +2765,12 @@ private:
     store_statfs_t& expected_statfs,
     FSCKDepth depth);
 
-  void _fsck_check_pool_statfs(
-    per_pool_statfs& expected_pool_statfs,
+  void _fsck_check_statfs(
+    const store_statfs_t& expected_store_statfs,
+    const per_pool_statfs& expected_pool_statfs,
     int64_t& errors,
     int64_t &warnings,
     BlueStoreRepairer* repairer);
-
   void _fsck_repair_shared_blobs(
     BlueStoreRepairer& repairer,
     shared_blob_2hash_tracker_t& sb_ref_counts,
@@ -2841,6 +2849,7 @@ public:
   bool is_rotational() override;
   bool is_journal_rotational() override;
   bool is_db_rotational();
+  bool is_statfs_recoverable() const;
 
   std::string get_default_device_class() override {
     std::string device_class;
