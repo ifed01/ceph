@@ -2786,7 +2786,6 @@ private:
     int64_t& errors,
     int64_t &warnings,
     BlueStoreRepairer* repairer);
-
   void _fsck_repair_shared_blobs(
     BlueStoreRepairer& repairer,
     shared_blob_2hash_tracker_t& sb_ref_counts,
@@ -3741,10 +3740,6 @@ private:
     uint64_t spanning_blob_count     = 0;
     uint64_t insert_count            = 0;
     uint64_t extent_count            = 0;
-<<<<<<< HEAD
-
-=======
->>>>>>> 7b28b5d47de (os/bluestore: refactor NCB recovery procedure.)
     std::map<uint64_t, volatile_statfs> actual_pool_vstatfs;
     volatile_statfs actual_store_vstatfs;
   };

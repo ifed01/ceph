@@ -6947,6 +6947,30 @@ void BlueStore::_close_db()
     ceph_assert(r >= 0);
   }
   _close_wal();
+  if (do_destage && is_statfs_recoverable()) {
+    auto t = db->get_transaction();
+    if (per_pool_stat_collection) {
+      std::lock_guard l(vstatfs_lock);
+      for(auto &p : osd_pools) {
+        string key;
+        get_pool_stat_key(p.first, &key);
+        bufferlist bl;
+        if (!p.second.is_empty()) {
+          p.second.encode(bl);
+          t->set(PREFIX_STAT, key, bl);
+        } else {
+          t->rmkey(PREFIX_STAT, key);
+        }
+      }
+    } else {
+      bufferlist bl;
+      std::lock_guard l(vstatfs_lock);
+      vstatfs.encode(bl);
+      t->set(PREFIX_STAT, BLUESTORE_GLOBAL_STATFS_KEY, bl);
+    }
+    int r = db->submit_transaction_sync(t);
+    ceph_assert(r >= 0);
+  }
   _close_db_leave_bluefs();
 
   if (do_destage && fm && fm->is_null_manager()) {
