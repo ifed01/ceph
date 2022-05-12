@@ -13,29 +13,6 @@ using std::ostream;
 using ceph::bufferlist;
 using ceph::Formatter;
 
-// bluefs_extent_t
-void bluefs_extent_t::dump(Formatter *f) const
-{
-  f->dump_unsigned("offset", offset);
-  f->dump_unsigned("length", length);
-  f->dump_unsigned("bdev", bdev);
-}
-
-void bluefs_extent_t::generate_test_instances(list<bluefs_extent_t*>& ls)
-{
-  ls.push_back(new bluefs_extent_t);
-  ls.push_back(new bluefs_extent_t);
-  ls.back()->offset = 1;
-  ls.back()->length = 2;
-  ls.back()->bdev = 1;
-}
-
-ostream& operator<<(ostream& out, const bluefs_extent_t& e)
-{
-  return out << (int)e.bdev << ":0x" << std::hex << e.offset << "~" << e.length
-	     << std::dec;
-}
-
 // bluefs_layout_t
 
 void bluefs_layout_t::encode(bufferlist& bl) const
@@ -124,6 +101,7 @@ ostream& operator<<(ostream& out, const bluefs_super_t& s)
 	     << " v " << s.version
 	     << " block_size 0x" << std::hex << s.block_size
 	     << " log_fnode 0x" << s.log_fnode
+	     << " wal " << s.ext_wal_region
 	     << std::dec << ")";
 }
 

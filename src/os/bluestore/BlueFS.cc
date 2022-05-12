@@ -475,7 +475,7 @@ uint64_t BlueFS::get_block_device_size(unsigned id) const
 }
 
 BlockDevice* BlueFS::get_external_wal(
-    bluefs_extent_t* ret_ext_wal_region)
+    bluefs_huge_extent_t* ret_ext_wal_region)
 {
   BlockDevice* dev = nullptr;
   if (super.ext_wal_region.length) {
@@ -577,10 +577,11 @@ void BlueFS::dump_block_extents(ostream& out)
 
 void BlueFS::foreach_block_extents(
   unsigned id,
-  std::function<void(uint64_t, uint32_t)> fn)
+  std::function<void(uint64_t, uint64_t)> fn)
 {
   std::lock_guard nl(nodes.lock);
-  dout(10) << __func__ << " bdev " << id << dendl;
+  dout(10) << __func__ << " bdev " << id
+           << " super " << super << dendl;
   ceph_assert(id < alloc.size());
   if (super.ext_wal_region.length && super.ext_wal_region.bdev == id) {
     fn(super.ext_wal_region.offset, super.ext_wal_region.length);
@@ -757,18 +758,20 @@ void BlueFS::_stop_alloc()
     }
   }
 }
-void BlueFS::_mark_allocated(unsigned bdev, uint64_t o, uint32_t l)
+void BlueFS::_mark_allocated(unsigned bdev, uint64_t o, uint64_t l)
 {
   bool is_shared = is_shared_alloc(bdev);
   ceph_assert(!is_shared || (is_shared && shared_alloc));
   if (is_shared && shared_alloc->need_init && shared_alloc->a) {
     ceph_assert(alloc[bdev]);
-    ceph_assert(alloc[bdev]->get_free() >= o + l);
+    ceph_assert(alloc[bdev]->get_free() >= l);
+    ceph_assert(uint64_t(alloc[bdev]->get_capacity()) >= o + l);
     shared_alloc->bluefs_used += l;
     alloc[bdev]->init_rm_free(o, l);
   } else if (!is_shared) {
     ceph_assert(alloc[bdev]);
-    ceph_assert(alloc[bdev]->get_free() >= o + l);
+    ceph_assert(alloc[bdev]->get_free() >= l);
+    ceph_assert(uint64_t(alloc[bdev]->get_capacity()) >= o + l);
     alloc[bdev]->init_rm_free(o, l);
   }
 }

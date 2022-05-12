@@ -5679,7 +5679,7 @@ int BlueStore::_maybe_open_wal()
     return 0;
   }
   int r = 0; // it's OK if there is no WAL
-  bluefs_extent_t wal_ext;
+  bluefs_huge_extent_t wal_ext;
   BlockDevice* bdev = bluefs->get_external_wal(&wal_ext);
   if (bdev) {
     ceph_assert(wal_ext.length &&
@@ -9463,7 +9463,7 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
 
     bluefs->foreach_block_extents(
       bluefs_layout.shared_bdev,
-      [&](uint64_t start, uint32_t len) {
+      [&](uint64_t start, uint64_t len) {
         apply_for_bitset_range(start, len, alloc_size, used_blocks,
           [&](uint64_t pos, mempool_dynamic_bitset& bs) {
             ceph_assert(pos < bs.size());
@@ -19281,6 +19281,7 @@ void BlueStore::ExtentDecoderPartial::reset(const ghobject_t _oid,
 
 int BlueStore::read_allocation_from_onodes(SimpleBitmap *sbmap, read_alloc_stats_t& stats)
 {
+  dout(20) << __func__ << dendl;
   sb_info_space_efficient_map_t sb_info;
   // iterate over all shared blobs
   auto it = db->get_iterator(PREFIX_SHARED_BLOB, KeyValueDB::ITERATOR_NOCACHE);
@@ -19441,7 +19442,6 @@ static void copy_simple_bitmap_to_allocator(SimpleBitmap* sbmap, Allocator* dest
 int BlueStore::read_allocation_from_drive_on_startup()
 {
   int ret = 0;
-
   ret = _open_collections();
   if (ret < 0) {
     return ret;
@@ -19566,7 +19566,7 @@ int BlueStore::add_existing_bluefs_allocation(Allocator* allocator, read_alloc_s
   if (bluefs) {
     bluefs->foreach_block_extents(
       bluefs_layout.shared_bdev,
-      [&](uint64_t start, uint32_t len) {
+      [&](uint64_t start, uint64_t len) {
         allocator->init_rm_free(start, len);
         stats.extent_count++;
       }
@@ -19662,7 +19662,7 @@ Allocator* BlueStore::clone_allocator_without_bluefs(Allocator *src_allocator)
   {
     bluefs->foreach_block_extents(
       bluefs_layout.shared_bdev,
-      [&] (uint64_t start, uint32_t len) {
+      [&] (uint64_t start, uint64_t len) {
         allocator->init_add_free(start, len);
       }
     );

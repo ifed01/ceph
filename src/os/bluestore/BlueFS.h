@@ -418,7 +418,7 @@ private:
   ///< pad ceph::buffer::list to max(block size, pad_size) w/ zeros
   void _pad_bl(ceph::buffer::list& bl, uint64_t pad_size = 0);
 
-  void _mark_allocated(unsigned bdev, uint64_t o, uint32_t l);
+  void _mark_allocated(unsigned bdev, uint64_t o, uint64_t l);
   void _init_external_wal();
 
 
@@ -591,7 +591,7 @@ public:
   /// get current extents that we own for given block device
   void foreach_block_extents(
     unsigned id,
-    std::function<void(uint64_t, uint32_t)> cb);
+    std::function<void(uint64_t, uint64_t)> cb);
 
   int open_for_write(
     std::string_view dir,
@@ -650,7 +650,7 @@ public:
   bool bdev_support_label(unsigned id);
   uint64_t get_block_device_size(unsigned bdev) const;
 
-  BlockDevice* get_external_wal(bluefs_extent_t* wal_ext);
+  BlockDevice* get_external_wal(bluefs_huge_extent_t* wal_ext);
 
   // handler for discard event
   void handle_discard(unsigned dev, interval_set<uint64_t>& to_release);
