@@ -9,18 +9,20 @@
 #include "include/utime.h"
 #include "include/encoding.h"
 #include "include/denc.h"
+#include "common/Formatter.h"
 
-class bluefs_extent_t {
+template <typename OFFS, typename LEN>
+class bluefs_extent_proto {
 public:
-  uint64_t offset = 0;
-  uint32_t length = 0;
+  OFFS offset = 0;
+  LEN length = 0;
   uint8_t bdev;
 
-  bluefs_extent_t(uint8_t b = 0, uint64_t o = 0, uint32_t l = 0)
+  bluefs_extent_proto(uint8_t b = 0, OFFS o = 0, LEN l = 0)
     : offset(o), length(l), bdev(b) {}
 
-  uint64_t end() const { return  offset + length; }
-  DENC(bluefs_extent_t, v, p) {
+  OFFS end() const { return  offset + length; }
+  DENC(bluefs_extent_proto, v, p) {
     DENC_START(1, 1, p);
     denc_lba(v.offset, p);
     denc_varint_lowz(v.length, p);
@@ -28,12 +30,36 @@ public:
     DENC_FINISH(p);
   }
 
-  void dump(ceph::Formatter *f) const;
-  static void generate_test_instances(std::list<bluefs_extent_t*>&);
+  void dump(ceph::Formatter *f) const
+  {
+    f->dump_unsigned("offset", offset);
+    f->dump_unsigned("length", length);
+    f->dump_unsigned("bdev", bdev);
+  }
+  static void generate_test_instances(
+    std::list<bluefs_extent_proto*>& ls)
+  {
+    ls.push_back(new bluefs_extent_proto);
+    ls.push_back(new bluefs_extent_proto);
+    ls.back()->offset = 1;
+    ls.back()->length = 2;
+    ls.back()->bdev = 1;
+  }
 };
+
+typedef bluefs_extent_proto<uint64_t, uint32_t> bluefs_extent_t;
 WRITE_CLASS_DENC(bluefs_extent_t)
 
-std::ostream& operator<<(std::ostream& out, const bluefs_extent_t& e);
+typedef bluefs_extent_proto<uint64_t, uint64_t> bluefs_huge_extent_t;
+WRITE_CLASS_DENC(bluefs_huge_extent_t)
+
+template <typename OFFS, typename LEN>
+std::ostream&
+operator<<(std::ostream& out, const bluefs_extent_proto<OFFS, LEN>& e)
+{
+  return out << (int)e.bdev << ":0x" << std::hex << e.offset << "~" << e.length
+             << std::dec;
+}
 
 struct bluefs_fnode_delta_t {
   uint64_t ino;
@@ -213,7 +239,7 @@ struct bluefs_super_t {
   uuid_d osd_uuid;  ///< matches the osd that owns us
   uint64_t version;
   uint32_t block_size;
-  bluefs_extent_t ext_wal_region;
+  bluefs_huge_extent_t ext_wal_region;
 
   bluefs_fnode_t log_fnode;
 
