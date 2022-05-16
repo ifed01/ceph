@@ -4917,6 +4917,13 @@ options:
   flags:
   - create
   with_legacy: true
+- name: bluestore_wal_flush_ratio
+  type: float
+  level: dev
+  default: 0.5
+  flags:
+  - startup
+  with_legacy: true
 - name: bluestore_allocator
   type: str
   level: advanced

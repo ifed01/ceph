@@ -100,10 +100,10 @@ public:
   BluestoreWALTester(CephContext* _cct,
 		      BlockDevice* _bdev,
 		      const uuid_d& _uuid,
+		      uint64_t fsize,
 		      uint64_t psize,
-		      uint64_t bsize,
-		      uint64_t fsize)
-    : BluestoreWAL(_cct, _bdev, _uuid, psize, bsize, fsize) {
+		      uint64_t bsize)
+    : BluestoreWAL(_cct, _bdev, _uuid, fsize, psize, bsize) {
   }
   auto make_transaction(const std::string& bytes) {
     KeyValueDB::Transaction t(std::make_shared<TestTransactionImpl>());
@@ -188,9 +188,9 @@ TEST(BlueStoreWAL, basic) {
   BluestoreWALTester t(g_ceph_context,
     nullptr,
     uuid,
+    psize * 2, // flush when 2 pages are ready
     psize,
-    bsize,
-    psize * 2); // flush when 2 pages are ready
+    bsize);
   t.init_add_pages(0, t.get_page_size() * 4);
   t.init_add_pages(1ull << 32, t.get_page_size() * (page_count - 4));
 
@@ -637,9 +637,9 @@ TEST(BlueStoreWAL, basic_replay) {
   BluestoreWALTester t(g_ceph_context,
     nullptr,
     uuid,
+    psize * 4,
     psize,
-    bsize,
-    psize * 4);
+    bsize);
   t.init_add_pages(0, t.get_page_size() * 4);
   t.init_add_pages(1ull << 16, t.get_page_size() * 3);
   t.init_add_pages(1ull << 24, t.get_page_size() * 1);
@@ -647,9 +647,9 @@ TEST(BlueStoreWAL, basic_replay) {
   BluestoreWALTester t2(g_ceph_context,
     nullptr,
     uuid,
+    psize * 4,
     psize,
-    bsize,
-    psize * 4);
+    bsize);
   t2.init_add_pages(0, t2.get_page_size() * 4);
   t2.init_add_pages(1ull << 16, t2.get_page_size() * 3);
   t2.init_add_pages(1ull << 24, t2.get_page_size() * 1);
@@ -809,9 +809,9 @@ TEST(BlueStoreWAL, basic_replay) {
     BluestoreWALTester t3(g_ceph_context,
       nullptr,
       uuid,
+      psize * 4,
       psize,
-      bsize,
-      psize * 4);
+      bsize);
     t3.init_add_pages(0, t3.get_page_size() * 4);
     t3.init_add_pages(1ull << 16, t3.get_page_size() * 3);
     t3.init_add_pages(1ull << 24, t3.get_page_size() * 1);

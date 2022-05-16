@@ -112,9 +112,9 @@ protected:
 
   uuid_d uuid;
   uint64_t total = 0;
+  size_t flush_threshold = 0; // min amount of submitted pages to flush DB
   size_t page_size = 0;
   size_t block_size = 0;
-  size_t flush_size = 0;
 
   size_t head_size = 0;
 
@@ -266,7 +266,7 @@ protected:
   uint64_t curpage_pos = 0;                           // pos within current page
   uint64_t cur_txc_seqno = 0;
   std::atomic<uint64_t> last_submitted_page_seqno = 0;// last page seq got DB submit confirmation
-  uint64_t last_committed_page_seqno = 0;             // last page seq committed to DB
+  std::atomic<uint64_t> last_committed_page_seqno = 0;// last page seq committed to DB
   uint64_t last_wiping_page_seqno = 0; 		      // last page seq wiping has been triggered for
   uint64_t last_wiped_page_seqno = 0;		      // last page seq which has been wiped
 
@@ -334,9 +334,9 @@ public:
     CephContext* _cct,
     BlockDevice* _bdev,
     const uuid_d& _uuid,
+    uint64_t fsize = DEF_PAGE_SIZE,
     uint64_t psize = DEF_PAGE_SIZE,
-    uint64_t bsize = DEF_BLOCK_SIZE,
-    uint64_t fsize = DEF_PAGE_SIZE);
+    uint64_t bsize = DEF_BLOCK_SIZE);
 
   virtual ~BluestoreWAL() {
     if (logger) {

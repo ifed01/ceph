@@ -5686,11 +5686,15 @@ int BlueStore::_maybe_open_wal()
       (wal_ext.length % BluestoreWAL::DEF_PAGE_SIZE) == 0);
 
     ceph_assert(wal_ext.length != 0);
+    uint64_t flush_thr = wal_ext.length * cct->_conf->bluestore_wal_flush_ratio;
     wal = new BluestoreWAL(
       cct,
       bdev,
-      fsid);
-    dout(1) << __func__ << wal_ext << dendl;
+      fsid,
+      flush_thr);
+    dout(1) << __func__ << " " << wal_ext << std::hex
+            << " flush threshold:" << flush_thr
+            << std::dec << dendl;
     wal->init_add_pages(wal_ext.offset, wal_ext.length);
   }
   return r;
