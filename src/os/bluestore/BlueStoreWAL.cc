@@ -53,25 +53,27 @@ enum {
   l_bluestore_wal_knocking_avg,
   l_bluestore_wal_queued_lat,
   l_bluestore_wal_aio_finish_lat,
-  l_bluestore_submitted_lat,
+  l_bluestore_wal_flush_lat,
   l_bluestore_wal_last
 };
 
 BluestoreWAL::BluestoreWAL(CephContext* _cct,
   BlockDevice* _bdev,
   const uuid_d& _uuid,
+  uint64_t fsize,
   uint64_t psize,
-  uint64_t bsize,
-  uint64_t fsize) :
+  uint64_t bsize) :
     cct(_cct),
     bdev(_bdev),
     uuid(_uuid),
+    flush_threshold(fsize / psize),
     page_size(psize),
-    block_size(bsize),
-    flush_size(fsize)
+    block_size(bsize)
 {
   ceph_assert(psize >= bsize);
-  ceph_assert(fsize >= psize);
+  if (!flush_threshold) {
+    flush_threshold = 1;
+  }
 
   curpage_pos = psize; //assign position which enforces new page selection
   page_seqno = 0;
@@ -111,8 +113,8 @@ BluestoreWAL::BluestoreWAL(CephContext* _cct,
       "Average amount of ops acquiring entrance lock");
     b.add_time_avg(l_bluestore_wal_queued_lat, "queued_lat",
       "Average queued latency");
-    b.add_time_avg(l_bluestore_submitted_lat, "submitted_lat",
-      "Average DB submission processing latency");
+    b.add_time_avg(l_bluestore_wal_flush_lat, "flush_lat",
+      "Average DB flushing latency");
 
   logger = b.create_perf_counters();
   cct->get_perfcounters_collection()->add(logger);
@@ -758,43 +760,49 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueWALContext* txc)
 void BluestoreWAL::submitted(BlueWALContext* txc,
 			     std::function<void()> flush_db_fn)
 {
-  auto cur_page_seqno = txc->get_wal_seq();
-  dout(7) << __func__ << " pseq " << cur_page_seqno << dendl;
-  // current page seqno indicates all the preceeding pages have been submitted,
-  // current one is still being submitted (i.e. busy)
+  // txc's wal seqno indicates all the preceeding pages have been submitted,
+  // while the bound one is still being submitted (i.e. busy)
   // we might get multiple confirmations for the same current page,
-  // just ignore repeated/outdated ones
-  if (cur_page_seqno > last_submitted_page_seqno + 1) {
+  // just ignore repeated/outdated ones.
 
-    dout(7) << __func__ << " pseq: " << cur_page_seqno
-            << " last_submitted: " << last_submitted_page_seqno
-            << " last_committed: " << last_committed_page_seqno
-            << " avail: " << avail
-            << " num_queued: " << num_queued
-            << dendl;
-    auto t0 = mono_clock::now();
-
-    ceph_assert(cur_page_seqno);
-    last_submitted_page_seqno = cur_page_seqno - 1;
-
-    ceph_assert(last_submitted_page_seqno >= last_committed_page_seqno);
-    auto to_flush = page_size *
-     (last_submitted_page_seqno - last_committed_page_seqno);
-
-    if (to_flush >= flush_size) {
-      dout(5) << __func__ << " flush db"  << dendl;
+  auto page_seqno = txc->get_wal_seq();
+  ceph_assert(page_seqno);
+  --page_seqno; // no indicates the last submitted page
+  dout(7) << __func__ << " pseq " << page_seqno
+          << " last_submitted: " << last_submitted_page_seqno
+          << " last_committed: " << last_committed_page_seqno
+          << " avail: " << avail
+          << " num_queued: " << num_queued
+          << dendl;
+  auto expected = last_submitted_page_seqno.load();
+  if ((page_seqno > expected) &&
+      last_submitted_page_seqno.compare_exchange_weak(expected, page_seqno)) {
+    if (page_seqno >=
+         last_committed_page_seqno + flush_threshold) {
+      auto t0 = mono_clock::now();
       flush_db_fn();
       std::unique_lock l(lock);
-      last_committed_page_seqno = last_submitted_page_seqno;
-      avail += to_flush;
+      dout(7) << __func__ << " pseq " << page_seqno
+              << " last_submitted: " << last_submitted_page_seqno
+              << " last_committed: " << last_committed_page_seqno
+              << " avail: " << avail
+              << " num_queued: " << num_queued
+              << dendl;
+      // recalculate under the lock
+      if (page_seqno > last_committed_page_seqno) {
+        int64_t to_flush = page_size *
+          (page_seqno - last_committed_page_seqno);
+        last_committed_page_seqno = page_seqno;
+        avail += to_flush;
+      }
 
       //awake pending submits if any
       if (num_queued) {
         l.unlock();
         flush_cond.notify_all();
       }
+      logger->tinc(l_bluestore_wal_flush_lat, mono_clock::now() - t0);
     }
-    logger->tinc(l_bluestore_submitted_lat, mono_clock::now() - t0);
   }
 }
 
@@ -805,7 +813,7 @@ void BluestoreWAL::shutdown(std::function<void()> flush_db_fn)
   std::unique_lock l(lock);
   ceph_assert(num_queued == 0);
   flush_db_fn();
-  last_committed_page_seqno = last_submitted_page_seqno;
+  last_committed_page_seqno = last_submitted_page_seqno.load();
   IOContext ioctx(cct, nullptr);
   auto wiping = wipe_pages(&ioctx);
   if (wiping) {
@@ -1031,7 +1039,7 @@ int BluestoreWAL::replay(bool wipe_on_complete,
     flush_db_fn();
   }
   last_submitted_page_seqno = valid_page_headers.back().page_seq;
-  last_committed_page_seqno = last_submitted_page_seqno;
+  last_committed_page_seqno = valid_page_headers.back().page_seq;
   page_seqno = last_committed_page_seqno + 1;
   min_pending_io_seqno = 1;
 
