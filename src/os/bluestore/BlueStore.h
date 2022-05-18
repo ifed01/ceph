@@ -267,9 +267,7 @@ class BlueWALContextSync : public BlueWALContext {
   std::condition_variable_any cond;
   ceph::recursive_mutex lock = {
       ceph::make_recursive_mutex("BlueWALContextSync::lock") };
-  int ret = 0;
   bool completed = false;
-  void _notify(int r);
 public:
   BlueWALContextSync(CephContext* cct,
                      BlueStore* _store,
@@ -278,8 +276,8 @@ public:
       t(_t) {
     store = _store;
   }
-  int wait_completed();
-  void wal_submitted();
+  void wait_completed();
+  int wal_submitted();
   void wal_aio_finish() override;
   IOContext* get_ioc() override {
     return &ioc;

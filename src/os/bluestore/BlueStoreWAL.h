@@ -347,9 +347,7 @@ public:
   void init_add_pages(uint64_t offset, uint64_t len);
 
   int log(BlueWALContext* txc);
-  int log_submit_sync(BlueWALContextSync* txc,
-    std::function<int(BlueWALContextSync*)> submit_db_fn,
-    std::function<void()> flush_db_fn);
+  int log_submit_sync(BlueWALContextSync* txc);
 
   void submitted(BlueWALContext* txc,
     std::function<void()> flush_db_fn);
