@@ -507,9 +507,7 @@ int BluestoreWAL::log(BlueWALContext* txc)
   return -EIO;
 }
 
-int BluestoreWAL::log_submit_sync(BlueWALContextSync* txc,
-  std::function<int(BlueWALContextSync*)> submit_db_fn,
-  std::function<void()> flush_db_fn)
+int BluestoreWAL::log_submit_sync(BlueWALContextSync* txc)
 {
   ceph_assert(txc);
   ceph_assert(!txc->get_wal_op_ctx());
@@ -522,10 +520,12 @@ int BluestoreWAL::log_submit_sync(BlueWALContextSync* txc,
     bdev->aio_submit(ioc);
     ioc->aio_wait();
     aio_finish(txc);
-    r = txc->wait_completed();
-    if (r >= 0) {
-      txc->wal_submitted();
-    }
+    //we might need wait for completion explicitly as the above
+    // aio_finish() call doesn't guarantee that relevant wal operaton
+    // has actually finished - this might be postponed till we're done with
+    // prior wal operations - to ensure their proper ordering
+    txc->wait_completed();
+    r = txc->wal_submitted();
   }
   if (r >= 0) {
     dout(7) << __func__ << " completed: " << dendl;
