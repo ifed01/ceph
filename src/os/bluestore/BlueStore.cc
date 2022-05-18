@@ -910,17 +910,8 @@ private:
 };
 
 } // anonymous namespace
-void BlueWALContextSync::_notify(int r)
-{
-  {
-    std::lock_guard l(lock);
-    ret = r;
-    completed = true;
-  }
-  cond.notify_all();
-}
 
-int BlueWALContextSync::wait_completed()
+void BlueWALContextSync::wait_completed()
 {
   lock.lock();
   if (!completed) {
@@ -928,10 +919,18 @@ int BlueWALContextSync::wait_completed()
   }
   ceph_assert(completed);
   lock.unlock();
-  return ret;
 }
 
 void BlueWALContextSync::wal_aio_finish()
+{
+  {
+    std::lock_guard l(lock);
+    completed = true;
+  }
+  cond.notify_all();
+}
+
+int BlueWALContextSync::wal_submitted()
 {
   ceph_assert(store);
   auto *db = store->get_kv();
@@ -939,20 +938,13 @@ void BlueWALContextSync::wal_aio_finish()
   ceph_assert(db);
   ceph_assert(wal);
   int r = db->submit_transaction_sync(t);
-  _notify(r);
-}
-
-void BlueWALContextSync::wal_submitted()
-{
-  ceph_assert(store);
-  auto *db = store->get_kv();
-  auto *wal = store->get_wal();
-  ceph_assert(db);
-  ceph_assert(wal);
-  wal->submitted(this,
-    [&]() {
-      db->flush_all();
-    });
+  if (r >= 0) {
+    wal->submitted(this,
+      [&]() {
+        db->flush_all();
+      });
+  }
+  return r;
 }
 
 void BlueStore::TransContext::aio_finish(BlueStore *_store, bool last)
@@ -11540,14 +11532,7 @@ int BlueStore::_submit_transaction_sync(KeyValueDB::Transaction t)
   if (wal) {
     BlueWALContextSync txc(cct, this, t);
     if (!txc.get_payload().length() == 0) {
-      r = wal->log_submit_sync(&txc,
-        [&](BlueWALContextSync* _txc) {
-          ceph_assert(_txc == &txc);
-          return db->submit_transaction_sync(t);
-        },
-        [&]() {
-          db->flush_all();
-        });
+      r = wal->log_submit_sync(&txc);
     }
   } else {
     r = db->submit_transaction_sync(t);
