@@ -665,7 +665,7 @@ void KernelDevice::_aio_thread()
 	  if (--ioc->num_running == 0) {
 	    dout(5) << __func__ << " before cb, ioc " << ioc
 	            << dendl;
-	    aio_callback(aio_callback_priv, ioc->priv, i == (r - 1));
+	    aio_callback(aio_callback_priv, ioc->priv);
 	    dout(5) << __func__ << " after cb ioc " << ioc << dendl;
 	  }
 	} else {
@@ -733,7 +733,7 @@ void KernelDevice::_discard_thread()
 	_discard(p.get_start(), p.get_len());
       }
 
-      discard_callback(discard_callback_priv, static_cast<void*>(&discard_finishing), true);
+      discard_callback(discard_callback_priv, static_cast<void*>(&discard_finishing));
       discard_finishing.clear();
       l.lock();
       discard_running = false;
