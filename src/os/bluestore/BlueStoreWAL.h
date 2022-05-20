@@ -275,6 +275,8 @@ protected:
 
   uint64_t min_pending_io_seqno = 1;
 
+  std::atomic<size_t> future_ops = 0;// amount of future wal ops advertised
+
   PerfCounters* logger = nullptr;
 
 protected:
@@ -307,7 +309,7 @@ protected:
 		   bool buffered);
 
   void _finish_op(Op& op, bool deep);
-  Op* _log(BlueWALContext* txc);
+  Op* _log(BlueWALContext* txc, bool force);
   void _prepare_txc_submit(bluewal_head_t& header,
                            BlueWALContext* txc,
                            bufferlist::page_aligned_appender& appender,
@@ -346,8 +348,13 @@ public:
   }
   void init_add_pages(uint64_t offset, uint64_t len);
 
-  int log(BlueWALContext* txc);
+  void advertise_future_op(size_t num = 1) {
+    future_ops += num;
+  }
+  int log(BlueWALContext* txc, bool force = true);
   int log_submit_sync(BlueWALContextSync* txc);
+
+  int advertise_and_log(BlueWALContext* txc);
 
   void submitted(BlueWALContext* txc,
     std::function<void()> flush_db_fn);
