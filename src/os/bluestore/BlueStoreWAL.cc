@@ -493,18 +493,24 @@ void BluestoreWAL::_maybe_write_unlock(IOContext* anchor_ioc,
   }
 }
 
-int BluestoreWAL::log(BlueWALContext* txc)
+int BluestoreWAL::advertise_and_log(BlueWALContext* txc)
+{
+  advertise_future_op();
+  return log(txc);
+}
+
+int BluestoreWAL::log(BlueWALContext* txc, bool force)
 {
   ceph_assert(txc);
   ceph_assert(!txc->get_wal_op_ctx());
 
-  Op* op = _log(txc);
+  Op* op = _log(txc, false);
   if (op) {
     txc->set_wal_op_ctx(op);
     aio_submit(txc->get_ioc());
     return 0;
   }
-  return -EIO;
+  return -EINPROGRESS;
 }
 
 int BluestoreWAL::log_submit_sync(BlueWALContextSync* txc)
@@ -513,7 +519,8 @@ int BluestoreWAL::log_submit_sync(BlueWALContextSync* txc)
   ceph_assert(!txc->get_wal_op_ctx());
   int r = -EIO;
   dout(7) << __func__ << " start " << dendl;
-  Op* op = _log(txc);
+  advertise_future_op();
+  Op* op = _log(txc, true);
   if (op) {
     txc->set_wal_op_ctx(op);
     auto* ioc = txc->get_ioc();
@@ -535,28 +542,32 @@ int BluestoreWAL::log_submit_sync(BlueWALContextSync* txc)
   return r;
 }
 
-BluestoreWAL::Op* BluestoreWAL::_log(BlueWALContext* txc)
+BluestoreWAL::Op* BluestoreWAL::_log(BlueWALContext* txc, bool force)
 {
   auto& t = txc->get_payload();
   size_t t_len = t.length();
-  bool more_aio_finish = txc->get_more_aio_finish();
-  dout(7) << __func__ << " txc plen:" << t_len
-          << " more: " << more_aio_finish
+  dout(7) << __func__ << " txc " << txc
+          << " txc plen:" << t_len
+          << " force: " << force
           << dendl;
 
   logger->inc(l_bluestore_wal_input_avg, t_len);
-
   chest_t my_chest;
-  if (more_aio_finish) {
+  {
     std::unique_lock l(gate_lock);
-    if (gate_chest.add(txc, t_len, head_size, block_size, page_size, false)) {
-      dout(7) << __func__ << " added to chest, items:" << gate_chest.get_entry_count()
-              << dendl;
-      return nullptr;
+    ceph_assert(future_ops);
+    --future_ops;
+    // We can temporarily store op in the chest if more ops to come.
+    // Last op or absence of space in the chest will force pending ops to go.
+    // The rationale is to try to merge multiple ops into a single
+    // disk block to reduce amount of disk writes issued.
+    if (!force &&
+        future_ops &&
+        gate_chest.add(txc, t_len, head_size, block_size, page_size, false)) {
+          dout(7) << __func__ << " added to chest, items:"
+                  << gate_chest.get_entry_count() << dendl;
+          return nullptr;
     }
-    my_chest.claim(gate_chest);
-  } else if (gate_chest.get_entry_count() != 0) {
-    std::unique_lock l(gate_lock);
     my_chest.claim(gate_chest);
   }
   // last txc should be added in any case
@@ -566,47 +577,6 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueWALContext* txc)
   if (my_chest.get_entry_count() > 1) {
     logger->inc(l_bluestore_wal_chest_avg, my_chest.get_entry_count());
   }
-
-/*  logger->inc(l_bluestore_wal_knocking_avg, num_knocking ? 1 : 0);
-  ++num_knocking;
-  std::unique_lock l(lock, std::try_to_lock);
-  if (!l.owns_lock()) {
-    int chest_pos = -1;
-    std::unique_lock l2(gate_lock);
-    bool found_match = false;
-    for(size_t i = 0; i < gate_chest.size(); i++) {
-      if (gate_chest[i].l1 == 0) {
-        if (chest_pos < 0) {
-          chest_pos = i;
-        }
-      } else if (gate_chest[i].l1 + t.size() + 2 * head_size <= block_size) {
-        found_match = true;
-        gate_chest[i].l2 = t.size();
-        chest_pos = -1;
-        break;
-      }
-    }
-    if (!found_match && chest_pos >= 0) {
-      gate_chest[chest_pos].l1 = t.size();
-    } else if (!found_match) {
-      logger->inc(l_bluestore_wal_not_matched_ops);
-    }
-    l2.unlock();
-    //if (found_match) {
-    //  return;
-    }
-    l.lock();
-    if (chest_pos >= 0) {
-      l2.lock();
-      if (gate_chest[chest_pos].full()) {
-	logger->inc(l_bluestore_wal_matched_ops, 2);
-      } else {
-        logger->inc(l_bluestore_wal_match_miss_ops);
-      }
-      gate_chest[chest_pos].reset();
-    }
-  }
-  --num_knocking;*/
 
   std::unique_lock l(lock);
 

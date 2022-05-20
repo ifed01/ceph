@@ -221,14 +221,11 @@ using bptr_c_it_t = buffer::ptr::const_iterator;
 class BlueWALContext {
   void* wal_op_ctx = nullptr;   ///< opaque WAL I/O context
   uint64_t wal_seq = 0;         ///< WAL seq to return back once txc is committed
-  bool more_aio_finish = false; ///< interim flag for aio_finish processing:
-                                ///< following aio_finish indications are
-                                ///< expected as there is a bunch of ready
-                                ///< completions at BlockDevice.
 protected:
   BlueStore* store = nullptr;
 
 public:
+  BlueWALContext(BlueStore* _store) : store(_store) {}
   virtual ~BlueWALContext() {}
   virtual IOContext* get_ioc() = 0;
   virtual const std::string& get_payload() = 0;
@@ -245,12 +242,6 @@ public:
   uint64_t get_wal_seq() {
     return wal_seq;
   }
-  void set_more_aio_finish(bool more) {
-    more_aio_finish = more;
-  }
-  bool get_more_aio_finish() const {
-    return more_aio_finish;
-  }
   virtual void wal_aio_finish() = 0;
 };
 class BlueWALContextSync : public BlueWALContext {
@@ -264,7 +255,8 @@ public:
   BlueWALContextSync(CephContext* cct,
                      BlueStore* _store,
                      KeyValueDB::Transaction _t)
-    : ioc(cct, nullptr, false),
+    : BlueWALContext(_store),
+      ioc(cct, nullptr, false),
       t(_t) {
     store = _store;
   }
@@ -311,7 +303,7 @@ public:
   typedef boost::intrusive_ptr<Collection> CollectionRef;
 
   struct AioContext {
-    virtual void aio_finish(BlueStore *store, bool last) = 0;
+    virtual void aio_finish(BlueStore *store) = 0;
     virtual ~AioContext() {}
   };
 
@@ -1849,10 +1841,13 @@ public:
     ZTracer::Trace trace;
 #endif
 
-    explicit TransContext(CephContext* cct, Collection *c, OpSequencer *o,
+    explicit TransContext(CephContext* cct, BlueStore* _store, Collection *c,
+                          OpSequencer *o, KeyValueDB::Transaction _t,
 			  std::list<Context*> *on_commits)
-      : ch(c),
+      : BlueWALContext(_store),
+        ch(c),
 	osr(o),
+	t(_t),
 	ioc(cct, this),
 	start(ceph::mono_clock::now()) {
       last_stamp = start;
@@ -1900,7 +1895,7 @@ public:
     }
 #endif
 
-    void aio_finish(BlueStore *store, bool last) override;
+    void aio_finish(BlueStore *store) override;
     void wal_aio_finish() override;
     IOContext* get_ioc() override {
       return &ioc;
@@ -2051,7 +2046,7 @@ public:
 		       uint64_t seq, uint64_t offset, uint64_t length,
 		       ceph::buffer::list::const_iterator& p);
 
-    void aio_finish(BlueStore *store, bool /*last*/) override {
+    void aio_finish(BlueStore *store) override {
       store->_deferred_aio_finish(osr);
     }
   };
