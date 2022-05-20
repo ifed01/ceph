@@ -947,11 +947,9 @@ int BlueWALContextSync::wal_submitted()
   return r;
 }
 
-void BlueStore::TransContext::aio_finish(BlueStore *_store, bool last)
+void BlueStore::TransContext::aio_finish(BlueStore *_store)
 {
-  ceph_assert(_store);
-  store = _store;
-  set_more_aio_finish(!last);
+  ceph_assert(store);
   store->txc_aio_finish(this);
 }
 
@@ -4650,14 +4648,14 @@ bufferlist BlueStore::OmapIteratorImpl::value()
 #define dout_context cct
 
 
-static void aio_cb(void *priv, void *priv2, bool last)
+static void aio_cb(void *priv, void *priv2)
 {
   BlueStore *store = static_cast<BlueStore*>(priv);
   BlueStore::AioContext *c = static_cast<BlueStore::AioContext*>(priv2);
-  c->aio_finish(store, last);
+  c->aio_finish(store);
 }
 
-static void discard_cb(void *priv, void *priv2, bool /*last*/)
+static void discard_cb(void *priv, void *priv2)
 {
   BlueStore *store = static_cast<BlueStore*>(priv);
   interval_set<uint64_t> *tmp = static_cast<interval_set<uint64_t>*>(priv2);
@@ -12744,8 +12742,8 @@ BlueStore::TransContext *BlueStore::_txc_create(
   list<Context*> *on_commits,
   TrackedOpRef osd_op)
 {
-  TransContext *txc = new TransContext(cct, c, osr, on_commits);
-  txc->t = db->get_transaction();
+  TransContext *txc = new TransContext(cct, this, c, osr, db->get_transaction(),
+    on_commits);
 
 #ifdef WITH_BLKIN
   if (osd_op && osd_op->pg_trace) {
@@ -12866,6 +12864,9 @@ void BlueStore::_txc_state_proc(TransContext *txc)
     switch (txc->get_state()) {
     case TransContext::STATE_PREPARE:
       throttle.log_state_latency(*txc, logger, l_bluestore_state_prepare_lat);
+      if (wal) {
+        wal->advertise_future_op();
+      }
       if (txc->ioc.has_pending_aios()) {
 	txc->set_state(TransContext::STATE_AIO_WAIT);
 #ifdef WITH_BLKIN

@@ -210,7 +210,7 @@ TEST(BlueStoreWAL, basic) {
   auto expected_w1 =
     round_up_to(head_size + transactions[0].length(), bsize);
   txc.t = t.make_transaction(transactions[0]);
-  t.log(&txc);
+  t.advertise_and_log(&txc);
 
   ASSERT_EQ(1, t.writes.size());
   ASSERT_EQ(expected_w1, t.writes[0].first.length());
@@ -239,7 +239,7 @@ TEST(BlueStoreWAL, basic) {
   auto expected_w2 =
     round_up_to(head_size + transactions.back().length(), bsize);
   txc2.t = t.make_transaction(transactions.back());
-  t.log(&txc2);
+  t.advertise_and_log(&txc2);
 
   ASSERT_EQ(2, t.writes.size());
   ASSERT_EQ(expected_w2, t.writes[1].first.length());
@@ -267,7 +267,7 @@ TEST(BlueStoreWAL, basic) {
     round_up_to(head_size + transactions.back().length(), bsize);
   std::cout << "Write 3, len = " << expected_w3 << std::endl;
   txc3.t = t.make_transaction(transactions.back());
-  t.log(&txc3);
+  t.advertise_and_log(&txc3);
 
   ASSERT_EQ(3, t.writes.size());
   ASSERT_EQ(expected_w3, t.writes[2].first.length());
@@ -304,7 +304,7 @@ TEST(BlueStoreWAL, basic) {
     round_up_to(2 * head_size + transactions.back().length(), psize);
   std::cout << "Write 4, len = " << expected_w4 << std::endl;
   txc4.t = t.make_transaction(transactions.back());
-  t.log(&txc4);
+  t.advertise_and_log(&txc4);
 
   ASSERT_EQ(5, t.writes.size()); // +2 page writes
   ASSERT_EQ(psize, t.writes[3].first.length());
@@ -346,7 +346,7 @@ TEST(BlueStoreWAL, basic) {
     round_up_to(head_size + transactions[4].length(), bsize);
   std::cout << "Write 5, len = " << expected_w5 << std::endl;
   txc5.t = t.make_transaction(transactions.back());
-  t.log(&txc5);
+  t.advertise_and_log(&txc5);
 
   ASSERT_EQ(5 + 1 + 4, t.writes.size()); //4 page wipings + 1 block write
   ASSERT_EQ(bsize, t.writes[5].first.length());
@@ -386,17 +386,17 @@ TEST(BlueStoreWAL, basic) {
     round_up_to(head_size + transactions.back().length(), bsize);
   std::cout << "Write 6-8, len = 3x" << expected_w6 << std::endl;
   txc6.t = t.make_transaction(transactions.back());
-  t.log(&txc6);
+  t.advertise_and_log(&txc6);
 
   transactions.push_back(std::string(8, 'd'));
   auto expected_w7 = expected_w6;
   txc7.t = t.make_transaction(transactions.back());
-  t.log(&txc7);
+  t.advertise_and_log(&txc7);
 
   transactions.push_back(std::string(8, 'd'));
   auto expected_w8 = expected_w6;
   txc8.t = t.make_transaction(transactions.back());
-  t.log(&txc8);
+  t.advertise_and_log(&txc8);
 
   ASSERT_EQ(3, t.writes.size());
   ASSERT_EQ(expected_w6, t.writes[0].first.length());
@@ -486,7 +486,7 @@ TEST(BlueStoreWAL, basic) {
   auto expected_w9 = round_up_to(transactions.back().length(), bsize);
   std::cout << "Write 9, len = " << expected_w9 << std::endl;
   txc9.t = t.make_transaction(transactions.back());
-  t.log(&txc9);
+  t.advertise_and_log(&txc9);
 
   ASSERT_EQ(num_pages_w9, t.writes.size());
   for (size_t i = 0; i < t.writes.size(); ++i) {
@@ -543,7 +543,7 @@ TEST(BlueStoreWAL, basic) {
     round_up_to(head_size + transactions.back().length(), bsize);
   std::cout << "Write 10, len = " << expected_w10 << std::endl;
   txc10.t = t.make_transaction(transactions.back());
-  t.log(&txc10);
+  t.advertise_and_log(&txc10);
   txc10.on_write_done(&t);
   flush_cnt = 0;
   t.submitted(&txc10, // no-op
@@ -718,29 +718,28 @@ TEST(BlueStoreWAL, basic_replay) {
   transactions.push_back("10");
 
   txc.t = t.make_transaction(transactions[0]);
-  t.log(&txc);
+  t.advertise_and_log(&txc);
   txc2.t = t.make_transaction(transactions[1]);
-  t.log(&txc2);
+  t.advertise_and_log(&txc2);
   txc3.t = t.make_transaction(transactions[2]);
-  t.log(&txc3);
+  t.advertise_and_log(&txc3);
   txc4.t = t.make_transaction(transactions[3]);
-  txc4.set_more_aio_finish(true);
+  t.advertise_future_op(2);
   t.log(&txc4);
   txc5.t = t.make_transaction(transactions[4]);
   t.log(&txc5);
 
   txc6.t = t.make_transaction(transactions[5]);
-  txc6.set_more_aio_finish(true);
+  t.advertise_future_op(3);
   t.log(&txc6);
   txc7.t = t.make_transaction(transactions[6]);
-  txc7.set_more_aio_finish(true);
   t.log(&txc7);
   txc8.t = t.make_transaction(transactions[7]);
   t.log(&txc8);
   txc9.t = t.make_transaction(transactions[8]);
-  t.log(&txc9);
+  t.advertise_and_log(&txc9);
   txc10.t = t.make_transaction(transactions[9]);
-  t.log(&txc10);
+  t.advertise_and_log(&txc10);
 
   // txc 4 & 5 are merged into a single write, the same for txc 6 & 7 & 8
   ASSERT_EQ(7, t.writes.size());
@@ -829,7 +828,7 @@ TEST(BlueStoreWAL, basic_replay) {
       + page_count,
       t3.reads.size());
 
-    t3.log(&txc);
+    t3.advertise_and_log(&txc);
     txc.on_write_done(&t3);
     ASSERT_EQ(1, t3.completed_writes.size());
     ASSERT_EQ(&txc, t3.completed_writes[0].second);
