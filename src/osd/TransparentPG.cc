@@ -32,11 +32,11 @@
 #include "PrimaryLogScrub.h"
 #include "OpRequest.h"
 #include "ScrubStore.h"
-#include "Session.h"
+#include "Session.h"*/
 #include "objclass/objclass.h"
 #include "osd/ClassHandler.h"
 
-#include "cls/cas/cls_cas_ops.h"
+/*#include "cls/cas/cls_cas_ops.h"
 #include "common/ceph_crypto.h"
 #include "common/config.h"
 #include "common/errno.h"
@@ -122,22 +122,23 @@ static int check_offset_and_length(uint64_t offset, uint64_t length,
 /*
  * Capture all object state associated with an in-progress read or write.
  */
-struct TransparentPG::OpContext : public Context{
+struct TransparentPG::OpContext : public OpContextBase, public Context {
   OpRequestRef op;
   osd_reqid_t reqid;
   std::vector<OSDOp>* ops;
 
-  /*const ObjectState* obs; // Old objectstate
-  const SnapSet* snapset; // Old snapset
+  const ObjectState* obs; // Old objectstate
+  //const SnapSet* snapset; // Old snapset
 
   ObjectState new_obs;  // resulting ObjectState
-  SnapSet new_snapset;  // resulting SnapSet (in case of a write)
-  //pg_stat_t new_stats;  // resulting Stats*/
+  /*SnapSet new_snapset;  // resulting SnapSet (in case of a write)
+  //pg_stat_t new_stats;  // resulting Stats
+  */
   object_stat_sum_t delta_stats;
 
-  /*bool modify;          // (force) modification (even if op_t is empty)
+  //bool modify;          // (force) modification (even if op_t is empty)
   bool user_modify;     // user-visible modification
-  bool undirty;         // user explicitly un-dirtying this object
+/*  bool undirty;         // user explicitly un-dirtying this object
   bool cache_operation;     ///< true if this is a cache eviction
   bool ignore_cache;    ///< true if IGNORE_CACHE flag is std::set
   bool ignore_log_op_stats;  // don't log op stats
@@ -177,9 +178,9 @@ struct TransparentPG::OpContext : public Context{
   /*std::vector<pg_log_entry_t> log;
   std::optional<pg_hit_set_history_t> updated_hset_history;
 
-  interval_set<uint64_t> modified_ranges;
+  interval_set<uint64_t> modified_ranges;*/
   ObjectContextRef obc;
-  ObjectContextRef clone_obc;    // if we created a clone
+/*  ObjectContextRef clone_obc;    // if we created a clone
   ObjectContextRef head_obc;     // if we also update snapset (see trim_object)
 */
   // FIXME: we may want to kill this msgr hint off at some point!
@@ -240,17 +241,18 @@ struct TransparentPG::OpContext : public Context{
   const OpContext& operator=(const OpContext& other);
 
   OpContext(OpRequestRef _op, osd_reqid_t _reqid, std::vector<OSDOp>* _ops,
+    ObjectContextRef& obc,
     TransparentPG* _pg) :
     op(_op), reqid(_reqid), ops(_ops),
-    pg(_pg)
-    /*obs(&obc->obs),
-    snapset(0),
+    obs(&obc->obs),
+    //snapset(0),
     new_obs(obs->oi, obs->exists),
-    modify(false), user_modify(false), undirty(false), cache_operation(false),
+    /*modify(false), user_modify(false), undirty(false), cache_operation(false),
     ignore_cache(false), ignore_log_op_stats(false), update_log_only(false),
     bytes_written(0), bytes_read(0), user_at_version(0),
-    current_osd_subop_num(0),
-    obc(obc),*/
+    current_osd_subop_num(0),*/
+    obc(obc),
+    pg(_pg)
     /*num_read(0),
     num_write(0),
     sent_reply(false),
@@ -280,7 +282,7 @@ struct TransparentPG::OpContext : public Context{
       snapset = &obc->ssc->snapset;
     }
   }*/
-  ~OpContext() {
+  ~OpContext() override {
     //ceph_assert(!op_t);
     if (reply)
       reply->put();
@@ -303,6 +305,15 @@ struct TransparentPG::OpContext : public Context{
     ceph_assert(m->get_snapid() != CEPH_SNAPDIR); //SNAPDIR handling not implemented, see PrimaryLogPG
     return m->get_hobj();
   }
+  PG* get_pg() override {
+    return pg;
+  }
+  OpRequestRef get_op() override {
+    return op;
+  }
+  int get_processed_subop_count() const override {
+    return 0;
+  }
 protected:
   void finish(int) override {
     for (auto& p : on_committed) {
@@ -318,6 +329,25 @@ struct OpFinisher {
 
   virtual int execute() = 0;
 };
+
+void TransparentPG::maybe_create_new_object(
+  OpContext *ctx,
+  bool ignore_transaction)
+{
+  ObjectState& obs = ctx->new_obs;
+  if (!obs.exists) {
+    ctx->delta_stats.num_objects++;
+    obs.exists = true;
+    ceph_assert(!obs.oi.is_whiteout());
+    obs.oi.new_object();
+    if (!ignore_transaction)
+      ctx->op_t->create(obs.oi.soid);
+  } else if (obs.oi.is_whiteout()) {
+    dout(10) << __func__ << " clearing whiteout on " << obs.oi.soid << dendl;
+    ctx->new_obs.oi.clear_flag(object_info_t::FLAG_WHITEOUT);
+    --ctx->delta_stats.num_whiteouts;
+  }
+}
 
 void TransparentPG::do_op(OpRequestRef& op)
 {
@@ -347,7 +377,65 @@ void TransparentPG::do_op(OpRequestRef& op)
     return do_pg_op(op);
   }
 
-  OpContext* ctx = new OpContext(op, m->get_reqid(), &m->ops, this);
+  ObjectContextRef obc;
+  bool can_create = op->may_write();
+  hobject_t missing_oid;
+
+  const hobject_t& oid = m->get_hobj();
+
+  int r = find_object_context(
+    oid, &obc, can_create,
+    m->has_flag(CEPH_OSD_FLAG_MAP_SNAP_CLONE),
+    &missing_oid);
+
+/*  if (r == -EAGAIN) {
+    // If we're not the primary of this OSD, we just return -EAGAIN. Otherwise,
+    // we have to wait for the object.
+    if (is_primary()) {
+      // missing the specific snap we need; requeue and wait.
+      ceph_assert(!op->may_write()); // only happens on a read/cache
+      wait_for_unreadable_object(missing_oid, op);
+      return;
+    }
+  } else if (r == 0) {
+    if (is_unreadable_object(obc->obs.oi.soid)) {
+      dout(10) << __func__ << ": clone " << obc->obs.oi.soid
+               << " is unreadable, waiting" << dendl;
+      wait_for_unreadable_object(obc->obs.oi.soid, op);
+      return;
+    }
+
+    // degraded object?  (the check above was for head; this could be a clone)
+    if (write_ordered &&
+        obc->obs.oi.soid.snap != CEPH_NOSNAP &&
+        is_degraded_or_backfilling_object(obc->obs.oi.soid)) {
+      dout(10) << __func__ << ": clone " << obc->obs.oi.soid
+               << " is degraded, waiting" << dendl;
+      wait_for_degraded_object(obc->obs.oi.soid, op);
+      return;
+    }
+  }*/
+  if (r && (r != -ENOENT || !obc)) {
+    // copy the reqids for copy get on ENOENT
+    /*if (r == -ENOENT &&
+        (m->ops[0].op.op == CEPH_OSD_OP_COPY_GET)) {
+      fill_in_copy_get_noent(op, oid, m->ops[0]);
+      return;
+    }*/
+    dout(20) << __func__ << ": find_object_context got error " << r << dendl;
+    /*if (op->may_write() &&
+        get_osdmap()->require_osd_release >= ceph_release_t::kraken) {
+      record_write_error(op, oid, nullptr, r);
+    } else */
+    {
+      osd->reply_op_error(op, r);
+    }
+    return;
+  }
+
+  dout(25) << __func__ << " oi " << obc->obs.oi << dendl;
+
+  OpContext* ctx = new OpContext(op, m->get_reqid(), &m->ops, obc, this);
 
   op->mark_started();
 
@@ -632,6 +720,7 @@ void TransparentPG::finish_ctx(OpContext* ctx, int log_op_type, int result)
     }
   }*/
 
+  //FIXME: we set user_modify when handling OP_CALL, need to handle here as well?
   /*// finish and log the op.
   if (ctx->user_modify) {
     // update the user_version for any modify ops, except for the watch op
@@ -901,6 +990,127 @@ void TransparentPG::log_op_stats(const OpRequest& op,
   /*if (m_dynamic_perf_stats.is_enabled()) {
     m_dynamic_perf_stats.add(osd, info, op, inb, outb, latency);
   }*/
+}
+
+ObjectContextRef TransparentPG::create_object_context(const object_info_t& oi)
+{
+  ObjectContextRef obc(object_contexts.lookup_or_create(oi.soid));
+  ceph_assert(obc->destructor_callback == NULL);
+  //FIXME ??? obc->destructor_callback = new C_PG_ObjectContext(this, obc.get());
+  obc->obs.oi = oi;
+  obc->obs.exists = false;
+  obc->ssc = nullptr;
+  dout(10) << "create_object_context " << (void*)obc.get() << " " << oi.soid << " " << dendl;
+/*FIXME??  if (is_active())
+    populate_obc_watchers(obc);*/
+  return obc;
+}
+
+ObjectContextRef TransparentPG::get_object_context(
+  const hobject_t& soid,
+  bool can_create,
+  const map<string, bufferlist, less<>> *attrs)
+{
+/*  auto it_objects = recovery_state.get_pg_log().get_log().objects.find(soid);
+  ceph_assert(
+    attrs || !recovery_state.get_pg_log().get_missing().is_missing(soid) ||
+    // or this is a revert... see recover_primary()
+    (it_objects != recovery_state.get_pg_log().get_log().objects.end() &&
+      it_objects->second->op ==
+      pg_log_entry_t::LOST_REVERT));*/
+  ObjectContextRef obc = object_contexts.lookup(soid);
+  osd->logger->inc(l_osd_object_ctx_cache_total);
+  if (obc) {
+    osd->logger->inc(l_osd_object_ctx_cache_hit);
+    dout(10) << __func__ << ": found obc in cache: " << obc
+             << dendl;
+  } else {
+    dout(10) << __func__ << ": obc NOT found in cache: " << soid << dendl;
+    // check disk
+    bufferlist bv;
+    if (attrs) {
+      auto it_oi = attrs->find(OI_ATTR);
+      ceph_assert(it_oi != attrs->end());
+      bv = it_oi->second;
+    } else {
+      int r = pgbackend->objects_get_attr(soid, OI_ATTR, &bv);
+      if (r < 0) {
+        if (!can_create) {
+          dout(10) << __func__ << ": no obc for soid "
+                   << soid << " and !can_create"
+                   << dendl;
+          return ObjectContextRef();   // -ENOENT!
+        }
+
+        dout(10) << __func__ << ": no obc for soid "
+                 << soid << " but can_create"
+                 << dendl;
+        // new object.
+        object_info_t oi(soid);
+        /*SnapSetContext *ssc = get_snapset_context(
+          soid, true, 0, false);
+        ceph_assert(ssc);*/
+        obc = create_object_context(oi);
+        dout(10) << __func__ << ": " << obc << " " << soid
+                 << " " << obc->rwstate
+                 << " oi: " << obc->obs.oi
+                 << dendl;
+        return obc;
+      }
+    }
+    object_info_t oi;
+    try {
+      bufferlist::const_iterator bliter = bv.begin();
+      decode(oi, bliter);
+    } catch (...) {
+      dout(0) << __func__ << ": obc corrupt: " << soid << dendl;
+      return ObjectContextRef();   // -ENOENT!
+    }
+
+    ceph_assert(oi.soid.pool == (int64_t)info.pgid.pool());
+
+    obc = object_contexts.lookup_or_create(oi.soid);
+    //FIXME? obc->destructor_callback = new C_PG_ObjectContext(this, obc.get());
+    obc->obs.oi = oi;
+    obc->obs.exists = true;
+
+    /*if (is_primary() && is_active())
+      populate_obc_watchers(obc);*/
+
+    dout(10) << __func__ << ": creating obc from disk: " << obc
+             << dendl;
+  }
+
+  dout(10) << __func__ << ": " << obc << " " << soid
+           << " " << obc->rwstate
+           << " oi: " << obc->obs.oi
+           << " exists: " << (int)obc->obs.exists
+           << dendl;
+  return obc;
+}
+
+int TransparentPG::find_object_context(const hobject_t& oid,
+                                       ObjectContextRef *pobc,
+                                       bool can_create,
+                                       bool map_snapid_to_clone,
+                                       hobject_t *pmissing)
+{
+  FUNCTRACE(cct);
+  ceph_assert(oid.pool == static_cast<int64_t>(info.pgid.pool()));
+  // want the head?
+  ceph_assert(oid.snap == CEPH_NOSNAP);
+  ObjectContextRef obc = get_object_context(oid, can_create);
+  if (!obc) {
+    if (pmissing)
+      *pmissing = oid;
+    return -ENOENT;
+  }
+  dout(10) << __func__ << " " << oid
+    << " @" << oid.snap
+    << " oi=" << obc->obs.oi
+    << dendl;
+  *pobc = obc;
+  return 0;
 }
 
 int TransparentPG::getattrs_maybe_cache(
@@ -1675,9 +1885,11 @@ void TransparentPG::do_pg_op(OpRequestRef op)
   osd->send_message_osd_client(reply, m->get_connection());
 }
 
-int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
+int TransparentPG::do_osd_ops(OpContextBase* ctx0, vector<OSDOp>& ops)
 {
   int result = 0;
+  TransparentPG::OpContext* ctx =
+    reinterpret_cast<TransparentPG::OpContext*>(ctx0);
   /*SnapSetContext* ssc = ctx->obc->ssc;
   ObjectState& obs = ctx->new_obs;
   object_info_t& oi = obs.oi;
@@ -1862,7 +2074,7 @@ int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
       break;
 
     case CEPH_OSD_OP_CALL:
-    /*{
+    {
       string cname, mname;
       bufferlist indata;
       try {
@@ -1876,10 +2088,10 @@ int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
 	osd_op.indata.hexdump(*_dout);
 	*_dout << dendl;
 	result = -EINVAL;
-	tracepoint(osd, do_osd_op_pre_call, soid.oid.name.c_str(), soid.snap.val, "???", "???");
+	//tracepoint(osd, do_osd_op_pre_call, soid.oid.name.c_str(), soid.snap.val, "???", "???");
 	break;
       }
-      tracepoint(osd, do_osd_op_pre_call, soid.oid.name.c_str(), soid.snap.val, cname.c_str(), mname.c_str());
+      //tracepoint(osd, do_osd_op_pre_call, soid.oid.name.c_str(), soid.snap.val, cname.c_str(), mname.c_str());
 
       ClassHandler::ClassData* cls;
       result = ClassHandler::get_instance().open_class(cname, &cls);
@@ -1919,8 +2131,8 @@ int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
       dout(30) << "out dump: ";
       osd_op.outdata.hexdump(*_dout);
       *_dout << dendl;
-    }*/
-    result = -ENOTSUP;
+    }
+    //result = -ENOTSUP;
     break;
 
     case CEPH_OSD_OP_STAT:
@@ -1936,7 +2148,11 @@ int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
 	result = -ENOENT;
 	dout(10) << "stat oi object does not exist" << dendl;
       }*/
-      result = -ENOTSUP; // FIXME
+      struct stat st;
+      result = osd->store->stat(
+        ch,
+        ghobject_t(soid, ghobject_t::NO_GEN, pg_whoami.shard),
+        &st);
 
       ctx->delta_stats.num_rd++;
     }
@@ -2400,7 +2616,7 @@ int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
 	  t->create(soid);
 	  was_create = true;
 	}
-	//maybe_create_new_object(ctx);
+	maybe_create_new_object(ctx);
 	//oi.expected_object_size = op.alloc_hint.expected_object_size;
 	//oi.expected_write_size = op.alloc_hint.expected_write_size;
 	//oi.alloc_hint_flags = op.alloc_hint.flags;
@@ -2490,11 +2706,7 @@ int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
 	if (result < 0)
 	  break;
 
-	//maybe_create_new_object(ctx);
-	if (!was_create) {
-	  t->create(soid);
-	  was_create = true;
-	}
+	maybe_create_new_object(ctx);
 
 	if (op.extent.length == 0) {
 	  //FIXME: revise
@@ -2557,7 +2769,8 @@ int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
 	  t->create(soid);
 	  was_create = true;
 	}
-	/*maybe_create_new_object(ctx);
+	maybe_create_new_object(ctx);
+	/*FIXME ???
 	if (pool.info.is_erasure()) {
 	  t->truncate(soid, 0);
 	} else if (obs.exists && op.extent.length < oi.size) {
@@ -2643,11 +2856,7 @@ int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
 	    }
 	    // category is no longer implemented.
 	  }
-	  //maybe_create_new_object(ctx);
-	  if (!was_create) {
-	    t->create(soid);
-	    was_create = true;
-	  }
+	  maybe_create_new_object(ctx);
 	  t->nop(soid);
 	}
       }
@@ -2691,11 +2900,7 @@ int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
 	  oi.truncate_size = op.extent.truncate_size;
 	}*/
 
-	//maybe_create_new_object(ctx);
-	if (!was_create) {
-	  t->create(soid);
-	  was_create = true;
-	}
+	maybe_create_new_object(ctx);
 	t->truncate(soid, op.extent.offset);
 	/*if (oi.size > op.extent.offset) {
 	  interval_set<uint64_t> trim;
@@ -3288,11 +3493,7 @@ int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
 	  result = -ENAMETOOLONG;
 	  break;
 	}
-	//maybe_create_new_object(ctx);
-	if (!was_create) {
-	  t->create(soid);
-	  was_create = true;
-	}
+	maybe_create_new_object(ctx);
 	string aname;
 	bp.copy(op.xattr.name_len, aname);
 	//tracepoint(osd, do_osd_op_pre_setxattr, soid.oid.name.c_str(), soid.snap.val, aname.c_str());
@@ -3665,11 +3866,7 @@ int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
       ++ctx->num_write;
       result = 0;
       {
-	//maybe_create_new_object(ctx);
-	if (!was_create) {
-	  t->create(soid);
-	  was_create = true;
-	}
+	maybe_create_new_object(ctx);
 	bufferlist to_set_bl;
 	try {
 	  decode_str_str_map_to_bl(bp, &to_set_bl);
@@ -3709,11 +3906,7 @@ int TransparentPG::do_osd_ops(OpContext* ctx, vector<OSDOp>& ops)
       ++ctx->num_write;
       result = 0;
       {
-	//maybe_create_new_object(ctx);
-	if (!was_create) {
-	  t->create(soid);
-	  was_create = true;
-	}
+	maybe_create_new_object(ctx);
 	t->omap_setheader(soid, osd_op.indata);
 	//ctx->clean_regions.mark_omap_dirty();
 	ctx->delta_stats.num_wr++;

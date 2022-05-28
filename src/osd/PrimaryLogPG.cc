@@ -5952,9 +5952,11 @@ int PrimaryLogPG::do_sparse_read(OpContext *ctx, OSDOp& osd_op) {
   return 0;
 }
 
-int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
+int PrimaryLogPG::do_osd_ops(OpContextBase *ctx0, vector<OSDOp>& ops)
 {
   int result = 0;
+  PrimaryLogPG::OpContext *ctx =
+    reinterpret_cast<PrimaryLogPG::OpContext*>(ctx0);
   SnapSetContext *ssc = ctx->obc->ssc;
   ObjectState& obs = ctx->new_obs;
   object_info_t& oi = obs.oi;

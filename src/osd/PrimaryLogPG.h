@@ -617,7 +617,7 @@ public:
   /*
    * Capture all object state associated with an in-progress read or write.
    */
-  struct OpContext {
+  struct OpContext : public OpContextBase {
     OpRequestRef op;
     osd_reqid_t reqid;
     std::vector<OSDOp> *ops;
@@ -775,7 +775,7 @@ public:
 	snapset = &obc->ssc->snapset;
       }
     }
-    ~OpContext() {
+    ~OpContext() override {
       ceph_assert(!op_t);
       if (reply)
 	reply->put();
@@ -792,6 +792,15 @@ public:
         return op->get_req()->get_connection()->get_features();
       }
       return -1ull;
+    }
+    PG* get_pg() override {
+      return pg;
+    }
+    OpRequestRef get_op() override {
+      return op;
+    }
+    int get_processed_subop_count() const override {
+      return  processed_subop_count;
     }
   };
   using OpContextUPtr = std::unique_ptr<OpContext>;
@@ -1512,7 +1521,7 @@ public:
   void snap_trimmer(epoch_t e) override;
   void kick_snap_trim() override;
   void snap_trimmer_scrub_complete() override;
-  int do_osd_ops(OpContext *ctx, std::vector<OSDOp>& ops);
+  int do_osd_ops(OpContextBase *ctx, std::vector<OSDOp>& ops) override;
 
   int _get_tmap(OpContext *ctx, ceph::buffer::list *header, ceph::buffer::list *vals);
   int do_tmap2omap(OpContext *ctx, unsigned flags);

@@ -74,10 +74,9 @@ public:
     PG(o, curmap, _pool, p),
     pgbackend(
       PGBackend::build_pg_backend(
-	_pool.info, ec_profile, this, coll_t(p), ch, o->store, cct))
-    /*,
-    object_contexts(o->cct, o->cct->_conf->osd_pg_object_context_cache_count),
-    new_backfill(false),
+	_pool.info, ec_profile, this, coll_t(p), ch, o->store, cct)),
+    object_contexts(o->cct, o->cct->_conf->osd_pg_object_context_cache_count)
+/*    new_backfill(false),
     temp_seq(0),
     snap_trimmer_machine(this)*/
   {
@@ -668,7 +667,7 @@ public:
   {
   }
 protected:
-  int do_osd_ops(OpContext* ctx, std::vector<OSDOp>& ops);
+  int do_osd_ops(OpContextBase* ctx, std::vector<OSDOp>& ops) override;
   void do_pg_op(OpRequestRef op);
 
   int prepare_transaction(OpContext* ctx);
@@ -693,13 +692,34 @@ protected:
   int do_xattr_cmp_u64(int op, uint64_t v1, ceph::buffer::list& xattr);
   int do_xattr_cmp_str(int op, std::string& v1s, ceph::buffer::list& xattr);
 
+protected:
+
+  ObjectContextRef create_object_context(const object_info_t& oi);
+  ObjectContextRef get_object_context(
+    const hobject_t& soid,
+    bool can_create,
+    const std::map<std::string, ceph::buffer::list, std::less<>> *attrs = 0
+    );
+
+/*  void context_registry_on_change();
+  void object_context_destructor_callback(ObjectContext *obc);
+  class C_PG_ObjectContext;
+*/
+  int find_object_context(const hobject_t& oid,
+                          ObjectContextRef *pobc,
+                          bool can_create,
+                          bool map_snapid_to_clone=false,
+                          hobject_t *missing_oid=NULL);
+
 private:
   std::set<pg_shard_t> dummy_pg_shard_set;
   std::map<hobject_t, std::set<pg_shard_t>> dummy_loc_shards;
   pg_missing_tracker_t dummy_local_missing;
 
   boost::scoped_ptr<PGBackend> pgbackend;
+  SharedLRU<hobject_t, ObjectContext> object_contexts;
 
+  void maybe_create_new_object(OpContext *ctx, bool ignore_transaction = false);
   void do_op(OpRequestRef& op);
   void execute_ctx(OpContext* ctx);
   void finish_ctx(OpContext* ctx, int log_op_type, int result = 0);

@@ -750,7 +750,9 @@ void BluestoreWAL::submitted(BlueWALContext* txc,
     if (page_seqno >=
          last_committed_page_seqno + flush_threshold) {
       auto t0 = mono_clock::now();
+dout(0) << __func__ << " flush db" << dendl;
       flush_db_fn();
+dout(0) << __func__ << " flush db done" << dendl;
       std::unique_lock l(lock);
       dout(7) << __func__ << " pseq " << page_seqno
               << " last_submitted: " << last_submitted_page_seqno

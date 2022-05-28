@@ -174,6 +174,14 @@ private:
   ScrubberPasskey& operator=(const ScrubberPasskey&) = delete;
 };
 
+class PG;
+struct OpContextBase {
+  virtual ~OpContextBase() {}
+  virtual PG* get_pg() = 0;
+  virtual OpRequestRef get_op() = 0;
+  virtual int get_processed_subop_count() const = 0;
+};
+
 class PG : public DoutPrefixProvider, public PeeringState::PeeringListener {
   friend struct NamedState;
   friend class PeeringState;
@@ -715,6 +723,8 @@ public:
   unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority, unsigned int suggested_priority) const;
   /// the version that refers to flags_.priority
   unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority) const;
+
+  virtual int do_osd_ops(OpContextBase *ctx, std::vector<OSDOp>& ops) = 0;
 private:
   // auxiliaries used by sched_scrub():
   double next_deepscrub_interval() const;
