@@ -35,6 +35,10 @@ if(WITH_BLUESTORE)
     bluestore/AvlAllocator.cc
     bluestore/BtreeAllocator.cc
     bluestore/HybridAllocator.cc
+
+    daostore/DaoStore.cc
+    daostore/DaoStore_naming.cc
+    daostore/daostore_types.cc
   )
 endif(WITH_BLUESTORE)
 

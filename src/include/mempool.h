@@ -167,6 +167,7 @@ namespace mempool {
   f(bluefs_file_writer)              \
   f(buffer_anon)		      \
   f(buffer_meta)		      \
+  f(daostore_all)		      \
   f(osd)			      \
   f(osd_mapbl)			      \
   f(osd_pglog)			      \
