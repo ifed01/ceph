@@ -5672,6 +5672,18 @@ int BlueStore::_maybe_open_wal()
   bluefs_huge_extent_t wal_ext;
   BlockDevice* bdev = bluefs->get_external_wal(&wal_ext);
   if (bdev) {
+    if(!bluefs_layout.dedicated_db) {
+      // Due to design limitation we can't use WAL when there is no dedicated DB
+      // volume - we need to submit WAL data to DB on startup's replay but
+      // main(shared) device's allocation map isn't ready at this point
+      // hence DB is unable to store data at that device and it needs dedicated
+      // one.
+      derr << __func__
+           << " error: BlueStore WAL is not permited without dedicated"
+           << " DB volume." << dendl;
+      return -ENOMEDIUM;
+    }
+
     ceph_assert(wal_ext.length &&
       (wal_ext.length % BluestoreWAL::DEF_PAGE_SIZE) == 0);
 
@@ -6623,12 +6635,6 @@ int BlueStore::_open_db_ex(bool read_only, bool to_repair)
   if (r < 0) {
     return r;
   }
-  if (!read_only) {
-    r = _maybe_open_wal();
-    if (r < 0) {
-      return r;
-    }
-  }
   if (!read_only && !zone_adjustments.empty()) {
     // for SMR devices that have freelist mismatch with device write pointers
     _post_init_alloc(zone_adjustments);
@@ -6869,7 +6875,7 @@ int BlueStore::_open_db(bool create,
     if (r < 0) {
       derr << __func__ << " failed to open WAL" << dendl;
       _close_db();
-      return -EIO;
+      return r;
     }
   } else {
     ceph_assert(!wal); //wal & read_only mode are incompatible
