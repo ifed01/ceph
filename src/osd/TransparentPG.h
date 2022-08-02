@@ -67,6 +67,7 @@ private:
 
 class TransparentPG : public PG, public PGBackend::Listener {
   struct OpContext;
+  using OpContextUPtr = std::unique_ptr<OpContext>;
 public:
   TransparentPG(OSDService* o, OSDMapRef curmap,
     const PGPool& _pool,
@@ -74,10 +75,9 @@ public:
     PG(o, curmap, _pool, p),
     pgbackend(
       PGBackend::build_pg_backend(
-	_pool.info, ec_profile, this, coll_t(p), ch, o->store, cct))
-    /*,
-    object_contexts(o->cct, o->cct->_conf->osd_pg_object_context_cache_count),
-    new_backfill(false),
+	_pool.info, ec_profile, this, coll_t(p), ch, o->store, cct)),
+    object_contexts(o->cct, o->cct->_conf->osd_pg_object_context_cache_count)
+/*    new_backfill(false),
     temp_seq(0),
     snap_trimmer_machine(this)*/
   {
@@ -482,9 +482,6 @@ public:
   void check_recovery_sources(const OSDMapRef& newmap) final
   {
   }
-  void check_blocklisted_watchers() final
-  {
-  }
   void dump_recovery_info(ceph::Formatter* f) const final
   {
   }
@@ -527,9 +524,6 @@ public:
   bool start_recovery_ops(uint64_t, ThreadPool::TPHandle&, uint64_t*) final
   {
     return false;
-  }
-  void get_watchers(std::__cxx11::list<obj_watch_item_t>*) final
-  {
   }
   void on_shutdown() final
   {
@@ -662,17 +656,43 @@ public:
   void snap_trimmer_scrub_complete() final
   {
   }
+
+  int start_cls_gather(OpContextBase *ctx,
+                       const std::set<std::string> &src_objs,
+                       const std::string& pool,
+                       const char *cls,
+                       const char *method, bufferlist& inbl) final
+  {
+    return -ENOTSUP;
+  }
+  int get_cls_gathered_data(OpContextBase *ctx,
+                            std::map<std::string, bufferlist> *results) final
+  {
+    return -ENOTSUP;
+  }
+
 protected:
-  int do_osd_ops(OpContext* ctx, std::vector<OSDOp>& ops);
+  int do_osd_ops(OpContextBase* ctx, std::vector<OSDOp>& ops) override;
   void do_pg_op(OpRequestRef op);
 
   int prepare_transaction(OpContext* ctx);
   void complete_read_ctx(int result, OpContext* ctx);
 
+
+  void reply_ctx(OpContext *ctx, int r);
   void close_op_ctx(OpContext* ctx);
   void log_op_stats(const OpRequest& op,
     const uint64_t inb,
     const uint64_t outb);
+
+  void write_update_size_and_usage(object_stat_sum_t& delta_stats,
+                                   object_info_t& oi,
+                                   uint64_t offset,
+                                   uint64_t length, bool write_full);
+  inline void truncate_update_size_and_usage(
+    object_stat_sum_t& delta_stats,
+    object_info_t& oi,
+    uint64_t truncate_size);
 
   int getattrs_maybe_cache(
     //ObjectContextRef obc,
@@ -688,17 +708,58 @@ protected:
   int do_xattr_cmp_u64(int op, uint64_t v1, ceph::buffer::list& xattr);
   int do_xattr_cmp_str(int op, std::string& v1s, ceph::buffer::list& xattr);
 
+  void populate_obc_watchers(ObjectContextRef obc);
+  void check_blocklisted_obc_watchers(ObjectContextRef obc);
+  void check_blocklisted_watchers() override;
+  void get_watchers(std::list<obj_watch_item_t> *ls) override;
+  void get_obc_watchers(ObjectContextRef obc, std::list<obj_watch_item_t> &pg_watchers);
+  void handle_watch_timeout(WatchRef watch) override;
+
+protected:
+
+  ObjectContextRef create_object_context(const object_info_t& oi);
+  ObjectContextRef get_object_context(
+    const hobject_t& soid,
+    bool can_create,
+    const std::map<std::string, ceph::buffer::list, std::less<>> *attrs = 0
+    );
+
+/*  void context_registry_on_change();
+  void object_context_destructor_callback(ObjectContext *obc);
+  class C_PG_ObjectContext;
+*/
+  int find_object_context(const hobject_t& oid,
+                          ObjectContextRef *pobc,
+                          bool can_create,
+                          bool map_snapid_to_clone=false,
+                          hobject_t *missing_oid=NULL);
+
 private:
   std::set<pg_shard_t> dummy_pg_shard_set;
   std::map<hobject_t, std::set<pg_shard_t>> dummy_loc_shards;
   pg_missing_tracker_t dummy_local_missing;
 
   boost::scoped_ptr<PGBackend> pgbackend;
+  SharedLRU<hobject_t, ObjectContext> object_contexts;
 
+  void maybe_create_new_object(OpContext *ctx, bool ignore_transaction = false);
   void do_op(OpRequestRef& op);
   void execute_ctx(OpContext* ctx);
   void finish_ctx(OpContext* ctx, int log_op_type, int result = 0);
 
+  void complete_disconnect_watches(
+    ObjectContextRef obc,
+    const std::list<watch_disconnect_t> &to_disconnect);
+
+  void do_osd_op_effects(OpContext *ctx, const ConnectionRef& conn);
+
+  int _delete_oid(OpContext *ctx);
+
+  int get_manifest_ref_count(ObjectContextRef obc,
+                             std::string& fp_oid, OpRequestRef op) override;
+
+/*  OpContextUPtr simple_opc_create(ObjectContextRef obc);
+  void simple_opc_submit(OpContextUPtr ctx);*/
 };
 
 #endif
