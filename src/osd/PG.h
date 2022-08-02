@@ -163,6 +163,28 @@ class PGRecoveryStats {
  *
  */
 
+class PG;
+struct OpContextBase {
+
+  ObjectContextRef obc;
+  const ObjectState *obs = nullptr; // Old objectstate
+  ObjectState new_obs;    // resulting ObjectState
+
+
+  OpContextBase() {
+  }
+  OpContextBase(ObjectContextRef& _obc) :
+    obc(_obc),
+    obs(&_obc->obs),
+    new_obs(obs->oi, obs->exists) {
+  }
+
+  virtual ~OpContextBase() {}
+  virtual PG* get_pg() = 0;
+  virtual OpRequestRef get_op() = 0;
+  virtual int get_processed_subop_count() const = 0;
+};
+
 class PG : public DoutPrefixProvider,
 	   public PeeringState::PeeringListener,
 	   public Scrub::PgScrubBeListener {
@@ -171,6 +193,14 @@ class PG : public DoutPrefixProvider,
   friend class PgScrubber;
   friend class ScrubBackend;
 
+protected:
+  struct watch_disconnect_t {
+    uint64_t cookie;
+    entity_name_t name;
+    bool send_disconnect;
+    watch_disconnect_t(uint64_t c, entity_name_t n, bool sd)
+      : cookie(c), name(n), send_disconnect(sd) {}
+  };
 public:
   const pg_shard_t pg_whoami;
   const spg_t pg_id;
@@ -695,6 +725,7 @@ public:
   void find_unfound(epoch_t queued, PeeringCtx &rctx);
 
   virtual void get_watchers(std::list<obj_watch_item_t> *ls) = 0;
+  virtual void handle_watch_timeout(WatchRef watch) = 0;
 
   void dump_pgstate_history(ceph::Formatter *f);
   void dump_missing(ceph::Formatter *f);
@@ -712,6 +743,20 @@ public:
   unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority, unsigned int suggested_priority) const;
   /// the version that refers to flags_.priority
   unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority) const;
+
+  virtual int do_osd_ops(OpContextBase *ctx, std::vector<OSDOp>& ops) = 0;
+
+  virtual int get_manifest_ref_count(ObjectContextRef obc,
+                                     std::string& fp_oid, OpRequestRef op) = 0;
+
+  virtual int start_cls_gather(OpContextBase *ctx,
+                               const std::set<std::string> &src_objs,
+                               const std::string& pool,
+                               const char *cls,
+                               const char *method, bufferlist& inbl) = 0;
+  virtual int get_cls_gathered_data(OpContextBase *ctx,
+                                    std::map<std::string, bufferlist> *results) = 0;
+
 private:
   // auxiliaries used by sched_scrub():
   double next_deepscrub_interval() const;

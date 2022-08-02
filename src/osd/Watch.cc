@@ -7,7 +7,7 @@
 #include <map>
 
 #include "OSD.h"
-#include "PrimaryLogPG.h"
+#include "PG.h"
 #include "Watch.h"
 #include "Session.h"
 
@@ -119,7 +119,7 @@ void Notify::do_timeout()
   lock.unlock();
 
   for (auto i = _watchers.begin(); i != _watchers.end(); ++i) {
-    boost::intrusive_ptr<PrimaryLogPG> pg((*i)->get_pg());
+    boost::intrusive_ptr<PG> pg((*i)->get_pg());
     pg->lock();
     if (!(*i)->is_discarded()) {
       (*i)->cancel_notify(self.lock());
@@ -257,7 +257,7 @@ public:
   void complete(int) override {
     OSDService *osd(watch->osd);
     ldout(osd->cct, 10) << "HandleWatchTimeout" << dendl;
-    boost::intrusive_ptr<PrimaryLogPG> pg(watch->pg);
+    boost::intrusive_ptr<PG> pg(watch->pg);
     osd->watch_lock.unlock();
     pg->lock();
     watch->cb = nullptr;
@@ -297,7 +297,7 @@ std::ostream& Watch::gen_dbg_prefix(std::ostream& out) {
 }
 
 Watch::Watch(
-  PrimaryLogPG *pg,
+  PG *pg,
   OSDService *osd,
   ObjectContextRef obc,
   uint32_t timeout,
@@ -508,7 +508,7 @@ void Watch::notify_ack(uint64_t notify_id, bufferlist& reply_bl)
 }
 
 WatchRef Watch::makeWatchRef(
-  PrimaryLogPG *pg, OSDService *osd,
+  PG *pg, OSDService *osd,
   ObjectContextRef obc, uint32_t timeout, uint64_t cookie, entity_name_t entity, const entity_addr_t& addr)
 {
   WatchRef ret(new Watch(pg, osd, obc, timeout, cookie, entity, addr));
@@ -538,7 +538,7 @@ void WatchConState::reset(Connection *con)
   for (set<WatchRef>::iterator i = _watches.begin();
        i != _watches.end();
        ++i) {
-    boost::intrusive_ptr<PrimaryLogPG> pg((*i)->get_pg());
+    boost::intrusive_ptr<PG> pg((*i)->get_pg());
     pg->lock();
     if (!(*i)->is_discarded()) {
       if ((*i)->is_connected(con)) {

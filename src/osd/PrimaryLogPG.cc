@@ -5957,9 +5957,11 @@ int PrimaryLogPG::do_sparse_read(OpContext *ctx, OSDOp& osd_op) {
   return 0;
 }
 
-int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
+int PrimaryLogPG::do_osd_ops(OpContextBase *ctx0, vector<OSDOp>& ops)
 {
   int result = 0;
+  PrimaryLogPG::OpContext *ctx =
+    reinterpret_cast<PrimaryLogPG::OpContext*>(ctx0);
   SnapSetContext *ssc = ctx->obc->ssc;
   ObjectState& obs = ctx->new_obs;
   object_info_t& oi = obs.oi;
@@ -10382,10 +10384,34 @@ struct C_gather : public Context {
   }
 };
 
-int PrimaryLogPG::start_cls_gather(OpContext *ctx, std::map<std::string, bufferlist> *src_obj_buffs, const std::string& pool,
-				   const char *cls, const char *method, bufferlist& inbl)
+struct GatherFinisher : public PrimaryLogPG::OpFinisher {
+  std::map<std::string, bufferlist> src_obj_buffs;
+  OSDOp *osd_op;
+  GatherFinisher(OSDOp *osd_op_) : osd_op(osd_op_) {}
+  int execute() override {
+    return 0;
+  }
+};
+
+int PrimaryLogPG::start_cls_gather(OpContextBase *ctx,
+                                   const std::set<std::string> &src_objs,
+                                   const std::string& pool,
+				   const char *cls,
+                                   const char *method, bufferlist& inbl)
 {
-  OpRequestRef op = ctx->op;
+  OpContext *pctx = static_cast<OpContext*>(ctx);
+  int subop_num = pctx->current_osd_subop_num;
+  OSDOp *osd_op = &((*pctx->ops)[subop_num]);
+  auto [iter_gf, ins_gq] = pctx->op_finishers.emplace(std::make_pair(subop_num, std::make_unique<GatherFinisher>(osd_op)));
+  assert(ins_gq);
+
+  auto &gf = *static_cast<GatherFinisher*>(iter_gf->second.get());
+  for (const auto &obj : src_objs) {
+    gf.src_obj_buffs[obj] = bufferlist();
+  }
+  auto& bufs = gf.src_obj_buffs;
+
+  OpRequestRef op = pctx->op;
   MOSDOp *m = static_cast<MOSDOp*>(op->get_nonconst_req());
 
   auto pool_id = osd->objecter->with_osdmap(std::mem_fn(&OSDMap::lookup_pg_pool_name), pool);
@@ -10398,10 +10424,10 @@ int PrimaryLogPG::start_cls_gather(OpContext *ctx, std::map<std::string, bufferl
   ObjectContextRef obc = get_object_context(soid, false);
   C_GatherBuilder gather(cct);
 
-  auto [iter, inserted] = cls_gather_ops.emplace(soid, CLSGatherOp(ctx, obc, op));
+  auto [iter, inserted] = cls_gather_ops.emplace(soid, CLSGatherOp(pctx, obc, op));
   ceph_assert(inserted);
   auto &cgop = iter->second;
-  for (std::map<std::string, bufferlist>::iterator it = src_obj_buffs->begin(); it != src_obj_buffs->end(); it++) {
+  for (auto it = bufs.begin(); it != bufs.end(); it++) {
     std::string oid = it->first;
     ObjectOperation obj_op;
     obj_op.call(cls, method, inbl);
@@ -10414,12 +10440,29 @@ int PrimaryLogPG::start_cls_gather(OpContext *ctx, std::map<std::string, bufferl
     dout(10) << __func__ << " src=" << oid << ", tgt=" << soid << dendl;
   }
 
-  C_gather *fin = new C_gather(this, soid, get_last_peering_reset(), &(*ctx->ops)[ctx->current_osd_subop_num]);
+  C_gather *fin = new C_gather(this, soid, get_last_peering_reset(), osd_op);
   gather.set_finisher(new C_OnFinisher(fin,
 				       osd->get_objecter_finisher(get_pg_shard())));
   gather.activate();
 
   return -EINPROGRESS;
+}
+
+int PrimaryLogPG::get_cls_gathered_data(OpContextBase *ctx,
+                                        std::map<std::string, bufferlist> *results)
+{
+  assert(results);
+  OpContext *pctx = static_cast<OpContext*>(ctx);
+  int r = 0;
+  auto it = pctx->op_finishers.find(pctx->current_osd_subop_num);
+  if (it != pctx->op_finishers.end()) {
+    GatherFinisher *gf = (GatherFinisher*)(it->second.get());
+    *results = std::move(gf->src_obj_buffs);
+    r = gf->osd_op->rval;
+  } else {
+    results->clear();
+  }
+  return r;
 }
 
 // ========================================================================

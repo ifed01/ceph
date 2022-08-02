@@ -593,13 +593,6 @@ public:
    */
   void do_replica_scrub_map(OpRequestRef op);
 
-  struct watch_disconnect_t {
-    uint64_t cookie;
-    entity_name_t name;
-    bool send_disconnect;
-    watch_disconnect_t(uint64_t c, entity_name_t n, bool sd)
-      : cookie(c), name(n), send_disconnect(sd) {}
-  };
   void complete_disconnect_watches(
     ObjectContextRef obc,
     const std::list<watch_disconnect_t> &to_disconnect);
@@ -614,15 +607,13 @@ public:
   /*
    * Capture all object state associated with an in-progress read or write.
    */
-  struct OpContext {
+  struct OpContext : public OpContextBase {
     OpRequestRef op;
     osd_reqid_t reqid;
     std::vector<OSDOp> *ops;
 
-    const ObjectState *obs; // Old objectstate
     const SnapSet *snapset; // Old snapset
 
-    ObjectState new_obs;  // resulting ObjectState
     SnapSet new_snapset;  // resulting SnapSet (in case of a write)
     //pg_stat_t new_stats;  // resulting Stats
     object_stat_sum_t delta_stats;
@@ -669,7 +660,6 @@ public:
     std::optional<pg_hit_set_history_t> updated_hset_history;
 
     interval_set<uint64_t> modified_ranges;
-    ObjectContextRef obc;
     ObjectContextRef clone_obc;    // if we created a clone
     ObjectContextRef head_obc;     // if we also update snapset (see trim_object)
 
@@ -733,15 +723,13 @@ public:
     OpContext(OpRequestRef _op, osd_reqid_t _reqid, std::vector<OSDOp>* _ops,
 	      ObjectContextRef& obc,
 	      PrimaryLogPG *_pg) :
+      OpContextBase(obc),
       op(_op), reqid(_reqid), ops(_ops),
-      obs(&obc->obs),
       snapset(0),
-      new_obs(obs->oi, obs->exists),
       modify(false), user_modify(false), undirty(false), cache_operation(false),
       ignore_cache(false), ignore_log_op_stats(false), update_log_only(false),
       bytes_written(0), bytes_read(0), user_at_version(0),
       current_osd_subop_num(0),
-      obc(obc),
       reply(NULL), pg(_pg),
       num_read(0),
       num_write(0),
@@ -755,7 +743,7 @@ public:
     }
     OpContext(OpRequestRef _op, osd_reqid_t _reqid,
               std::vector<OSDOp>* _ops, PrimaryLogPG *_pg) :
-      op(_op), reqid(_reqid), ops(_ops), obs(NULL), snapset(0),
+      op(_op), reqid(_reqid), ops(_ops), snapset(0),
       modify(false), user_modify(false), undirty(false), cache_operation(false),
       ignore_cache(false), ignore_log_op_stats(false), update_log_only(false),
       bytes_written(0), bytes_read(0), user_at_version(0),
@@ -772,7 +760,7 @@ public:
 	snapset = &obc->ssc->snapset;
       }
     }
-    ~OpContext() {
+    ~OpContext() override {
       ceph_assert(!op_t);
       if (reply)
 	reply->put();
@@ -789,6 +777,15 @@ public:
         return op->get_req()->get_connection()->get_features();
       }
       return -1ull;
+    }
+    PG* get_pg() override {
+      return pg;
+    }
+    OpRequestRef get_op() override {
+      return op;
+    }
+    int get_processed_subop_count() const override {
+      return  processed_subop_count;
     }
   };
   using OpContextUPtr = std::unique_ptr<OpContext>;
@@ -1009,8 +1006,8 @@ protected:
   void check_blocklisted_watchers() override;
   void get_watchers(std::list<obj_watch_item_t> *ls) override;
   void get_obc_watchers(ObjectContextRef obc, std::list<obj_watch_item_t> &pg_watchers);
-public:
-  void handle_watch_timeout(WatchRef watch);
+  void handle_watch_timeout(WatchRef watch) override;
+
 protected:
 
   ObjectContextRef create_object_context(const object_info_t& oi, SnapSetContext *ssc);
@@ -1510,7 +1507,7 @@ public:
   void snap_trimmer(epoch_t e) override;
   void kick_snap_trim() override;
   void snap_trimmer_scrub_complete() override;
-  int do_osd_ops(OpContext *ctx, std::vector<OSDOp>& ops);
+  int do_osd_ops(OpContextBase *ctx, std::vector<OSDOp>& ops) override;
 
   int _get_tmap(OpContext *ctx, ceph::buffer::list *header, ceph::buffer::list *vals);
   int do_tmap2omap(OpContext *ctx, unsigned flags);
@@ -1518,8 +1515,14 @@ public:
   int do_tmapup_slow(OpContext *ctx, ceph::buffer::list::const_iterator& bp, OSDOp& osd_op, ceph::buffer::list& bl);
 
   void do_osd_op_effects(OpContext *ctx, const ConnectionRef& conn);
-  int start_cls_gather(OpContext *ctx, std::map<std::string, bufferlist> *src_objs, const std::string& pool,
-		       const char *cls, const char *method, bufferlist& inbl);
+
+  int start_cls_gather(OpContextBase *ctx,
+                       const std::set<std::string> &src_objs,
+                       const std::string& pool,
+                       const char *cls,
+                       const char *method, bufferlist& inbl) override;
+  int get_cls_gathered_data(OpContextBase *ctx,
+			    std::map<std::string, bufferlist> *results) override;
 
 private:
   int do_scrub_ls(const MOSDOp *op, OSDOp *osd_op);
@@ -1839,7 +1842,8 @@ public:
   void maybe_kick_recovery(const hobject_t &soid);
   void wait_for_unreadable_object(const hobject_t& oid, OpRequestRef op);
 
-  int get_manifest_ref_count(ObjectContextRef obc, std::string& fp_oid, OpRequestRef op);
+  int get_manifest_ref_count(ObjectContextRef obc,
+                             std::string& fp_oid, OpRequestRef op) override;
 
   bool check_laggy(OpRequestRef& op);
   bool check_laggy_requeue(OpRequestRef& op);
