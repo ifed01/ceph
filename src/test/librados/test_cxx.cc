@@ -121,6 +121,30 @@ std::string create_one_ec_pool_pp(const std::string &pool_name, Rados &cluster)
   return "";
 }
 
+std::string create_one_transparent_pool_pp(const std::string &pool_name, Rados &cluster)
+{
+  std::string err = connect_cluster_pp(cluster);
+  if (err.length())
+    return err;
+
+  std::ostringstream oss;
+
+  bufferlist inbl;
+
+  int ret = cluster.mon_command(
+    "{\"prefix\": \"osd pool create\", \"pool\": \"" + pool_name + "\", \"pool_type\":\"transparent\", \"pg_num\":8, \"pgp_num\":8}",
+    inbl, NULL, NULL);
+  if (ret) {
+    bufferlist inbl;
+    cluster.shutdown();
+    oss << "mon_command osd pool create pool:" << pool_name << " pool_type:transparent failed with error " << ret;
+    return oss.str();
+  }
+
+  cluster.wait_for_latest_osdmap();
+  return "";
+}
+
 std::string connect_cluster_pp(librados::Rados &cluster)
 {
   return connect_cluster_pp(cluster, {});
