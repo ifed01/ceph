@@ -1849,11 +1849,18 @@ uint32_t pg_pool_t::get_random_pg_position(pg_t pg, uint32_t seed) const
 void pg_pool_t::encode(ceph::buffer::list& bl, uint64_t features) const
 {
   using ceph::encode;
+  auto _pool_type = type;
+  // substitute transparent pool type with replicated one for
+  // clients unaware of the new type
+  if (!(features & CEPH_FEATURE_SUPPORT_TRANSPARENT_POOL) &&
+      type == TYPE_TRANSPARENT) {
+    _pool_type = TYPE_REPLICATED;
+  }
   if ((features & CEPH_FEATURE_PGPOOL3) == 0) {
     // this encoding matches the old struct ceph_pg_pool
     __u8 struct_v = 2;
     encode(struct_v, bl);
-    encode(type, bl);
+    encode(_pool_type, bl);
     encode(size, bl);
     encode(crush_rule, bl);
     encode(object_hash, bl);
@@ -1881,7 +1888,7 @@ void pg_pool_t::encode(ceph::buffer::list& bl, uint64_t features) const
   if ((features & CEPH_FEATURE_OSDENC) == 0) {
     __u8 struct_v = 4;
     encode(struct_v, bl);
-    encode(type, bl);
+    encode(_pool_type, bl);
     encode(size, bl);
     encode(crush_rule, bl);
     encode(object_hash, bl);
@@ -1908,7 +1915,7 @@ void pg_pool_t::encode(ceph::buffer::list& bl, uint64_t features) const
     // they are decodable without the feature), so let's be pendantic
     // about it.
     ENCODE_START(14, 5, bl);
-    encode(type, bl);
+    encode(_pool_type, bl);
     encode(size, bl);
     encode(crush_rule, bl);
     encode(object_hash, bl);
@@ -1968,7 +1975,7 @@ void pg_pool_t::encode(ceph::buffer::list& bl, uint64_t features) const
   }
 
   ENCODE_START(v, 5, bl);
-  encode(type, bl);
+  encode(_pool_type, bl);
   encode(size, bl);
   encode(crush_rule, bl);
   encode(object_hash, bl);
