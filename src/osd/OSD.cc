@@ -4814,7 +4814,6 @@ PG* OSD::_make_pg(
       pi.type == pg_pool_t::TYPE_ERASURE) {
     pg = new PrimaryLogPG(&service, createmap, pool, ec_profile, pgid);
   } else if (pi.type == pg_pool_t::TYPE_TRANSPARENT) {
-    dout(0) << __func__ << " transparent " << dendl;
     pg = new TransparentPG(&service, createmap, pool, ec_profile, pgid);
   } else
     ceph_abort_msg("transparent?????");
@@ -9429,6 +9428,7 @@ void OSD::enqueue_op(spg_t pg, OpRequestRef&& op, epoch_t epoch)
 	   << " cost " << cost
 	   << " latency " << latency
 	   << " epoch " << epoch
+           << " " << pg
 	   << " " << *(op->get_req()) << dendl;
   op->osd_trace.event("enqueue op");
   op->osd_trace.keyval("priority", priority);

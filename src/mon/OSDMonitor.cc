@@ -7353,7 +7353,8 @@ int OSDMonitor::prepare_new_pool(MonOpRequestRef op)
   ret = prepare_new_pool(m->name, m->crush_rule, rule_name,
 			 0, 0, 0, 0, 0, 0, 0.0,
 			 erasure_code_profile,
-			 pg_pool_t::TYPE_REPLICATED, 0, FAST_READ_OFF, {}, bulk,
+//			 pg_pool_t::TYPE_REPLICATED, 0, FAST_READ_OFF, {}, bulk,
+			 pg_pool_t::TYPE_TRANSPARENT, 0, FAST_READ_OFF, {}, bulk,
 			 &ss);
 
   if (ret < 0) {
