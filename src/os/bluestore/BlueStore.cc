@@ -1914,7 +1914,7 @@ void BlueStore::OnodeSpace::rename(
   const mempool::bluestore_cache_meta::string& new_okey)
 {
   std::lock_guard l(cache->lock);
-  ldout(cache->cct, 30) << __func__ << " " << old_oid << " -> " << new_oid
+  ldout(cache->cct, 2)  << __func__ << " " << old_oid << " -> " << new_oid
 			<< dendl;
   ceph::unordered_map<ghobject_t,OnodeRef>::iterator po, pn;
   po = onode_map.find(old_oid);
@@ -3525,6 +3525,7 @@ void BlueStore::Onode::get() {
   }
 }
 void BlueStore::Onode::put() {
+  auto cct = c->store->cct;
   ++put_nref;
   int n = --nref;
   if (n == 1) {
@@ -3552,6 +3553,7 @@ void BlueStore::Onode::put() {
   }
   auto pn = --put_nref;
   if (nref == 0 && pn == 0) {
+    ldout(cct, 2) << __func__ << " " << this << dendl;
     delete this;
   }
 }
@@ -4001,7 +4003,7 @@ BlueStore::OnodeRef BlueStore::Collection::get_onode(
 void BlueStore::Collection::split_cache(
   Collection *dest)
 {
-  ldout(store->cct, 10) << __func__ << " to " << dest << dendl;
+  ldout(store->cct, 2) << __func__ << " to " << dest << dendl;
 
   auto *ocache = get_onode_cache();
   auto *ocache_dest = dest->get_onode_cache();
