@@ -541,6 +541,7 @@ void TestMount::prepareSnapDiffCases()
   ASSERT_LE(0, write_full("b", "file 'b' v1"));
   ASSERT_LE(0, write_full("c", "file 'c' v1"));
   ASSERT_LE(0, write_full("e", "file 'e' v1"));
+  ASSERT_LE(0, write_full("~e", "file '~e' v1"));
   ASSERT_LE(0, write_full("f", "file 'f' v1"));
   ASSERT_LE(0, write_full("ff", "file 'ff' v1"));
   ASSERT_LE(0, write_full("g", "file 'g' v1"));
@@ -573,6 +574,7 @@ void TestMount::prepareSnapDiffCases()
   ASSERT_EQ(0, unlink("c"));
   ASSERT_LE(0, write_full("d", "file 'd' v2"));
   ASSERT_LE(0, write_full("e", "file 'e' v2"));
+  ASSERT_LE(0, write_full("~e", "file '~e' v2"));
   ASSERT_LE(0, write_full("f", "file 'f' v2"));
   ASSERT_EQ(0, unlink("g"));
 
@@ -611,6 +613,7 @@ void TestMount::prepareSnapDiffCases()
   ASSERT_LE(0, write_full("b", "file 'b' v3"));
   ASSERT_LE(0, write_full("d", "file 'd' v3"));
   ASSERT_EQ(0, unlink("e"));
+  ASSERT_EQ(0, unlink("~e"));
   ASSERT_EQ(0, unlink("f"));
   ASSERT_EQ(0, unlink("ff"));
   ASSERT_LE(0, write_full("g", "file 'g' v3"));
@@ -907,7 +910,8 @@ TEST(LibCephFS, SnapDiffCases2_3)
     expected.push_back("a");   // file 'a' is updated in snap3
     expected.push_back("b");   // file 'b' is updated in snap3
     expected.push_back("d");   // file 'd' is updated in snap3
-    expected.push_back("e");   // file 'f' is removed in snap3
+    expected.push_back("~~~e");   // file '~e' is removed in snap3
+    expected.push_back("~e");  // file 'e' is removed in snap3
     expected.push_back("~f");  // file 'f' is removed in snap3
     expected.push_back("~ff"); // file 'ff' is removed in snap3
     expected.push_back("g");   // file 'g' re-appeared in snap3
