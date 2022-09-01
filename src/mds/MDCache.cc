@@ -8390,12 +8390,25 @@ int MDCache::path_traverse(MDRequestRef& mdr, MDSContextFactory& cf,
                << " " << std::hex << mdr->snapid
                << " " << mdr->snapid_diff_other
                << std::dec << dendl;
-      if (path[depth][0] == SNAPDIFF_RM_INDICATOR) {
-	p.remove_prefix(1);
-	if (!mdr->removed_snapid_diff_level) {
-	  snapid = mdr->snapid_diff_other;
+      if (p[0] == SNAPDIFF_RM_INDICATOR) {
+        // we need to remove the indicator and unescape similar chars at the
+        // beginning of file name
+        size_t cnt = 0;
+        auto cptr = p.begin();
+        while(*cptr == SNAPDIFF_RM_INDICATOR) {
+          ++cnt;
+          ++cptr;
+        }
+        //When indicator is present we get odd number of chars in the prefix.
+        // Need to remove +1 char in this case.
+	if (cnt & 1) {
+	  if (!mdr->removed_snapid_diff_level) {
+	    snapid = mdr->snapid_diff_other;
+	   }
+	  ++mdr->removed_snapid_diff_level;
 	}
-	++mdr->removed_snapid_diff_level;
+        // Need to remove one more char in this case.
+	p.remove_prefix((cnt + 1) >> 1);
       }
     }
 

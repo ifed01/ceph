@@ -2343,10 +2343,24 @@ void Server::set_trace_dist(const ref_t<MClientReply> &reply,
     dir->encode_dirstat(bl, session->info, ds);
     dout(20) << "set_trace_dist added dir  " << *dir << dendl;
 
-    if (mdr->removed_snapid_diff_level) {
-      encode(SNAPDIFF_RM_INDICATOR, bl);
+    const auto& dn_name = dn->get_name();
+    if (mdr->is_snapid_diff) {
+      // Escape SNAPDIFF_RM_INDICATOR chars at the beginning of dn's name
+      // to be able to distinguish file names starting with this char from
+      // non-existent entries marked with the the indicator.
+      // Just duplicate every such char located at the beginning of the name.
+      auto cptr = dn_name.begin();
+      size_t cnt = mdr->removed_snapid_diff_level ? 1 : 0;
+      while(*cptr == SNAPDIFF_RM_INDICATOR) {
+	++cnt;
+	++cptr;
+      }
+      if (cnt) {
+        string s(cnt, SNAPDIFF_RM_INDICATOR);
+        encode(s, bl);
+      }
     }
-    encode(dn->get_name(), bl);
+    encode(dn_name, bl);
     mds->locker->issue_client_lease(dn, in, mdr, now, bl);
   } else
     reply->head.is_dentry = 0;
@@ -4726,7 +4740,17 @@ void Server::handle_client_readdir(MDRequestRef& mdr)
   __u32 offset_hash = 0;
   if (!offset_str.empty()) {
     if (mdr->is_snapid_diff && offset_str[0] == SNAPDIFF_RM_INDICATOR) {
-      offset_str = offset_str.substr(1);
+      // we need to remove the indicator and unescape similar chars at the
+      // beginning of file name
+      auto cptr = offset_str.begin();
+      size_t cnt = 0;
+      while(*cptr == SNAPDIFF_RM_INDICATOR) {
+        ++cnt;
+        ++cptr;
+      }
+      // When indicator is present we get odd number of chars in the prefix.
+      // Need to remove one more char in this case.
+      offset_str = offset_str.substr((cnt + 1) >> 1 );
     }
     offset_hash = ceph_frag_value(diri->hash_dentry_name(offset_str));
   } else
@@ -11267,7 +11291,17 @@ void Server::handle_client_readdir_snapdiff(MDRequestRef& mdr)
   __u32 offset_hash = 0;
   if (!offset_str.empty()) {
     if (mdr->is_snapid_diff && offset_str[0] == SNAPDIFF_RM_INDICATOR) {
-      offset_str = offset_str.substr(1);
+      // we need to remove the indicator and unescape similar chars at the
+      // beginning of file name
+      auto cptr = offset_str.begin();
+      size_t cnt = 0;
+      while(*cptr == SNAPDIFF_RM_INDICATOR) {
+        ++cnt;
+        ++cptr;
+      }
+      // When indicator is present we get odd number of chars in the prefix.
+      // Need to remove one more char in this case.
+      offset_str = offset_str.substr((cnt + 1) >> 1 );
     }
     offset_hash = ceph_frag_value(diri->hash_dentry_name(offset_str));
   } else {
@@ -11432,17 +11466,31 @@ void Server::_readdir_diff(
     [&](CDentry* dn, CInode* in, bool exists) {
       string name;
       snapid_t effective_snapid;
+      const auto& dn_name = dn->get_name();
       if (compatibility_format) {
+	size_t cnt = 0;
 	if (!exists) {
-	  name.append(1, SNAPDIFF_RM_INDICATOR);
+	  ++cnt;
 	}
+	// Escape SNAPDIFF_RM_INDICATOR chars at the beginning of dn's name
+	// to be able to distinguish file names starting with this char from
+	// non-existent entries marked with the the indicator.
+	// Just duplicate every such char located at the beginning of the name.
+
+	auto cptr = dn_name.begin();
+	while(*cptr == SNAPDIFF_RM_INDICATOR) {
+	  ++cnt;
+	  ++cptr;
+	}
+        name.append(cnt, SNAPDIFF_RM_INDICATOR);
+
 	effective_snapid = mdr->get_effective_snapid_diff(exists ? 1 : 0);
       } else {
         // provide the first snapid for removed entries and
 	// the last one for existent ones
 	effective_snapid = exists ? snapid : snapid_prev;
       }
-      name.append(dn->get_name());
+      name.append(dn_name);
       if ((int)(dnbl.length() + name.length() + sizeof(__u32) + sizeof(LeaseStat)) > bytes_left) {
 	dout(10) << " ran out of room, stopping at " << dnbl.length() << " < " << bytes_left << dendl;
 	return false;
