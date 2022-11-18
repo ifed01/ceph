@@ -1,0 +1,1000 @@
+  669  2022-10-31 12:32:14 mce ./kill_mds.sh 
+  670  2022-10-31 12:32:31 ./kill_mds.sh run
+  671  2022-10-31 12:32:43 ll
+  672  2022-10-31 12:33:02 cp images-jpg.tar /mnt/cephfs/
+  673  2022-10-31 12:33:31 df /mnt/cephfs/ -h
+  674  2022-10-31 12:33:39 ./kill_mds.sh run
+  675  2022-10-31 12:38:08 less ./kill_mds.sh run
+  676  2022-10-31 12:38:39 /usr/bin/convert
+  677  2022-10-31 12:38:45 zypper se convert
+  678  2022-10-31 12:40:11 mce ./kill_mds.sh
+  679  2022-10-31 12:41:16 ll
+  680  2022-10-31 12:41:22 mce ./kill_mds.sh
+  681  2022-10-31 12:42:46 zypper se imagemagik
+  682  2022-10-31 12:42:56 zypper se imagemagick
+  683  2022-10-31 12:43:06 zypper in  imagemagick
+  684  2022-10-31 12:43:13 zypper in  ImageMagick
+  685  2022-10-31 12:44:43 ./kill_mds.sh clean
+  686  2022-10-31 12:45:12 ./kill_mds.sh run &>a
+  687  2022-10-31 12:58:28 ./kill_mds.sh clean
+  688  2022-10-31 12:58:47 ./kill_mds.sh run | tie b
+  689  2022-10-31 12:59:19 ./kill_mds.sh run &>
+  690  2022-10-31 13:04:40 less b
+  691  2022-10-31 13:05:46 ./kill_mds.sh clean
+  692  2022-10-31 13:07:28 ps -ef | grep fuse
+  693  2022-10-31 13:07:33 kill 31517
+  694  2022-10-31 13:07:36 ps -ef | grep fuse
+  695  2022-10-31 13:07:39 ll /mnt/cephfs/
+  696  2022-10-31 13:07:47 mount -t ceph
+  697  2022-10-31 13:07:53 mount
+  698  2022-10-31 13:08:04 mount -t ceph /mnt/cephfs
+  699  2022-10-31 13:08:10 less kill_mds.sh 
+  700  2022-10-31 13:08:22 mount -t ceph localhost:/ /mnt/cephfs
+  701  2022-10-31 13:08:52 mount -t ceph localhost:/ -o noshare,noatime /mnt/cephfs
+  702  2022-10-31 13:15:05 mount -t ceph 192.168.2.36:/ -o noshare,noatime /mnt/cephfs
+  703  2022-10-31 13:16:50 mount.ceph 192.168.2.36:40977,192.168.2.36:40979,192.168.2.36:40981:/ -o noshare,noatime /mnt/cephfs
+  704  2022-10-31 13:17:07 mount.ceph 192.168.2.36:40977,192.168.2.36:40979,192.168.2.36:40981:/ /mnt/cephfs
+  705  2022-10-31 13:38:26 mount -t ceph 192.168.2.36:40977:/ -o noshare,noatime /mnt/cephfs
+  706  2022-10-31 13:39:38 ping 192.168.2.36
+  707  2022-10-31 13:45:49 man mount.ceph
+  708  2022-10-31 13:49:53 less kill_mds.sh 
+  709  2022-10-31 13:51:00 cp images-jpg.tar /mnt/cephfs/
+  710  2022-10-31 13:51:20 ll images-jpg.tar
+  711  2022-10-31 13:51:31 ll /mnt/cephfs/
+  712  2022-10-31 13:52:41 ./kill_mds.sh run
+  713  2022-10-31 13:55:37 mce ./kill_mds.sh 
+  714  2022-10-31 13:56:05 ps -ef | grep fuse
+  715  2022-10-31 13:56:08 ps -ef | grep kill
+  716  2022-10-31 13:56:24 mce ./kill_mds.sh 
+  717  2022-10-31 13:57:34 ps -ef | grep kill
+  718  2022-10-31 14:00:37 ./kill_mds.sh 
+  719  2022-10-31 14:00:41 ./kill_mds.sh run
+  720  2022-10-31 14:03:43 time ./kill_mds.sh run
+  721  2022-10-31 14:08:16 mce ./kill_mds.sh 
+  722  2022-10-31 14:09:42 man tar
+  723  2022-10-31 14:10:51 mce ./kill_mds.sh 
+  724  2022-10-31 14:13:09 time ./kill_mds.sh run
+  725  2022-10-31 14:34:23 time ./kill_mds.sh clean
+  726  2022-10-31 14:34:29 cp images-jpg.tar /mnt/cephfs/
+  727  2022-10-31 14:35:21 mce kill_mds.sh 
+  728  2022-10-31 14:39:06 ./kill_mds.sh run
+  729  2022-10-31 14:45:41 umount /mnt/cephfs 
+  730  2022-10-31 14:56:21 cp images-jpg.tar /mnt/cephfs/
+  731  2022-10-31 14:57:24 ./kill_mds.sh run
+  732  2022-10-31 15:20:51 mce kill_mds.sh 
+  733  2022-10-31 15:21:31 kill_mds.sh run
+  734  2022-10-31 15:21:34 ./kill_mds.sh run
+  735  2022-10-31 15:39:11 ll
+  736  2022-10-31 15:39:19 mce prep.sh 
+  737  2022-10-31 15:39:33 ./prep.sh 
+  738  2022-10-31 15:39:34 ll
+  739  2022-10-31 15:39:42 cp kill_mds.sh kill_mds10.sh 
+  740  2022-10-31 15:39:46 mce kill_mds10.sh
+  741  2022-10-31 15:40:36 ./kill_mds10.sh clean
+  742  2022-10-31 15:40:46 ./kill_mds10.sh run
+  743  2022-10-31 15:41:07 mce kill_mds10.sh
+  744  2022-10-31 15:41:38 ./kill_mds10.sh run
+  745  2022-10-31 15:42:06 ./kill_mds10.sh clean
+  746  2022-10-31 15:42:08 mce kill_mds10.sh
+  747  2022-10-31 15:42:19 ./kill_mds10.sh clean
+  748  2022-10-31 15:42:23 ./kill_mds10.sh run
+  749  2022-10-31 15:45:08 mce kill_mds10.sh
+  750  2022-10-31 15:49:00 ./kill_mds10.sh run
+  751  2022-10-31 15:49:04 mce kill_mds10.sh
+  752  2022-10-31 15:49:12 ./kill_mds10.sh run
+  753  2022-10-31 15:49:25 mce kill_mds10.sh
+  754  2022-10-31 15:49:30 ./kill_mds10.sh run
+  755  2022-10-31 15:49:35 mce kill_mds10.sh
+  756  2022-10-31 15:50:12 ./kill_mds10.sh run
+  757  2022-10-31 15:50:21 mce kill_mds10.sh
+  758  2022-10-31 15:50:40 ./kill_mds10.sh run
+  759  2022-10-31 15:50:46 mce kill_mds10.sh
+  760  2022-10-31 15:51:32 ./kill_mds10.sh run
+  761  2022-10-31 15:51:35 mce kill_mds10.sh
+  762  2022-10-31 15:51:46 ./kill_mds10.sh run
+  763  2022-10-31 15:51:53 mce kill_mds10.sh
+  764  2022-10-31 15:51:59 ./kill_mds10.sh run
+  765  2022-10-31 15:52:03 mce kill_mds10.sh
+  766  2022-10-31 15:52:28 ./kill_mds10.sh run
+  767  2022-10-31 15:52:45 mce kill_mds10.sh
+  768  2022-10-31 15:53:09 ./kill_mds10.sh run
+  769  2022-10-31 15:58:10 mce ./kill_mds
+  770  2022-10-31 15:58:14 mce ./kill_mds.sh 
+  771  2022-10-31 15:58:26 ./kill_mds.sh clean
+  772  2022-10-31 15:58:32 ./kill_mds.sh eun
+  773  2022-10-31 15:58:34 ./kill_mds.sh run
+  774  2022-10-31 16:03:34 umount /mnt/cephfs 
+  775  2022-10-31 16:09:44 mount
+  776  2022-10-31 16:09:50 less kill_mds.sh 
+  777  2022-10-31 16:10:39 ./kill_mds.sh clean
+  778  2022-10-31 16:10:45 ./kill_mds.sh run
+  779  2022-10-31 16:56:02 mce prep.sh 
+  780  2022-10-31 16:56:28 ./prep.sh 
+  781  2022-10-31 18:58:09 mce ../octopus/src/os/bluestore/BlueStore.cc
+  782  2022-10-31 20:21:19 mount
+  783  2022-10-31 20:21:26 ./kill_mds.sh 
+  784  2022-10-31 20:21:29 ./kill_mds.sh run
+  785  2022-11-01 15:42:08 mce ./kill_mds.sh
+  786  2022-11-01 15:42:18 ./kill_mds.sh run
+  787  2022-11-02 12:34:50 ll ..
+  788  2022-11-02 12:34:58 less ../crash-mds.log 
+  789  2022-11-02 13:42:02 ll ..
+  790  2022-11-02 13:42:12 mv ../mds-crash-dev .
+  791  2022-11-02 13:42:16 less mds-crash-dev 
+  792  2022-11-08 17:15:24 pcd ../quincy.2
+  793  2022-11-08 17:15:27 cd ../quincy.2
+  794  2022-11-08 17:15:35 mce src/os/bluestore/BlueFS.cc
+  795  2022-11-08 17:15:52 git diff HEAD~2 HEAD
+  796  2022-11-08 17:17:50 mce src/os/bluestore/BlueFS.cc
+  797  2022-11-08 17:33:56 mce src/os/bluestore/BlueFS.h
+  798  2022-11-08 17:34:24 git diff
+  799  2022-11-08 17:35:10 cd build
+  800  2022-11-08 17:35:14 ninja -j 24 os
+  801  2022-11-08 17:35:46 mce src/os/bluestore/BlueFS.h
+  802  2022-11-08 17:35:50 mce ../src/os/bluestore/BlueFS.h
+  803  2022-11-08 17:36:00 ninja -j 24 os
+  804  2022-11-08 17:37:41 mce ../src/os/bluestore/BlueFS.h
+  805  2022-11-08 17:38:56 ninja -j 24 os
+  806  2022-11-08 17:39:49 bin/unittest_bluefs
+  807  2022-11-08 17:39:55 ninja -j 24 unittest_bluefs
+  808  2022-11-08 17:41:08 bin/unittest_bluefs
+  809  2022-11-08 17:42:45 bin/unittest_bluefs --gtest_fiiletr=BlueFS.test_compaction_sync
+  810  2022-11-08 17:42:49 bin/unittest_bluefs --gtest_fiiler=BlueFS.test_compaction_sync
+  811  2022-11-08 17:42:53 bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  812  2022-11-08 17:42:58 git stash
+  813  2022-11-08 17:43:00 ninja -j 24 unittest_bluefs
+  814  2022-11-08 17:43:20 git stash
+  815  2022-11-08 17:43:21 ninja -j 24 unittest_bluefs
+  816  2022-11-08 17:43:28 bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  817  2022-11-08 17:43:39 git stash pop
+  818  2022-11-08 17:43:41 git diff
+  819  2022-11-08 17:45:24 ninja -j 24 unittest_bluefs
+  820  2022-11-08 17:46:20 bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  821  2022-11-08 17:46:26 bin/unittest_bluefs
+  822  2022-11-08 17:50:51 git diff
+  823  2022-11-08 17:57:08 ninja -j 24 unittest_bluefs
+  824  2022-11-08 17:57:23 bin/unittest_bluefs
+  825  2022-11-08 17:58:30 ninja -j 24 os
+  826  2022-11-08 17:58:34 ninja -j 24
+  827  2022-11-08 18:00:30 mce ../src/os/bluestore/BlueFS.cc
+  828  2022-11-08 18:11:24 mce ../src/os/bluestore/BlueFS.h
+  829  2022-11-08 18:13:13 ninja -j 24 unittest_bluefs
+  830  2022-11-08 18:17:04 bin/unittest_bluefs
+  831  2022-11-08 18:18:17 bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  832  2022-11-08 18:18:59 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  833  2022-11-08 18:19:05 less c
+  834  2022-11-08 18:24:48 mce ../src/os/bluestore/BlueFS.h
+  835  2022-11-08 18:27:11 ninja -j 24 unittest_bluefs
+  836  2022-11-08 18:28:41 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  837  2022-11-08 18:29:12 less c
+  838  2022-11-08 18:32:53 ninja -j 24 unittest_bluefs
+  839  2022-11-08 18:34:16 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  840  2022-11-08 18:37:42 ninja -j 24 unittest_bluefs
+  841  2022-11-08 18:37:54 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  842  2022-11-08 18:37:58 less c
+  843  2022-11-08 18:40:19 ninja -j 24 unittest_bluefs
+  844  2022-11-08 18:40:43 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  845  2022-11-08 18:40:51 bin/unittest_bluefs
+  846  2022-11-08 18:58:33 mce ../src/os/bluestore/bluefs_types.
+  847  2022-11-08 18:58:35 mce ../src/os/bluestore/bluefs_types.h
+  848  2022-11-08 19:03:07 ninja -j 24 unittest_bluefs
+  849  2022-11-08 19:04:05 mce ../src/os/bluestore/bluefs_types.h
+  850  2022-11-08 19:05:13 ninja -j 24 unittest_bluefs
+  851  2022-11-08 19:09:43 bin/unittest_bluefs
+  852  2022-11-08 19:13:22 git status
+  853  2022-11-08 19:13:27 git diff
+  854  2022-11-08 19:18:28 ninja -j 24 unittest_bluefs
+  855  2022-11-08 19:19:42 bin/unittest_bluefs
+  856  2022-11-08 19:21:43 git diff
+  857  2022-11-08 19:23:45 ninja -j 24 unittest_bluefs
+  858  2022-11-08 19:23:50 ninja -j 24 vstart
+  859  2022-11-08 19:35:00 mce ../src/os/bluestore/BlueFS.cc
+  860  2022-11-08 19:59:22 ninja -j 24 os
+  861  2022-11-08 20:02:41 ninja -j 24 unittest_bluefs
+  862  2022-11-08 20:03:19 bin/unittest_bluefs
+  863  2022-11-08 20:07:09 mce ../src/os/bluestore/BlueFS.cc
+  864  2022-11-08 20:22:25 mce ../src/os/bluestore/bluefs_types.h
+  865  2022-11-08 20:28:36 mce ../src/os/bluestore/bluefs_types.cc
+  866  2022-11-08 20:28:59 mce ../src/os/bluestore/bluefs_types.h
+  867  2022-11-08 20:31:35 mce ../src/os/bluestore/BlueFS.cc
+  868  2022-11-08 22:52:31 ninja -j 24 unittest_bluefs
+  869  2022-11-08 22:52:53 mce ../src/os/bluestore/bluefs_types.h
+  870  2022-11-08 22:55:15 mce ../src/os/bluestore/BlueFS.h
+  871  2022-11-08 22:55:28 mce ../src/os/bluestore/bluefs_types.h
+  872  2022-11-08 22:57:23 mce ../src/os/bluestore/BlueFS.cc
+  873  2022-11-08 22:59:24 mce ../src/os/bluestore/bluefs_types.h
+  874  2022-11-08 23:13:11 ninja -j 24 unittest_bluefs
+  875  2022-11-08 23:21:41 bin/unittest_bluefs
+  876  2022-11-08 23:24:29 mce ../src/os/bluestore/BlueFS.cc
+  877  2022-11-08 23:26:01 bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  878  2022-11-08 23:26:41 ninja -j 24 unittest_bluefs
+  879  2022-11-08 23:27:22 bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  880  2022-11-08 23:27:38 bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_фsync
+  881  2022-11-08 23:27:56 bin/unittest_bluefs --gtest_list_tests
+  882  2022-11-08 23:28:03 bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  883  2022-11-08 23:32:25 ninja -j 24 unittest_bluefs
+  884  2022-11-08 23:33:48 bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  885  2022-11-08 23:33:52 bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  886  2022-11-08 23:35:21 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  887  2022-11-08 23:35:25 less c
+  888  2022-11-08 23:40:06 mce ../src/os/bluestore/BlueFS.cc
+  889  2022-11-08 23:45:50 ninja -j 24 unittest_bluefs
+  890  2022-11-08 23:47:28 bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  891  2022-11-08 23:47:36 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  892  2022-11-09 01:53:54 дуыы с
+  893  2022-11-09 01:54:02 less c
+  894  2022-11-09 01:56:05 ninja -j 24 unittest_bluefs
+  895  2022-11-09 01:56:33 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  896  2022-11-09 01:56:45 less c
+  897  2022-11-09 01:57:48 mce ../src/os/bluestore/BlueFS.cc
+  898  2022-11-09 02:02:41 ninja -j 24 unittest_bluefs
+  899  2022-11-09 02:02:55 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  900  2022-11-09 02:03:05 less c
+  901  2022-11-09 02:21:52 mce ../src/os/bluestore/bluefs_types.h
+  902  2022-11-09 02:24:46 ninja -j 24 unittest_bluefs
+  903  2022-11-09 02:25:50 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  904  2022-11-09 02:25:56 less c
+  905  2022-11-09 02:40:26 ninja -j 24 unittest_bluefs
+  906  2022-11-09 02:41:45 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  907  2022-11-09 02:42:05 bin/unittest_bluefs
+  908  2022-11-09 02:54:00 ninja -j 24 unittest_bluefs
+  909  2022-11-09 02:54:16 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  910  2022-11-09 02:54:55 mce ../src/os/bluestore/BlueFS.cc
+  911  2022-11-09 03:02:59 mce ../src/os/bluestore/BlueFS.h
+  912  2022-11-09 03:03:35 mce ../src/os/bluestore/BlueFS.cc
+  913  2022-11-09 03:15:17 ninja -j 24 unittest_bluefs
+  914  2022-11-09 03:22:35 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  915  2022-11-09 03:23:09 mce ../src/os/bluestore/BlueFS.cc
+  916  2022-11-09 03:39:07 mce ../src/os/bluestore/bluefs_types.h
+  917  2022-11-09 03:40:32 ninja -j 24 unittest_bluefs
+  918  2022-11-09 03:51:55 mce ../src/os/bluestore/bluefs_types.h
+  919  2022-11-09 03:51:57 ninja -j 24 unittest_bluefs
+  920  2022-11-09 03:52:18 bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  921  2022-11-09 03:52:23 bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  922  2022-11-09 03:52:26 bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  923  2022-11-09 03:52:46 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  924  2022-11-09 03:52:49 less c
+  925  2022-11-09 03:55:44 ninja -j 24 unittest_bluefs
+  926  2022-11-09 03:56:32 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  927  2022-11-09 03:56:39 less c
+  928  2022-11-09 03:59:01 ninja -j 24 unittest_bluefs
+  929  2022-11-09 03:59:14 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  930  2022-11-09 03:59:20 less c
+  931  2022-11-09 04:02:15 ninja -j 24 unittest_bluefs
+  932  2022-11-09 04:02:28 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  933  2022-11-09 04:02:59 mce ../src/os/bluestore/BlueFS.cc
+  934  2022-11-09 04:12:37 mce ../src/os/bluestore/BlueFS.h
+  935  2022-11-09 04:14:08 mce ../src/os/bluestore/BlueFS.cc
+  936  2022-11-09 04:39:03 mce ../src/os/bluestore/bluefs_types.h
+  937  2022-11-09 04:42:20 ninja -j 24 unittest_bluefs
+  938  2022-11-09 04:44:05 git diff
+  939  2022-11-09 04:44:55 ninja -j 24 unittest_bluefs
+  940  2022-11-09 04:45:20 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  941  2022-11-09 04:45:24 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  942  2022-11-09 04:47:37 mce ../src/os/bluestore/BlueFS.cc
+  943  2022-11-09 05:10:48 mce ../src/os/bluestore/BlueFS.h
+  944  2022-11-09 05:13:18 ninja -j 24 unittest_bluefs
+  945  2022-11-09 05:14:13 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_sync
+  946  2022-11-09 05:14:17 rm c;CEPH_ARGS="--log-file c --debug-bluefs 20" bin/unittest_bluefs --gtest_filter=BlueFS.test_compaction_async
+  947  2022-11-09 05:14:28 ninja -j 24 
+  948  2022-11-09 05:17:48 mce ../../store_test.sh 
+  949  2022-11-09 05:18:16 ninja -j 24  install
+  950  2022-11-09 05:18:31 mce ../src/pybind/mgr/dashboard/cmake_install.cmake
+  951  2022-11-09 05:18:36 mce ./src/pybind/mgr/dashboard/cmake_install.cmake
+  952  2022-11-09 05:18:42 ninja -j 24  install
+  953  2022-11-09 05:18:53 screen
+  954  2022-10-24 10:20:52 cd pacific/
+  955  2022-10-24 10:20:57 git grep "get compressor"
+  956  2022-10-24 10:21:20 git grep "get compressor lz4"
+  957  2022-10-24 10:21:28 git grep "compressor"
+  958  2022-10-24 10:21:55 mce src/compressor/Compressor.cc
+  959  2022-10-24 15:51:34 cd ../ceph.2
+  960  2022-10-24 15:51:51 screen
+  961  2022-10-24 15:52:08 history | grep replay
+  962  2022-10-24 15:52:17 git status
+  963  2022-10-24 15:52:34 ll /
+  964  2022-10-24 15:52:37 ll ..
+  965  2022-10-24 15:52:47 pushd ..
+  966  2022-10-24 15:53:05 mkdir fd
+  967  2022-10-24 15:53:09 mv osd_free_dump.tgz fd
+  968  2022-10-24 15:53:12 cd fd
+  969  2022-10-24 15:53:20 tar -xzf osd_free_dump.tgz *
+  970  2022-10-24 15:53:51 ll
+  971  2022-10-24 15:53:57 tar -xzf osd_free_dump.tgz
+  972  2022-10-24 15:55:25 ll
+  973  2022-10-24 16:01:02 popd
+  974  2022-10-24 16:01:05 cd build
+  975  2022-10-24 16:01:35 vi ../../fd/osd19_free_dump 
+  976  2022-10-24 16:03:10 vi ../../fd/osd25_free_dump 
+  977  2022-10-24 16:04:22 vi ../../fd/osd8_free_dump 
+  978  2022-10-24 16:06:31 bin/ceph_test_alloc_replay ../../fd/osd19_free_dump 
+  979  2022-10-24 16:06:53 bin/ceph_test_alloc_replay ../../fd/osd19_free_dump export_binary ../../fd/osd19_free_dump.bin
+  980  2022-10-24 16:14:14 top
+  981  2022-10-24 16:14:27 bin/ceph_test_alloc_replay ../../fd/osd19_free_dump export_binary ../../fd/osd19_free_dump.bin
+  982  2022-10-24 16:14:37 screen
+  983  2022-11-11 01:18:13 cd ../../ceph.2/build/
+  984  2022-11-11 01:18:16 git status
+  985  2022-11-11 01:18:20 git checkout upstream/main
+  986  2022-11-11 01:18:27 ninja -j 16 vstart
+  987  2022-11-11 01:49:04 ../src/stop.sh 
+  988  2022-11-11 01:49:22 ../src/vstart.sh -n
+  989  2022-11-11 01:51:47 mce ../src/vstart.sh 
+  990  2022-11-11 01:52:38 ../src/vstart.sh -n
+  991  2022-11-11 01:54:06 less out/osd.0.log 
+  992  2022-11-11 01:56:22 git log
+  993  2022-11-11 01:56:45 less out/osd.0.log 
+  994  2022-11-11 01:57:25 mce ../src/os/bluestore/BlueStore.cc
+  995  2022-11-11 02:03:30 git diff
+  996  2022-11-11 02:03:41 ninja -j 4 os
+  997  2022-11-11 02:06:41 git push -f https://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@github.com/ifed01/ceph.git
+  998  2022-11-11 02:51:21 popd
+  999  2022-11-11 16:36:51 exit
+ 1000  2022-11-14 20:28:57 ../../store_test_loop.sh 
+ 1001  2022-11-14 20:29:09 less ../../store_test.sh 
+ 1002  2022-11-14 20:29:19 mce ../../store_test_loop.sh 
+ 1003  2022-11-14 20:29:31 ../../store_test_loop.sh 
+ 1004  2022-11-15 11:56:56 pushd ../../octopus/
+ 1005  2022-11-15 11:56:59 git status
+ 1006  2022-11-15 11:57:11 git checkout v15.2.16
+ 1007  2022-11-15 11:57:20 mce src/os/bluestore/BlueStore.cc
+ 1008  2022-11-15 11:58:13 git status
+ 1009  2022-11-15 11:58:16 mce src/os/bluestore/BlueStore.cc
+ 1010  2022-11-15 11:58:59 git log
+ 1011  2022-11-15 11:59:18 mce src/os/bluestore/BlueStore.cc
+ 1012  2022-11-15 11:59:28 git checkout upstream/octopus
+ 1013  2022-11-15 11:59:31 mce src/os/bluestore/BlueStore.cc
+ 1014  2022-11-15 12:01:22 git checkout v15.2.16
+ 1015  2022-11-15 12:01:24 mce src/os/bluestore/BlueStore.cc
+ 1016  2022-11-15 14:46:04 git checkout upstream/octopus
+ 1017  2022-11-15 14:46:07 git log
+ 1018  2022-11-15 14:47:24 pushd ../ceph.2
+ 1019  2022-11-15 14:47:26 git log
+ 1020  2022-11-15 14:48:16 mce src/os/bluestore/bluestore_types.h
+ 1021  2022-11-15 14:48:45 git blame src/os/bluestore/bluestore_types.h >a
+ 1022  2022-11-15 14:48:47 less a
+ 1023  2022-11-15 15:22:38 popd
+ 1024  2022-11-15 15:22:41 mce src/os/bluestore/BlueStore.cc
+ 1025  2022-11-15 15:23:30 git status
+ 1026  2022-11-15 15:23:37 pushd ../ceph.2
+ 1027  2022-11-15 15:23:43 less a
+ 1028  2022-11-15 15:24:03 git blame src/os/bluestore/BlueStore.cc >a
+ 1029  2022-11-15 15:24:12 less a
+ 1030  2022-11-16 19:17:49 git status
+ 1031  2022-11-16 19:17:55 cd ../quincy
+ 1032  2022-11-16 19:17:58 cd ../quincy.2
+ 1033  2022-11-16 19:18:00 git status
+ 1034  2022-11-16 19:18:18 git log
+ 1035  2022-11-16 19:18:33 git branch -l
+ 1036  2022-11-16 19:18:44 git checkout wip-ifed-small-chunk-bluefs
+ 1037  2022-11-16 19:18:48 git log
+ 1038  2022-11-16 19:19:39 git rebase 9c0ba085d82199121ae59713c6f672b997ed73b3~1 -i
+ 1039  2022-11-16 19:19:46 cd build
+ 1040  2022-11-16 19:19:51 ninja -j 24 os
+ 1041  2022-11-16 19:21:00 git log
+ 1042  2022-11-16 19:21:19 git diff 688ce72074b9843efddb9f5d2aa6d98ffee2010b~1 688ce72074b9843efddb9f5d2aa6d98ffee2010b
+ 1043  2022-11-16 19:22:49 git rebase 688ce72074b9843efddb9f5d2aa6d98ffee2010b~1 -i
+ 1044  2022-11-16 19:22:57 mce src/os/bluestore/BlueStore.cc
+ 1045  2022-11-16 19:23:07 mce ../src/os/bluestore/BlueFS.cc
+ 1046  2022-11-16 19:28:24 git add ../src/os/bluestore/BlueFS.cc
+ 1047  2022-11-16 19:28:27 zypper se convert
+ 1048  2022-11-16 19:28:35 git rebase --cont
+ 1049  2022-11-16 19:28:52 ninja -j 24 unittest_bluefs
+ 1050  2022-11-16 19:31:14 bin/unittest_bluefs
+ 1051  2022-11-16 21:38:31 git blame ../src/os/bluestore/BlueFS.cc >a
+ 1052  2022-11-16 21:38:33 less a
+ 1053  2022-11-16 21:59:16 mce ../src/common/options/global.yaml.in 
+ 1054  2022-11-16 22:28:31 ninja -j 24 
+ 1055  2022-11-16 22:29:24 ../../store_test.sh 
+ 1056  2022-11-17 02:48:13 git status
+ 1057  2022-11-17 02:48:24 git push -f https://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@github.com/ifed01/ceph.git
+ 1058  2022-11-17 11:19:54 ninja -j 24 check
+ 1059  2022-11-17 16:24:58 git status
+ 1060  2022-11-17 16:25:07 git checkout upstream/main
+ 1061  2022-11-17 16:25:18 ninja -j 24
+ 1062  2022-11-17 16:26:20 ../src/stop.sh 
+ 1063  2022-11-17 16:26:45 RGW=1 ../src/vstart.sh -n
+ 1064  2022-11-17 16:27:45 ps -ef | grep ceph
+ 1065  2022-11-17 16:27:50 ../src/stop
+ 1066  2022-11-17 16:27:54 ../src/stop.sh 
+ 1067  2022-11-17 16:28:08 RGW=1 ../src/vstart.sh -n
+ 1068  2022-11-17 16:31:42 aws
+ 1069  2022-11-17 16:31:48 history | grep aws
+ 1070  2022-11-17 16:33:58 bin/ceph df detail
+ 1071  2022-11-17 16:34:39 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test
+ 1072  2022-11-17 16:37:26 aws --endpoint=http://localhost:8000 s3api list-bucket --bucket test
+ 1073  2022-11-17 16:37:46 aws --endpoint=http://localhost:8000 s3api list-buckets --bucket test
+ 1074  2022-11-17 16:37:58 aws --endpoint=http://localhost:8000 s3api list-buckets
+ 1075  2022-11-17 16:39:43 aws --endpoint=https://localhost:8000 s3api list-buckets
+ 1076  2022-11-17 16:42:00 pushd ..
+ 1077  2022-11-17 16:42:03 git grep "x-amz-server-side​-encryption​-customer-key"
+ 1078  2022-11-17 16:42:46 aws --endpoint=http://localhost:8000 s3api put-object --bucket test 
+ 1079  2022-11-17 16:42:47 ll
+ 1080  2022-11-17 16:42:58 echo 12345 > test_obj
+ 1081  2022-11-17 16:43:55 aws --endpoint=http://localhost:8000 s3api put-object --bucket --body test_obj --key test_obj
+ 1082  2022-11-17 16:44:04 aws --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj
+ 1083  2022-11-17 16:45:05 aws s3api help
+ 1084  2022-11-17 16:45:28 aws s3api put-object help
+ 1085  2022-11-17 16:49:00 git grep "encryption​-customer-key"
+ 1086  2022-11-17 16:49:19 git grep "encryption​-customer"
+ 1087  2022-11-17 16:49:24 git grep encryption​-customer
+ 1088  2022-11-17 16:50:33 git grep server-side-encryption
+ 1089  2022-11-17 16:50:56 git grep "x-amz-server-side​-encryption​-customer-key"
+ 1090  2022-11-17 16:51:00 git grep x-amz-server-side​-encryption​-customer-key
+ 1091  2022-11-17 16:53:00 git grep x-amz-server-side​-encryption​
+ 1092  2022-11-17 16:53:04 git grep x-amz-server-side
+ 1093  2022-11-17 16:53:21 git grep x-amz-server-side​-encryption​
+ 1094  2022-11-17 16:53:27 git grep x-amz-server-side​-encry
+ 1095  2022-11-17 16:53:29 git grep x-amz-server-side​-enc
+ 1096  2022-11-17 16:53:31 git grep x-amz-server-side​-e
+ 1097  2022-11-17 16:53:33 git grep x-amz-server-side​-
+ 1098  2022-11-17 16:53:34 git grep x-amz-server-side​
+ 1099  2022-11-17 16:53:47 git grep x-amz-server-side
+ 1100  2022-11-17 16:53:50 git grep x-amz-server-side-
+ 1101  2022-11-17 16:53:53 git grep x-amz-server-side-e
+ 1102  2022-11-17 16:53:55 git grep x-amz-server-side-enc
+ 1103  2022-11-17 16:53:57 git grep x-amz-server-side-encry
+ 1104  2022-11-17 16:54:00 git grep x-amz-server-side-encryption
+ 1105  2022-11-17 17:01:57 mce qa/tasks/s3tests.py
+ 1106  2022-11-17 17:03:22 git grep x-amz-server-side-encryption
+ 1107  2022-11-17 17:04:12 git grep customer-key
+ 1108  2022-11-17 17:05:11 mce src/test/rgw/rgw_multi/tests.py
+ 1109  2022-11-17 17:07:48 aws --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --server-side-encryption AES256
+ 1110  2022-11-17 17:07:59 aws s3api put-object help
+ 1111  2022-11-17 17:13:54 aws s3api --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --server-side-encryption AES256 --sse-customer-key
+ 1112  2022-11-17 17:14:24 aws --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --server-side-encryption AES256 --sse-customer-key
+ 1113  2022-11-17 17:14:40 aws --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --server-side-encryption AES256 --sse-customer-key somekey
+ 1114  2022-11-17 17:15:00 aws -h
+ 1115  2022-11-17 17:15:04 aws help
+ 1116  2022-11-17 17:15:19 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --server-side-encryption AES256 --sse-customer-key somekey
+ 1117  2022-11-17 17:16:35 git grep "can't do sse-c"
+ 1118  2022-11-17 17:16:40 mce src/rgw/rgw_rest_s3.cc
+ 1119  2022-11-17 17:17:30 aws --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-key somekey
+ 1120  2022-11-17 17:17:47 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-key somekey
+ 1121  2022-11-17 17:18:01 git grep "must provide a valid encryption algorithm"
+ 1122  2022-11-17 17:18:09 mce src/rgw/rgw_crypt.cc
+ 1123  2022-11-17 17:19:43 less build/out/radosgw.8000.log 
+ 1124  2022-11-17 17:19:48 cd build
+ 1125  2022-11-17 17:20:07 bin/ceph config set rgw.* debug-rgw 5
+ 1126  2022-11-17 17:20:23 bin/ceph config set rgw.* debug-gw 5
+ 1127  2022-11-17 17:20:35 mce ceph.conf 
+ 1128  2022-11-17 17:21:14 mce ../src/vstart.sh 
+ 1129  2022-11-17 17:23:26 bin/ceph config set rgw.* debug_rgw 5
+ 1130  2022-11-17 17:23:38 bin/ceph config set rgw.8000 debug_rgw 5
+ 1131  2022-11-17 17:23:45 bin/ceph config set debug_rgw 5
+ 1132  2022-11-17 17:23:53 bin/ceph config set rgw debug_rgw 5
+ 1133  2022-11-17 17:25:06 bin/ceph config set client.rgw.8000 debug_rgw 5
+ 1134  2022-11-17 17:25:13 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-key somekey
+ 1135  2022-11-17 17:25:17 cd ..
+ 1136  2022-11-17 17:25:18 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-key somekey
+ 1137  2022-11-17 17:25:29 less build/out/radosgw.8000.log 
+ 1138  2022-11-17 17:26:07 aws s3api put-object help
+ 1139  2022-11-17 17:26:49 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key somekey
+ 1140  2022-11-17 17:27:17 less build/out/radosgw.8000.log 
+ 1141  2022-11-17 17:27:25 date
+ 1142  2022-11-17 17:27:27 less build/out/radosgw.8000.log 
+ 1143  2022-11-17 17:27:42 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key somekey
+ 1144  2022-11-17 17:28:40 less build/out/radosgw.8000.log 
+ 1145  2022-11-17 17:29:02 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key somekey
+ 1146  2022-11-17 17:29:04 less build/out/radosgw.8000.log 
+ 1147  2022-11-17 17:29:43 git grep "invalid entryption key size"
+ 1148  2022-11-17 17:29:48 git grep "invalid encryption key size"
+ 1149  2022-11-17 17:29:54 mce src/rgw/rgw_crypt.cc
+ 1150  2022-11-17 17:30:44 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key some_key
+ 1151  2022-11-17 17:31:07 less build/out/radosgw.8000.log 
+ 1152  2022-11-17 17:31:33 mce src/rgw/rgw_crypt.cc
+ 1153  2022-11-17 17:32:35 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 12345678
+ 1154  2022-11-17 17:32:37 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 123456781
+ 1155  2022-11-17 17:32:39 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 1234567812
+ 1156  2022-11-17 17:32:41 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 12345678123
+ 1157  2022-11-17 17:32:43 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 123456781234
+ 1158  2022-11-17 17:32:44 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 1234567812345
+ 1159  2022-11-17 17:32:46 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 12345678123456
+ 1160  2022-11-17 17:32:50 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 123456781234567
+ 1161  2022-11-17 17:33:05 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 12345678
+ 1162  2022-11-17 17:33:11 mce src/rgw/rgw_crypt.cc
+ 1163  2022-11-17 17:33:28 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 12345678
+ 1164  2022-11-17 17:33:50 echo MTIzNDU2Nzg= >64
+ 1165  2022-11-17 17:33:53 uudecode
+ 1166  2022-11-17 17:33:57 uudecode -h
+ 1167  2022-11-17 17:34:10 uudecode 64 
+ 1168  2022-11-17 17:37:38 mce src/rgw/rgw_crypt.cc
+ 1169  2022-11-17 17:38:50 cd build
+ 1170  2022-11-17 17:38:54 ninja -j 24 vstart
+ 1171  2022-11-17 17:39:17 ps -ef | grep rados
+ 1172  2022-11-17 17:39:31 kill 2501
+ 1173  2022-11-17 17:39:34 ps -ef | grep rados
+ 1174  2022-11-17 17:39:36 /home/if/quincy.2/build/bin/radosgw -c /home/if/quincy.2/build/ceph.conf --log-file=/home/if/quincy.2/build/out/radosgw.8000.log --admin-socket=/home/if/quincy.2/build/out/radosgw.8000.asok --pid-file=/home/if/quincy.2/build/out/radosgw.8000.pid --rgw_luarocks_location=/home/if/quincy.2/build/out/luarocks -n client.rgw.8000 --rgw_frontends=beast port=8000
+ 1175  2022-11-17 17:39:39 ps -ef | grep rados
+ 1176  2022-11-17 17:39:44 cd ..
+ 1177  2022-11-17 17:39:48 less build/out/radosgw.8000.log 
+ 1178  2022-11-17 17:40:00 ps -ef | grep rados
+ 1179  2022-11-17 17:40:05 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 12345678
+ 1180  2022-11-17 17:40:11 cd build
+ 1181  2022-11-17 17:40:17 ../src/stop.sh; ../src/vstart.sh 
+ 1182  2022-11-17 17:40:42 cd ..
+ 1183  2022-11-17 17:40:45 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 12345678
+ 1184  2022-11-17 17:40:48 less build/out/radosgw.8000.log 
+ 1185  2022-11-17 17:41:20 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012
+ 1186  2022-11-17 17:41:31 aws --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012
+ 1187  2022-11-17 17:41:57 aws --endpoint=http://localhost:8000 s3api get-object --bucket test --key test_obj --sse-customer-key 12345678901234567890123456789012
+ 1188  2022-11-17 17:42:17 aws s3api get-object help
+ 1189  2022-11-17 17:42:30 aws --endpoint=http://localhost:8000 s3api get-object --bucket test --key test_obj --sse-customer-key 12345678901234567890123456789012 outfile aaa
+ 1190  2022-11-17 17:42:42 aws --endpoint=http://localhost:8000 s3api get-object --bucket test --key test_obj --sse-customer-key 12345678901234567890123456789012 outfile 
+ 1191* 2022-11-17 17:43:06 aws --endpoint=http://localhost:8000 s3api get-object --bucket test2 --key test_obj --sse-customer-key 12345678901234567890123456789012 --sse-customer-algorithm AES256 outfile 
+ 1192  2022-11-17 17:44:29 aws --endpoint=http://localhost:8000 s3api put-object --bucket test --body test_obj --key test_obj_unenc
+ 1193  2022-11-17 17:44:42 aws --endpoint=https://localhost:8000 s3api list-objects --bucket test
+ 1194  2022-11-17 17:45:06 aws s3api help
+ 1195  2022-11-17 17:45:18 aws --endpoint=https://localhost:8000 s3api list-objects --bucket test
+ 1196  2022-11-17 17:45:35 aws s3api list-objects help
+ 1197  2022-11-17 17:45:43 less build/out/radosgw.8000.log 
+ 1198  2022-11-17 17:46:16 aws --debug --endpoint=https://localhost:8000 s3api list-objects --bucket test
+ 1199  2022-11-17 17:47:03 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test
+ 1200  2022-11-17 17:47:05 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test2
+ 1201  2022-11-17 17:47:10 aws --debug --endpoint=https://localhost:8000 s3api list-objects --bucket test2
+ 1202  2022-11-17 17:47:59 aws s3api help
+ 1203  2022-11-17 17:48:13 aws --debug --endpoint=https://localhost:8000 s3api list-object-versions --bucket test2
+ 1204  2022-11-17 17:48:24 aws --debug --endpoint=https://localhost:8000 s3api list-object-v2 --bucket test2
+ 1205  2022-11-17 17:48:29 aws --debug --endpoint=https://localhost:8000 s3api list-objects-v2 --bucket test2
+ 1206  2022-11-17 17:49:22 MDS=0 RGW=1 ../src/stop.sh; ../src/vstart.sh -n
+ 1207  2022-11-17 17:49:24 cd build
+ 1208  2022-11-17 17:49:26 MDS=0 RGW=1 ../src/stop.sh; ../src/vstart.sh -n
+ 1209  2022-11-17 17:50:53 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test2
+ 1210  2022-11-17 17:51:37 ../src/stop.sh;MDS=0 RGW=1 OSD=1 ../src/vstart.sh -n
+ 1211  2022-11-17 17:53:21 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test2
+ 1212  2022-11-17 17:53:32 aws --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body test_obj --key test_obj_unenc
+ 1213  2022-11-17 17:53:46 cd ..
+ 1214  2022-11-17 17:53:47 aws --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body test_obj --key test_obj_unenc
+ 1215  2022-11-17 17:53:54 aws --debug --endpoint=https://localhost:8000 s3api list-objects --bucket test2
+ 1216  2022-11-17 17:54:24 bin/ceph config set client.rgw.8000 debug_rgw 5
+ 1217  2022-11-17 17:54:29 cd build
+ 1218  2022-11-17 17:54:29 bin/ceph config set client.rgw.8000 debug_rgw 5
+ 1219  2022-11-17 17:54:32 less build/out/radosgw.8000.log 
+ 1220  2022-11-17 17:54:37 less ../out/radosgw.8000.log 
+ 1221  2022-11-17 17:54:40 less ./out/radosgw.8000.log 
+ 1222  2022-11-17 17:55:04 aws --debug --endpoint=https://localhost:8000 s3api list-objects --bucket test2 >a
+ 1223  2022-11-17 17:55:08 less a
+ 1224  2022-11-17 17:55:12 aws --debug --endpoint=https://localhost:8000 s3api list-objects --bucket test2 &>a
+ 1225  2022-11-17 17:55:15 less a
+ 1226  2022-11-17 17:55:51 aws --debug --endpoint=https://127.0.0.1:8000 s3api list-objects --bucket test2 &>a
+ 1227  2022-11-17 17:55:56 less a
+ 1228  2022-11-17 17:56:42 aws --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body test_obj --key test_obj_unenc2
+ 1229  2022-11-17 17:56:48 aws --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body ../test_obj --key test_obj_unenc2
+ 1230  2022-11-17 17:56:57 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body ../test_obj --key test_obj_unenc2 >a2
+ 1231  2022-11-17 17:57:01 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body ../test_obj --key test_obj_unenc2 &>a2
+ 1232  2022-11-17 17:57:03 less a2
+ 1233  2022-11-17 17:57:26 less a
+ 1234  2022-11-17 17:57:44 less a2
+ 1235  2022-11-17 17:58:21 aws --endpoint=http://localhost:8000 s3api get-object --bucket test --key test_obj_unenc outfile 
+ 1236  2022-11-17 17:58:26 aws --endpoint=http://localhost:8000 s3api get-object --bucket test2 --key test_obj_unenc outfile 
+ 1237  2022-11-17 17:58:34 aws --endpoint=http://localhost:8000 s3api get-object --bucket test2 --key test_obj_unenc outfile &>a3
+ 1238  2022-11-17 17:58:35 less a3
+ 1239  2022-11-17 17:58:42 aws --debug --endpoint=http://localhost:8000 s3api get-object --bucket test2 --key test_obj_unenc outfile &>a3
+ 1240  2022-11-17 17:58:45 less a3
+ 1241  2022-11-17 17:59:08 less a
+ 1242  2022-11-17 17:59:29 less a3
+ 1243  2022-11-17 17:59:39 pushd ..
+ 1244  2022-11-17 17:59:44 git grep encoding_type
+ 1245  2022-11-17 18:00:24 zypper se aws
+ 1246  2022-11-17 18:00:53 aws -h
+ 1247  2022-11-17 18:00:56 aws help
+ 1248  2022-11-17 18:01:04 aws --version
+ 1249  2022-11-17 18:01:11 zypper up aws-cli
+ 1250  2022-11-17 18:01:21 aws --version
+ 1251  2022-11-17 18:01:32 aws --debug --endpoint=https://127.0.0.1:8000 s3api list-objects --bucket test2 &>a4
+ 1252  2022-11-17 18:01:37 less a4
+ 1253  2022-11-17 18:02:02 aws --debug --endpoint=https://127.0.0.1:8000 s3api list-objects-v2 --bucket test2 &>a4
+ 1254  2022-11-17 18:02:06 less a4
+ 1255  2022-11-17 18:02:34 aws s3api help
+ 1256  2022-11-17 18:03:32 cd build
+ 1257  2022-11-17 18:03:33 less ./out/radosgw.8000.log 
+ 1258  2022-11-17 18:04:02 bin/ceph config set client.rgw.8000 debug_rgw 15
+ 1259  2022-11-17 18:04:08 aws --debug --endpoint=https://127.0.0.1:8000 s3api list-objects --bucket test2
+ 1260  2022-11-17 18:04:13 less ./out/radosgw.8000.log 
+ 1261  2022-11-17 18:04:38 pushd ..
+ 1262  2022-11-17 18:04:46 git grep "failed to read header"
+ 1263  2022-11-17 18:05:06 mce src/rgw/rgw_asio_frontend.cc
+ 1264  2022-11-17 18:06:04 less ./out/radosgw.8000.log 
+ 1265  2022-11-17 18:06:07 less ../out/radosgw.8000.log 
+ 1266  2022-11-17 18:06:14 less build/out/radosgw.8000.log 
+ 1267  2022-11-17 18:06:23 mce src/rgw/rgw_asio_frontend.cc
+ 1268  2022-11-17 18:07:06 cd build
+ 1269  2022-11-17 18:07:08 ../src/stop.sh 
+ 1270  2022-11-17 18:07:24 ninja -j 24 install
+ 1271  2022-11-17 18:07:35 mce ../src/pybind/mgr/dashboard/cmake_install.cmake
+ 1272  2022-11-17 18:07:39 mce ./src/pybind/mgr/dashboard/cmake_install.cmake
+ 1273  2022-11-17 18:07:43 ninja -j 24 install
+ 1274  2022-11-17 18:07:54 ../src/vstart.sh
+ 1275  2022-11-17 18:08:12 aws --debug --endpoint=https://127.0.0.1:8000 s3api list-objects --bucket test2
+ 1276  2022-11-17 18:08:17 ../src/stop.sh 
+ 1277  2022-11-17 18:08:30 pushd ../../pacific/build
+ 1278  2022-11-17 18:08:34 git status
+ 1279  2022-11-17 18:08:44 make -j 24 vstart
+ 1280  2022-11-17 18:09:16 ../src/stop.sh;MDS=0 RGW=1 OSD=1 ../src/vstart.sh -n
+ 1281  2022-11-17 18:09:53 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test2
+ 1282  2022-11-17 18:10:06 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body ../test_obj --key test_obj_unenc2
+ 1283  2022-11-17 18:10:17 echo aaa>test_obj
+ 1284  2022-11-17 18:10:18 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body ../test_obj --key test_obj_unenc2
+ 1285  2022-11-17 18:10:27 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body ./test_obj --key test_obj_unenc2
+ 1286  2022-11-17 18:10:34 aws --debug --endpoint=https://127.0.0.1:8000 s3api list-objects --bucket test2
+ 1287  2022-11-17 18:11:54 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test
+ 1288  2022-11-17 18:12:02 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test --body ./test_obj --key test_obj_unenc2
+ 1289  2022-11-17 18:12:05 aws --debug --endpoint=https://127.0.0.1:8000 s3api list-objects --bucket test
+ 1290  2022-11-17 18:12:47 aws s3api help
+ 1291  2022-11-17 18:12:53 aws s3api list-objects help
+ 1292  2022-11-17 18:13:27 aws --debug --endpoint=http://localhost:8000 s3api get-object --bucket test2 --key test_obj outfile
+ 1293  2022-11-17 18:13:33 aws --debug --endpoint=http://localhost:8000 s3api get-object --bucket test --key test_obj outfile
+ 1294  2022-11-17 18:13:46 aws --endpoint=http://localhost:8000 s3api get-object --bucket test --key test_obj outfile
+ 1295  2022-11-17 18:14:01 aws --debug --endpoint=http://localhost:8000 s3api get-object --bucket test --key test_obj_unenc2 outfile
+ 1296  2022-11-17 18:14:14 aws --debug --endpoint=http://localhost:8000 s3api get-object --encoding-type url --bucket test --key test_obj_unenc2 outfile
+ 1297  2022-11-17 18:14:34 aws s3api get-object help
+ 1298  2022-11-17 18:14:48 aws s3api list-objects help
+ 1299  2022-11-17 18:14:53 aws s3api get-object help
+ 1300  2022-11-17 18:15:16 aws s3api list-objects_v2 help
+ 1301  2022-11-17 18:15:21 aws s3api list-objects-v2 help
+ 1302  2022-11-17 18:16:15 aws --debug --endpoint=https://127.0.0.1:8000 s3api list-object-versions --bucket test
+ 1303  2022-11-17 18:16:23 aws --debug --endpoint=https://127.0.0.1:8000 s3api list-object-versions --bucket test &>a
+ 1304  2022-11-17 18:16:26 less a
+ 1305  2022-11-17 18:18:56 aws s3api list-objects help
+ 1306  2022-11-17 18:19:07 less a
+ 1307  2022-11-17 18:19:25 aws --debug --endpoint=https://127.0.0.1:8000 s3api list-objects --bucket test &>a
+ 1308  2022-11-17 18:19:30 aws --debug --endpoint=http://127.0.0.1:8000 s3api list-objects --bucket test &>a
+ 1309  2022-11-17 18:19:33 less a
+ 1310  2022-11-17 18:19:39 aws --endpoint=http://127.0.0.1:8000 s3api list-objects --bucket test &>a
+ 1311  2022-11-17 18:19:42 aws --endpoint=http://127.0.0.1:8000 s3api list-objects --bucket test
+ 1312  2022-11-17 18:19:49 ../src/stop.sh 
+ 1313  2022-11-17 18:19:57 popd
+ 1314  2022-11-17 18:20:03 ../src/vstart.sh
+ 1315  2022-11-17 18:20:14 aws --endpoint=http://127.0.0.1:8000 s3api list-objects --bucket test
+ 1316  2022-11-17 18:20:25 aws --endpoint=http://127.0.0.1:8000 s3api list-objects --bucket test2
+ 1317  2022-11-17 18:20:56 aws --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012
+ 1318  2022-11-17 18:21:07 aws --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body ../test_obj --key test_obj --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012
+ 1319  2022-11-17 18:21:13 aws --endpoint=http://127.0.0.1:8000 s3api list-objects --bucket test2
+ 1320  2022-11-17 18:21:47 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj outfile
+ 1321  2022-11-17 18:21:56 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj --bucket test2 outfile
+ 1322  2022-11-17 18:22:12 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj --bucket test2  --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012 outfile
+ 1323  2022-11-17 18:22:30 aws --endpoint=http://localhost:8000 s3api list-buckets
+ 1324  2022-11-17 18:22:40 aws s3api help
+ 1325  2022-11-17 18:22:53 aws s3api copy-object help
+ 1326  2022-11-17 18:25:05 aws --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source test2/test_obj_unenc
+ 1327  2022-11-17 18:25:15 aws --endpoint=http://127.0.0.1:8000 s3api list-objects --bucket test2
+ 1328  2022-11-17 18:25:28 aws --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source test2/test_obj_unenc --key test_obj_unenc
+ 1329  2022-11-17 18:25:38 aws --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source test2 --key test_obj_unenc
+ 1330  2022-11-17 18:26:05 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source test2 --key test_obj_unenc
+ 1331  2022-11-17 18:27:10 aws s3api copy-object help
+ 1332  2022-11-17 18:27:47 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source test2/test_obj_unenc --key test_obj_unenc
+ 1333  2022-11-17 18:28:27 aws --endpoint=http://127.0.0.1:8000 s3api list-objects --bucket test2
+ 1334  2022-11-17 18:28:40 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source test2/test_obj_unenc2 --key test_obj_unenc
+ 1335  2022-11-17 18:28:48 less out/osd.0.log 
+ 1336  2022-11-17 18:28:56 less out/radosgw.8000.log 
+ 1337  2022-11-17 18:30:54 pushd ..
+ 1338  2022-11-17 18:31:03 git grep init_permissions
+ 1339  2022-11-17 18:31:29 git grep copy_obj
+ 1340  2022-11-17 18:32:01 mce src/rgw/rgw_rados.cc
+ 1341  2022-11-17 18:32:49 less build/out/radosgw.8000.log 
+ 1342  2022-11-17 18:33:50 git grep copy_obj
+ 1343  2022-11-17 18:34:24 less build/out/radosgw.8000.log 
+ 1344  2022-11-17 18:34:35 git grep string_to_sign
+ 1345  2022-11-17 18:34:51 less build/out/radosgw.8000.log 
+ 1346  2022-11-17 18:35:19 git grep server signature
+ 1347  2022-11-17 18:35:24 git grep "server signature"
+ 1348  2022-11-17 18:35:30 mce src/rgw/rgw_rest_s3.cc
+ 1349  2022-11-17 18:35:50 less build/out/radosgw.8000.log 
+ 1350  2022-11-17 18:36:26 git grep x-amz-copy-source
+ 1351  2022-11-17 18:36:37 mce src/rgw/rgw_op.cc
+ 1352  2022-11-17 18:38:37 cd build
+ 1353  2022-11-17 18:38:45 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source /test2/test_obj_unenc2 --key test_obj_unenc
+ 1354  2022-11-17 18:39:26 less out/radosgw.8000.log 
+ 1355  2022-11-17 18:59:25 pushd ..
+ 1356  2022-11-17 18:59:32 git grep "s3:copy_obj"
+ 1357  2022-11-17 18:59:38 git grep "copy_obj"
+ 1358  2022-11-17 19:00:00 mce src/rgw/rgw_op.h
+ 1359  2022-11-17 19:00:44 mce src/rgw/rgw_op.cc
+ 1360  2022-11-17 19:02:49 popd
+ 1361  2022-11-17 19:02:55 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source /test2/test_obj_unenc2 --key test_obj_unenc
+ 1362  2022-11-17 19:03:14 mce ../src/rgw/rgw_op.cc
+ 1363  2022-11-17 19:05:15 ninja -j 24 vstart
+ 1364  2022-11-17 19:06:21 ../src/stop.sh ; ../src/vstart.sh 
+ 1365  2022-11-17 19:06:47 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source /test2/test_obj_unenc2 --key test_obj_unenc
+ 1366  2022-11-17 19:07:01 ps -ef | grep rados
+ 1367  2022-11-17 19:07:13 aws --endpoint=http://127.0.0.1:8000 s3api list-objects --bucket test2
+ 1368  2022-11-17 19:07:16 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source /test2/test_obj_unenc2 --key test_obj_unenc
+ 1369  2022-11-17 19:07:26 less out/radosgw.8000.log 
+ 1370  2022-11-17 19:07:42 mce ../src/rgw/rgw_op.cc
+ 1371  2022-11-17 19:10:55 ninja -j 24 vstart
+ 1372  2022-11-17 19:11:42 ../src/stop.sh ; ../src/vstart.sh 
+ 1373  2022-11-17 19:12:55 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source /test2/test_obj_unenc2 --key test_obj_unenc
+ 1374  2022-11-17 19:12:57 less out/radosgw.8000.log 
+ 1375  2022-11-17 19:13:20 mce ../src/rgw/rgw_op.cc
+ 1376  2022-11-17 19:15:53 less out/radosgw.8000.log 
+ 1377  2022-11-17 19:16:08 mce ../src/rgw/rgw_op.cc
+ 1378  2022-11-17 19:18:03 ninja -j 24 vstart
+ 1379  2022-11-17 19:18:32 mce ../src/rgw/rgw_op.cc
+ 1380  2022-11-17 19:18:52 mce ../src/rgw/rgw_op.h
+ 1381  2022-11-17 19:19:13 pushd ..
+ 1382  2022-11-17 19:19:21 git grep RGWCopyOp
+ 1383  2022-11-17 19:19:40 git grep RGWCopyObj
+ 1384  2022-11-17 19:20:00 mce src/rgw/rgw_rest_s3.cc
+ 1385  2022-11-17 19:21:29 mce src/rgw/rgw_rest_s3.h
+ 1386  2022-11-17 19:21:42 git grep RGWCopyObj
+ 1387  2022-11-17 19:23:22 mce src/rgw/rgw_rest_s3.cc
+ 1388  2022-11-17 19:25:27 popd
+ 1389  2022-11-17 19:25:29 ninja -j 24 vstart
+ 1390  2022-11-17 19:26:40 ../src/stop.sh ; ../src/vstart.sh 
+ 1391  2022-11-17 19:27:07 ps -ef | grep rados
+ 1392  2022-11-17 19:27:12 date
+ 1393  2022-11-17 19:27:22 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source /test2/test_obj_unenc2 --key test_obj_unenc
+ 1394  2022-11-17 19:27:25 less out/radosgw.8000.log 
+ 1395  2022-11-17 19:27:50 pushd ..
+ 1396  2022-11-17 19:27:52 ps -ef | grep rados
+ 1397  2022-11-17 19:27:56 git grep RGWCopyObj
+ 1398  2022-11-17 19:28:31 mce src/rgw/rgw_rest_s3.cc
+ 1399  2022-11-17 19:29:48 popd
+ 1400  2022-11-17 19:29:50 ninja -j 24 vstart
+ 1401  2022-11-17 19:30:27 ../src/stop.sh ; ../src/vstart.sh 
+ 1402  2022-11-17 19:31:07 ps -ef | grep rados
+ 1403  2022-11-17 19:31:13 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source /test2/test_obj_unenc2 --key test_obj_unenc
+ 1404  2022-11-17 19:31:15 less out/radosgw.8000.log 
+ 1405  2022-11-17 19:32:33 mce ../src/rgw/rgw_rest_s3.cc
+ 1406  2022-11-17 19:32:56 pushd ..
+ 1407  2022-11-17 19:33:01 git grep op_put\(
+ 1408  2022-11-17 19:33:27 mce src/rgw/rgw_rest.cc
+ 1409  2022-11-17 19:33:53 mce ../src/rgw/rgw_rest_s3.cc
+ 1410  2022-11-17 19:33:57 popd
+ 1411  2022-11-17 19:34:01 less out/radosgw.8000.log 
+ 1412  2022-11-17 19:34:17 pushd ..
+ 1413  2022-11-17 19:34:23 git grep scheduling with
+ 1414  2022-11-17 19:34:27 git grep "scheduling with"
+ 1415  2022-11-17 19:34:51 less out/radosgw.8000.log 
+ 1416  2022-11-17 19:34:53 popd
+ 1417  2022-11-17 19:34:55 less out/radosgw.8000.log 
+ 1418  2022-11-17 19:35:27 pushd ..
+ 1419  2022-11-17 19:35:34 git grep init_permissions
+ 1420  2022-11-17 19:35:44 mce src/rgw/rgw_rest_s3.cc
+ 1421  2022-11-17 19:36:05 git grep init_permissions
+ 1422  2022-11-17 19:36:32 src/rgw/rgw_process.cc
+ 1423  2022-11-17 19:36:34 mce src/rgw/rgw_process.cc
+ 1424  2022-11-17 19:36:49 popd
+ 1425  2022-11-17 19:36:50 less out/radosgw.8000.log 
+ 1426  2022-11-17 19:37:07 mce ../src/rgw/rgw_process.cc
+ 1427  2022-11-17 19:37:19 pushd ..
+ 1428  2022-11-17 19:37:22 git grep init_permissions
+ 1429  2022-11-17 19:37:46 mce ./src/rgw/rgw_rest_s3.cc
+ 1430  2022-11-17 19:38:11 git grep init_permissions
+ 1431  2022-11-17 19:38:29 mce src/rgw/rgw_rest.cc
+ 1432  2022-11-17 19:39:01 git grep init_permissions
+ 1433  2022-11-17 19:39:16 mce src/rgw/rgw_op.cc
+ 1434  2022-11-17 19:42:24 popd
+ 1435  2022-11-17 19:42:25 ninja -j 24 vstart
+ 1436  2022-11-17 19:43:42 mce src/rgw/rgw_op.cc
+ 1437  2022-11-17 19:43:47 mce ../src/rgw/rgw_op.cc
+ 1438  2022-11-17 19:44:03 ninja -j 24 vstart
+ 1439  2022-11-17 19:44:37 ../src/stop.sh ; ../src/vstart.sh 
+ 1440  2022-11-17 19:45:02 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source /test2/test_obj_unenc2 --key test_obj_unenc
+ 1441  2022-11-17 19:45:09 less out/radosgw.8000.log 
+ 1442  2022-11-17 19:45:23 mce ../src/rgw/rgw_op.cc
+ 1443  2022-11-17 19:46:38 ninja -j 24 vstart
+ 1444  2022-11-17 19:47:24 ../src/stop.sh ; ../src/vstart.sh 
+ 1445  2022-11-17 19:48:01 aws --endpoint=http://localhost:8000 s3api list-buckets
+ 1446  2022-11-17 19:48:10 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test
+ 1447  2022-11-17 19:48:11 aws --endpoint=http://localhost:8000 s3api list-buckets
+ 1448  2022-11-17 19:48:15 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source /test2/test_obj_unenc2 --key test_obj_unenc
+ 1449  2022-11-17 19:48:31 git status
+ 1450  2022-11-17 19:48:37 git diff
+ 1451  2022-11-17 22:03:19 aws --endpoint=http://127.0.0.1:8000 s3api list-objects --bucket test2
+ 1452  2022-11-17 22:03:27 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj --bucket test2  --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012 outfile
+ 1453  2022-11-17 22:03:40 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source /test2/test_obj --key test_obj
+ 1454  2022-11-17 22:08:55 mce ../src/rgw/rgw_rados.cc
+ 1455  2022-11-17 22:09:32 ninja -j 24 vstart
+ 1456  2022-11-17 22:10:15 ../src/stop.sh ; ../src/vstart.sh 
+ 1457  2022-11-17 22:11:32 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source /test2/test_obj --key test_obj
+ 1458  2022-11-17 22:11:52 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj --bucket test
+ 1459  2022-11-17 22:11:57 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj --bucket test outfile
+ 1460  2022-11-17 22:12:32 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj --bucket test  --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012 outfile
+ 1461  2022-11-17 22:12:40 less outfile 
+ 1462  2022-11-17 22:12:52 less ../test_obj 
+ 1463  2022-11-17 22:14:53 aws --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body ../test_obj --key test_obj_kms --sse-customer-algorithm AES256
+ 1464  2022-11-17 22:15:53 aws s3api put-object help
+ 1465  2022-11-17 22:16:29 aws --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body ../test_obj --key test_obj_kms --server-side-encryption AES256
+ 1466  2022-11-17 22:16:42 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body ../test_obj --key test_obj_kms --server-side-encryption AES256
+ 1467  2022-11-17 22:16:59 less out/radosgw.8000.log 
+ 1468  2022-11-17 22:17:33 mce ../src/vstart.sh 
+ 1469  2022-11-17 22:18:09 mce ceph.conf 
+ 1470  2022-11-17 22:18:25 pushd
+ 1471  2022-11-17 22:18:32 git grep server-side-encryption
+ 1472  2022-11-17 22:18:47 pushd ..
+ 1473  2022-11-17 22:18:48 git grep server-side-encryption
+ 1474  2022-11-17 22:19:30 popd
+ 1475  2022-11-17 22:19:44 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body ../test_obj --key test_obj_kms --server-side-encryption aws:kms
+ 1476  2022-11-17 22:20:02 aws s3api put-object help
+ 1477  2022-11-17 22:21:01 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body ../test_obj --key test_obj_kms --server-side-encryption aws:kms --sse-kms-key-id testkey-1
+ 1478  2022-11-17 22:21:07 aws s3api put-object help
+ 1479  2022-11-17 22:21:14 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test2 --body ../test_obj --key test_obj_kms --server-side-encryption aws:kms --ssekms-key-id testkey-1
+ 1480  2022-11-17 22:21:35 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_kms --bucket test2 
+ 1481  2022-11-17 22:21:42 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_kms --bucket test2 outfile
+ 1482  2022-11-17 22:22:01 less outfile 
+ 1483  2022-11-17 22:22:14 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source /test2/test_obj_kms --key test_obj_kms
+ 1484  2022-11-17 22:22:22 aws --endpoint=http://127.0.0.1:8000 s3api list-objects --bucket test2
+ 1485  2022-11-17 22:22:24 aws --endpoint=http://127.0.0.1:8000 s3api list-objects --bucket test
+ 1486  2022-11-17 22:22:33 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_kms --bucket test outfile
+ 1487  2022-11-17 22:22:38 less outfile 
+ 1488  2022-11-17 22:23:08 aws s3api put-object help
+ 1489  2022-11-17 22:23:49 aws s3api help
+ 1490  2022-11-17 22:26:54 ll
+ 1491  2022-11-17 22:27:12 cp osd-17.free-dump p1
+ 1492  2022-11-17 22:27:14 cp osd-17.free-dump p2
+ 1493  2022-11-17 22:27:57 aws --debug --endpoint=http://localhost:8000 s3api create-multipart-upload --bucket test2 --key test_obj_large
+ 1494  2022-11-17 22:28:58 aws --debug --endpoint=http://localhost:8000 s3api upload-part --bucket test2 --key test_obj_large --part-number 1 --body p1 --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV"
+ 1495  2022-11-17 22:29:13 mce tags
+ 1496  2022-11-17 22:29:54 aws --debug --endpoint=http://localhost:8000 s3api upload-part --bucket test2 --key test_obj_large --part-number 2 --body p2 --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV"
+ 1497  2022-11-17 22:30:02 mce tags
+ 1498  2022-11-17 22:30:34 aws --debug --endpoint=http://localhost:8000 s3api list-part2 --bucket test2 --key test_obj_large --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV"
+ 1499  2022-11-17 22:30:41 aws --debug --endpoint=http://localhost:8000 s3api list-parts --bucket test2 --key test_obj_large --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV"
+ 1500  2022-11-17 22:31:03 mce tags
+ 1501  2022-11-17 22:31:34 mv tags tags.json
+ 1502  2022-11-17 22:32:30 aws --debug --endpoint=http://localhost:8000 s3api complete-multipart-upload --bucket test2 --key test_obj_large --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV" file://tags.json
+ 1503  2022-11-17 22:32:57 aws --debug --endpoint=http://localhost:8000 s3api complete-multipart-upload --bucket test2 --key test_obj_large --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV" --multipart-upload file://tags.json
+ 1504  2022-11-17 22:34:12 mce tags.json 
+ 1505  2022-11-17 22:34:51 aws --debug --endpoint=http://localhost:8000 s3api complete-multipart-upload --bucket test2 --key test_obj_large --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV" --multipart-upload file://tags.json
+ 1506  2022-11-17 22:35:09 mce tags.json 
+ 1507  2022-11-17 22:35:30 aws --debug --endpoint=http://localhost:8000 s3api complete-multipart-upload --bucket test2 --key test_obj_large --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV" --multipart-upload file://tags.json
+ 1508  2022-11-17 22:35:49 less out/radosgw.8000.log 
+ 1509  2022-11-17 22:36:16 ll
+ 1510  2022-11-17 22:36:28 cp 2360577 p3
+ 1511  2022-11-17 22:36:35 cp osd-16.free-dump p3
+ 1512  2022-11-17 22:36:56 aws --debug --endpoint=http://localhost:8000 s3api upload-part --bucket test2 --key test_obj_large --part-number 3 --body p3 --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV"
+ 1513  2022-11-17 22:37:07 aws --debug --endpoint=http://localhost:8000 s3api list-parts --bucket test2 --key test_obj_large --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV"
+ 1514  2022-11-17 22:37:11 mce tags.json 
+ 1515  2022-11-17 22:37:41 aws --debug --endpoint=http://localhost:8000 s3api complete-multipart-upload --bucket test2 --key test_obj_large --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV" --multipart-upload file://tags.json
+ 1516  2022-11-17 22:38:13 mce tags.json 
+ 1517  2022-11-17 22:38:42 aws --debug --endpoint=http://localhost:8000 s3api complete-multipart-upload --bucket test2 --key test_obj_large --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV" --multipart-upload file://tags.json
+ 1518  2022-11-17 22:39:00 mce tags.json 
+ 1519  2022-11-17 22:39:16 aws --debug --endpoint=http://localhost:8000 s3api complete-multipart-upload --bucket test2 --key test_obj_large --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV" --multipart-upload file://tags.json
+ 1520  2022-11-17 22:39:48 aws --debug --endpoint=http://localhost:8000 s3api upload-part --bucket test2 --key test_obj_large --part-number 1 --body p3 --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV"
+ 1521  2022-11-17 22:39:56 mce tags.json 
+ 1522  2022-11-17 22:40:07 aws --debug --endpoint=http://localhost:8000 s3api upload-part --bucket test2 --key test_obj_large --part-number 2 --body p3 --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV"
+ 1523  2022-11-17 22:40:13 aws --debug --endpoint=http://localhost:8000 s3api upload-part --bucket test2 --key test_obj_large --part-number 2 --body p4 --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV"
+ 1524  2022-11-17 22:40:24 aws --debug --endpoint=http://localhost:8000 s3api upload-part --bucket test2 --key test_obj_large --part-number 4 --body p3 --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV"
+ 1525  2022-11-17 22:40:28 aws --debug --endpoint=http://localhost:8000 s3api complete-multipart-upload --bucket test2 --key test_obj_large --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV" --multipart-upload file://tags.json
+ 1526  2022-11-17 22:41:49 bin/ceph config set client.rgw.8000 rgw_multipart_min_part_size 65536
+ 1527  2022-11-17 22:41:52 aws --debug --endpoint=http://localhost:8000 s3api complete-multipart-upload --bucket test2 --key test_obj_large --upload-id "2~7lHIGFAPDfYAda2VxjrvgDZfe_qFMzV" --multipart-upload file://tags.json
+ 1528  2022-11-17 22:42:16 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_large --bucket test outfile
+ 1529  2022-11-17 22:42:23 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_large --bucket test2 outfile
+ 1530  2022-11-17 22:42:28 less outfile 
+ 1531  2022-11-17 22:42:39 ll p3
+ 1532  2022-11-17 22:42:52 ll outfile
+ 1533  2022-11-17 22:43:38 aws --debug --endpoint=http://localhost:8000 s3api create-multipart-upload --bucket test2 --key test_obj_large_enc
+ 1534  2022-11-17 22:44:31 aws --debug --endpoint=http://localhost:8000 s3api upload-part --bucket test2 --key test_obj_large --part-number 1 --body p3 --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012 outfile --upload-id "2~eHXkaVhLadHONgTh4tf_o9YxVGba7pf"
+ 1535  2022-11-17 22:44:47 aws --debug --endpoint=http://localhost:8000 s3api upload-part --bucket test2 --key test_obj_large --part-number 1 --body p3 --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012  --upload-id "2~eHXkaVhLadHONgTh4tf_o9YxVGba7pf"
+ 1536  2022-11-17 22:45:14 aws --debug --endpoint=http://localhost:8000 s3api upload-part --bucket test2 --key test_obj_large_enc --part-number 1 --body p3 --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012  --upload-id "2~eHXkaVhLadHONgTh4tf_o9YxVGba7pf"
+ 1537  2022-11-17 22:45:24 aws --debug --endpoint=http://localhost:8000 s3api upload-part --bucket test2 --key test_obj_large_enc --part-number 2 --body p3 --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012  --upload-id "2~eHXkaVhLadHONgTh4tf_o9YxVGba7pf"
+ 1538  2022-11-17 22:45:46 aws --debug --endpoint=http://localhost:8000 s3api complete-multipart-upload --bucket test2 --key test_obj_large_enc --upload-id "2~eHXkaVhLadHONgTh4tf_o9YxVGba7pf" --multipart-upload file://tags.json
+ 1539  2022-11-17 22:46:04 mce tags.json 
+ 1540  2022-11-17 22:46:16 cp tags.json tags2.json
+ 1541  2022-11-17 22:46:20 mce tags2.json 
+ 1542  2022-11-17 22:46:37 aws --debug --endpoint=http://localhost:8000 s3api complete-multipart-upload --bucket test2 --key test_obj_large_enc --upload-id "2~eHXkaVhLadHONgTh4tf_o9YxVGba7pf" --multipart-upload file://tags2.json
+ 1543  2022-11-17 22:46:50 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_large_enc --bucket test2 outfile
+ 1544  2022-11-17 22:47:05 less outfile 
+ 1545  2022-11-17 22:48:37 aws --debug --endpoint=http://localhost:8000 s3api delete-object --key test_obj_large_enc --bucket test2
+ 1546  2022-11-17 22:48:44 aws --endpoint=http://127.0.0.1:8000 s3api list-objects --bucket test2
+ 1547  2022-11-17 22:49:40 aws --debug --endpoint=http://localhost:8000 s3api create-multipart-upload --bucket test2 --key test_obj_large_enc  --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012
+ 1548  2022-11-17 22:50:03 aws --debug --endpoint=http://localhost:8000 s3api upload-part --bucket test2 --key test_obj_large_enc --part-number 1 --body p3 --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012  --upload-id "2~419PglxeFMhGeME7i6hBFYUBwAcOAEe"
+ 1549  2022-11-17 22:50:11 aws --debug --endpoint=http://localhost:8000 s3api upload-part --bucket test2 --key test_obj_large_enc --part-number 2 --body p3 --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012  --upload-id "2~419PglxeFMhGeME7i6hBFYUBwAcOAEe"
+ 1550  2022-11-17 22:50:27 aws --debug --endpoint=http://localhost:8000 s3api complete-multipart-upload --bucket test2 --key test_obj_large_enc --upload-id "2~419PglxeFMhGeME7i6hBFYUBwAcOAEe" --multipart-upload file://tags2.json
+ 1551  2022-11-17 22:50:32 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_large_enc --bucket test2 outfile
+ 1552  2022-11-17 22:50:58 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_large_enc --bucket test2  --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012 outfile
+ 1553  2022-11-17 22:51:01 less outfile 
+ 1554  2022-11-17 22:51:24 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source /test2/test_obj_large --key test_obj_large
+ 1555  2022-11-17 22:51:39 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_large --bucket test outfile
+ 1556  2022-11-17 22:51:43 less outfile 
+ 1557  2022-11-17 22:51:53 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_large-enc --bucket test outfile
+ 1558  2022-11-17 22:52:12 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_large_enc --bucket test outfile
+ 1559  2022-11-17 22:52:50 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test --copy-source /test2/test_obj_large_enc --key test_obj_large_enc
+ 1560  2022-11-17 22:52:55 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_large_enc --bucket test outfile
+ 1561  2022-11-17 22:53:28 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_large_enc --bucket test --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012 outfile
+ 1562  2022-11-17 22:53:31 less outfile 
+ 1563  2022-11-17 22:59:02 bin/radosgw-admin zonegroup get
+ 1564  2022-11-17 22:59:37 bin/radosgw-admin zone get
+ 1565  2022-11-17 23:00:36 radosgw-admin bucket stats
+ 1566  2022-11-17 23:02:59 aws s3api create-bucket help
+ 1567  2022-11-18 00:30:22 bin/radosgw-admin zone get
+ 1568  2022-11-18 00:30:29 bin/radosgw-admin zonegroup get
+ 1569  2022-11-18 00:33:15 adosgw-admin zonegroup placement add       --rgw-zonegroup default       --placement-id temporary
+ 1570  2022-11-18 00:33:38 bin/radosgw-admin zonegroup placement add --rgw-zonegroup default --placement-id temporary
+ 1571  2022-11-18 00:33:55 bin/radosgw-admin zonegroup get
+ 1572  2022-11-18 00:34:48 bin/ceph df detail
+ 1573  2022-11-18 00:36:02 bin/ceph osd pool create rgw.tmp.idx 32 32
+ 1574  2022-11-18 00:36:22 bin/ceph osd pool create rgw.tmp.data 32 32
+ 1575  2022-11-18 00:36:34 bin/ceph osd pool create rgw.tmp.non-ec 32 32
+ 1576  2022-11-18 00:36:50 adosgw-admin zone placement add       --rgw-zone default       --placement-id temporary       --data-pool default.rgw.temporary.data       --index-pool default.rgw.temporary.index       --data-extra-pool default.rgw.temporary.non-ec
+ 1577  2022-11-18 00:37:43 bin/radosgw-admin zone placement add --rgw-zone default --placement-id temporary       --data-pool rgw.tmp.data       --index-pool rgw.tmp.idx       --data-extra-pool rgw.tmp.non-ec
+ 1578  2022-11-18 00:38:04 bin/radosgw-admin zonegroup get
+ 1579  2022-11-18 00:38:11 bin/radosgw-admin zone get
+ 1580  2022-11-18 00:38:45 bin/radosgw-admin zonegroup get
+ 1581  2022-11-18 00:39:03 bin/radosgw-admin zone placement add --rgw-zone default --placement-id temporary2       --data-pool rgw.tmp.data       --index-pool rgw.tmp.idx       --data-extra-pool rgw.tmp.non-ec
+ 1582  2022-11-18 00:40:31 adosgw-admin zonegroup placement default       --rgw-zonegroup default       --placement-id new-placement
+ 1583  2022-11-18 00:40:49 bin/radosgw-admin zonegroup placement default       --rgw-zonegroup default       --placement-id temporary
+ 1584  2022-11-18 00:41:00 bin/radosgw-admin zonegroup get
+ 1585  2022-11-18 00:42:52 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test3 --create-bucket-configuration LocationConstraint=temporary 
+ 1586  2022-11-18 00:43:10 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test3 --create-bucket-configuration LocationConstraint=default:temporary 
+ 1587  2022-11-18 00:43:22 pushd ..
+ 1588  2022-11-18 00:43:26 git grep LocationConstraint
+ 1589  2022-11-18 00:43:46 bin/radosgw-admin zonegroup get
+ 1590  2022-11-18 00:43:50 cd build
+ 1591  2022-11-18 00:43:51 bin/radosgw-admin zonegroup get
+ 1592  2022-11-18 00:44:13 bin/ceph df detail
+ 1593  2022-11-18 00:44:40 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test3
+ 1594  2022-11-18 00:44:41 bin/ceph df detail
+ 1595  2022-11-18 00:45:04 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test3 --body ../test_obj --key test_obj 
+ 1596  2022-11-18 00:45:08 bin/ceph df detail
+ 1597  2022-11-18 00:47:04 bin/radosgw-admin zonegroup get
+ 1598  2022-11-18 00:47:12 bin/radosgw-admin zone get
+ 1599  2022-11-18 00:47:21 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test4 --create-bucket-configuration LocationConstraint=default:temporary 
+ 1600  2022-11-18 00:47:24 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test4 --create-bucket-configuration LocationConstrain=default:temporary 
+ 1601  2022-11-18 00:47:39 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test4 --create-bucket-configuration LocationConstraint=default:temporary 
+ 1602  2022-11-18 00:48:16 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test4 --create-bucket-configuration LocationConstraint=default:default-placement 
+ 1603  2022-11-18 00:48:31 aws --endpoint=http://localhost:8000 s3api delete-bucket --bucket test4
+ 1604  2022-11-18 00:48:38 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test4 --create-bucket-configuration LocationConstraint=default:temporary 
+ 1605  2022-11-18 00:49:09 bin/ceph df detail
+ 1606  2022-11-18 00:49:46 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test4 --create-bucket-configuration LocationConstraint=default
+ 1607  2022-11-18 00:49:49 aws --endpoint=http://localhost:8000 s3api delete-bucket --bucket test4
+ 1608  2022-11-18 00:50:00 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test4 --create-bucket-configuration LocationConstraint=default:temporary1 
+ 1609  2022-11-18 00:50:03 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test4 --create-bucket-configuration LocationConstraint=default:temporary
+ 1610  2022-11-18 00:50:07 less out/radosgw.8000.log 
+ 1611  2022-11-18 00:50:38 bin/radosgw-admin zonegroup get
+ 1612  2022-11-18 00:51:06 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test4 --create-bucket-configuration LocationConstraint=temporary
+ 1613  2022-11-18 00:51:13 less out/radosgw.8000.log 
+ 1614  2022-11-18 00:52:43 bin/radosgw-admin zonegroup get
+ 1615  2022-11-18 00:53:11 history
+ 1616  2022-11-18 00:53:38 bin/rgwadmin
+ 1617  2022-11-18 00:53:44 bin/radosgw-admin
+ 1618  2022-11-18 00:53:46 bin/radosgw-admin -h
+ 1619  2022-11-18 00:54:19 bin/radosgw-admin bucket list
+ 1620  2022-11-18 00:54:44 bin/radosgw-admin  zonegroup placement get
+ 1621  2022-11-18 00:54:53 bin/radosgw-admin  zonegroup placement get --placement-id temporary
+ 1622  2022-11-18 00:56:22 bin/radosgw-admin zone get
+ 1623  2022-11-18 00:57:09 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test4 --create-bucket-configuration LocationConstraint=default:temporary
+ 1624  2022-11-18 00:57:12 less out/radosgw.8000.log 
+ 1625  2022-11-18 00:58:19 ../src/stop.sh ; ../src/vstart.sh 
+ 1626  2022-11-18 00:58:42 bin/radosgw-admin  zonegroup placement get
+ 1627  2022-11-18 00:58:50 bin/radosgw-admin  zonegroup get
+ 1628  2022-11-18 00:58:58 aws --endpoint=http://localhost:8000 s3api create-bucket --bucket test4 --create-bucket-configuration LocationConstraint=default:temporary
+ 1629  2022-11-18 00:59:12 aws --debug --endpoint=http://localhost:8000 s3api put-object --bucket test4 --body ../test_obj --key test_obj 
+ 1630  2022-11-18 00:59:15 bin/ceph df detail
+ 1631  2022-11-18 01:00:37 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test4 --copy-source /test2/test_obj --key test_obj
+ 1632  2022-11-18 01:01:02 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj --bucket test4 --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012 outfile
+ 1633  2022-11-18 01:01:08 less outfile 
+ 1634  2022-11-18 01:01:30 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test4 --copy-source /test2/test_obj_large_enc --key test_obj_large_enc
+ 1635  2022-11-18 01:01:43 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_large_enc --bucket test4 --sse-customer-algorithm AES256 --sse-customer-key 12345678901234567890123456789012 outfile
+ 1636  2022-11-18 01:01:46 less outfile 
+ 1637  2022-11-18 01:01:51 ll outfile 
+ 1638  2022-11-18 01:02:00 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_large_enc --bucket test4
+ 1639  2022-11-18 01:02:07 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_large_enc --bucket test4 outfile2
+ 1640  2022-11-18 01:02:23 bin/ceph df detail
+ 1641  2022-11-18 01:02:49 bin/rados -p rgw.tmp.data 
+ 1642  2022-11-18 01:02:53 bin/rados -p rgw.tmp.data --help
+ 1643  2022-11-18 01:03:04 bin/rados -p rgw.tmp.data ls
+ 1644  2022-11-18 01:03:25 bin/rados -p rgw.tmp.data get e9a3674f-5a70-4e69-a966-85ba86d24e0a.104158.1_test_obj out1
+ 1645  2022-11-18 01:03:27 less out1
+ 1646  2022-11-18 01:04:03 bin/rados -p default.rgw.data ls
+ 1647  2022-11-18 01:04:05 bin/ceph df detail
+ 1648  2022-11-18 01:04:12 bin/rados -p default.rgw.buckets.data ls
+ 1649  2022-11-18 01:04:46 bin/rados -p default.rgw.buckets.data get e9a3674f-5a70-4e69-a966-85ba86d24e0a.4293.1_test_obj_unenc2 out1
+ 1650  2022-11-18 01:04:48 less out1
+ 1651  2022-11-18 01:05:03 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test4 --copy-source /test2/test_obj_unenc2 --key test_obj_large_enc
+ 1652  2022-11-18 01:05:07 bin/rados -p default.rgw.data ls
+ 1653  2022-11-18 01:05:12 bin/rados -p rgw.tmp.data ls
+ 1654  2022-11-18 01:05:39 bin/ceph df detail
+ 1655  2022-11-18 01:06:03 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_unenc2 --bucket test4 outfile2
+ 1656  2022-11-18 01:06:25 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test4 --copy-source /test2/test_obj_unenc2 --key test_obj_unenc2
+ 1657  2022-11-18 01:06:28 bin/ceph df detail
+ 1658  2022-11-18 01:06:35 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_unenc2 --bucket test4 outfile2
+ 1659  2022-11-18 01:06:46 less outfile2
+ 1660  2022-11-18 01:06:56 aws --debug --endpoint=http://localhost:8000 s3api copy-object --bucket test4 --copy-source /test2/test_obj_large_enc --key test_obj_large_enc
+ 1661  2022-11-18 01:07:51 aws --debug --endpoint=http://localhost:8000 s3api get-object --key test_obj_large_enc --bucket test4 outfile2
+ 1662  2022-11-18 01:07:58 bin/rados -p rgw.tmp.data ls
+ 1663  2022-11-18 01:08:15 bin/rados -p default.rgw.buckets.data get e9a3674f-5a70-4e69-a966-85ba86d24e0a.104158.1_test_obj_large_enc out1
+ 1664  2022-11-18 01:08:29 bin/rados -p rgw.tmp.data get e9a3674f-5a70-4e69-a966-85ba86d24e0a.104158.1_test_obj_large_enc out1
+ 1665  2022-11-18 01:08:31 ll out1
+ 1666  2022-11-18 01:08:35 less out1
+ 1667  2022-11-18 17:47:53 history
+ 1668  2022-11-18 17:48:08 history >../cmd_history
