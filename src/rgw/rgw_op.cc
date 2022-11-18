@@ -506,6 +506,11 @@ int rgw_build_bucket_policies(const DoutPrefixProvider *dpp, rgw::sal::Store* st
      * overwritten. */
     ret = store->get_bucket(dpp, s->user.get(), rgw_bucket(rgw_bucket_key(s->bucket_tenant, s->bucket_name, s->bucket_instance_id)), &s->bucket, y);
     if (ret < 0) {
+      ldpp_dout(dpp, 0) << "ERROR: "
+                        << " tenant " << s->bucket_tenant
+                        << " name " << s->bucket_name
+                        << " instance " << s->bucket_instance_id
+                        <<dendl;
       if (ret != -ENOENT) {
 	string bucket_log;
 	bucket_log = rgw_make_bucket_entry_name(s->bucket_tenant, s->bucket_name);
@@ -5172,6 +5177,7 @@ bool RGWCopyObj::parse_copy_location(const std::string_view& url_src,
 
 int RGWCopyObj::verify_permission(optional_yield y)
 {
+  ldpp_dout(this, 0) << "RUN: verify_permission" << dendl;
   RGWAccessControlPolicy src_acl(s->cct);
   boost::optional<Policy> src_policy;
   op_ret = get_params(y);
@@ -5182,6 +5188,8 @@ int RGWCopyObj::verify_permission(optional_yield y)
   if (op_ret < 0) {
     return op_ret;
   }
+ 
+  ldpp_dout(this, 0) << "RUN: " << src_bucket_name << dendl;
 
   op_ret = store->get_bucket(this, s->user.get(),
 			     rgw_bucket(src_tenant_name,
@@ -5189,7 +5197,9 @@ int RGWCopyObj::verify_permission(optional_yield y)
 					s->bucket_instance_id),
 			     &src_bucket, y);
   if (op_ret < 0) {
+    ldpp_dout(this, 0) << "ERROR0: Source Bucket not found: " << src_bucket_name << dendl;
     if (op_ret == -ENOENT) {
+      ldpp_dout(this, 0) << "ERROR: Source Bucket not found: " << src_bucket_name << dendl;
       op_ret = -ERR_NO_SUCH_BUCKET;
     }
     return op_ret;
@@ -5208,6 +5218,7 @@ int RGWCopyObj::verify_permission(optional_yield y)
     op_ret = read_obj_policy(this, store, s, src_bucket->get_info(), src_bucket->get_attrs(), &src_acl, &src_placement.storage_class,
 			     src_policy, src_bucket.get(), s->src_object.get(), y);
     if (op_ret < 0) {
+      ldpp_dout(this, 0) << "ERROR: read_obj_policy returned: " << op_ret << dendl;
       return op_ret;
     }
 
@@ -5317,6 +5328,7 @@ int RGWCopyObj::verify_permission(optional_yield y)
 			      dest_bucket->get_attrs(),
                               &dest_bucket_policy, dest_bucket->get_key(), y);
   if (op_ret < 0) {
+    ldpp_dout(this, 0) << "ERROR: read_obj_policy on dest returned: " << op_ret << dendl;
     return op_ret;
   }
   auto dest_iam_policy = get_iam_policy_from_attr(s->cct, dest_bucket->get_attrs(), dest_bucket->get_tenant());
@@ -5391,6 +5403,7 @@ int RGWCopyObj::verify_permission(optional_yield y)
 
   op_ret = init_dest_policy();
   if (op_ret < 0) {
+    ldpp_dout(this, 0) << "ERROR: init_dest_policy returned: " << op_ret << dendl;
     return op_ret;
   }
 
@@ -5400,6 +5413,7 @@ int RGWCopyObj::verify_permission(optional_yield y)
 
 int RGWCopyObj::init_common()
 {
+  ldpp_dout(this, 0) << "RUN: init_common" << dendl;
   if (if_mod) {
     if (parse_time(if_mod, &mod_time) < 0) {
       op_ret = -EINVAL;

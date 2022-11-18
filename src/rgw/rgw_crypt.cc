@@ -1029,7 +1029,10 @@ int rgw_s3_prepare_encrypt(req_state* s,
       }
 
       if (key_bin.size() != AES_256_CBC::AES_256_KEYSIZE) {
-        ldpp_dout(s, 5) << "ERROR: invalid encryption key size" << dendl;
+        ldpp_dout(s, 5) << "ERROR: invalid encryption key size"
+                        << " " << key_bin.size()
+                        << " " << AES_256_CBC::AES_256_KEYSIZE
+                        << dendl;
         s->err.message = "Requests specifying Server Side Encryption with Customer "
                          "provided keys must provide an appropriate secret key.";
         return -EINVAL;

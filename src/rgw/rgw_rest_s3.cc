@@ -3358,10 +3358,12 @@ void RGWDeleteObj_ObjStore_S3::send_response()
 
 int RGWCopyObj_ObjStore_S3::init_dest_policy()
 {
+  ldpp_dout(this,0) << __func__ << dendl;
   RGWAccessControlPolicy_S3 s3policy(s->cct);
 
   /* build a policy for the target object */
   int r = create_s3_policy(s, store, s3policy, s->owner);
+  ldpp_dout(this,0) << __func__ << " ret  " << r << dendl;
   if (r < 0)
     return r;
 
@@ -3372,6 +3374,7 @@ int RGWCopyObj_ObjStore_S3::init_dest_policy()
 
 int RGWCopyObj_ObjStore_S3::get_params(optional_yield y)
 {
+  ldpp_dout(this,0) << __func__ << dendl;
   //handle object lock
   auto obj_lock_mode_str = s->info.env->get("HTTP_X_AMZ_OBJECT_LOCK_MODE");
   auto obj_lock_date_str = s->info.env->get("HTTP_X_AMZ_OBJECT_LOCK_RETAIN_UNTIL_DATE");
@@ -3445,6 +3448,7 @@ int RGWCopyObj_ObjStore_S3::get_params(optional_yield y)
     need_to_check_storage_class = true;
   }
 
+  ldpp_dout(this,0) << __func__ << "end " << dendl;
   return 0;
 }
 
@@ -4746,6 +4750,8 @@ RGWOp *RGWHandler_REST_Obj_S3::op_put()
   } else if (is_obj_legal_hold_op()) {
     return new RGWPutObjLegalHold_ObjStore_S3;
   }
+
+ldpp_dout(s, 0) << __func__ << s->init_state.src_bucket.empty() << dendl;
 
   if (s->init_state.src_bucket.empty())
     return new RGWPutObj_ObjStore_S3;
