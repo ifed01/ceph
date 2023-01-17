@@ -1708,7 +1708,7 @@ void RocksDBStore::RocksDBTransactionImpl::rmkeys_by_prefix(const string &prefix
 {
   auto p_iter = db->cf_handles.find(prefix);
   if (p_iter == db->cf_handles.end()) {
-    uint64_t cnt = db->delete_range_threshold;
+    uint64_t cnt = db->get_delete_range_threshold();
     bat.SetSavePoint();
     auto it = db->get_iterator(prefix);
     for (it->seek_to_first(); it->valid() && (--cnt) != 0; it->next()) {
@@ -1727,7 +1727,7 @@ void RocksDBStore::RocksDBTransactionImpl::rmkeys_by_prefix(const string &prefix
   } else {
     ceph_assert(p_iter->second.handles.size() >= 1);
     for (auto cf : p_iter->second.handles) {
-      uint64_t cnt = db->delete_range_threshold;
+      uint64_t cnt = db->get_delete_range_threshold();
       bat.SetSavePoint();
       auto it = db->new_shard_iterator(cf);
       for (it->seek_to_first(); it->valid() && (--cnt) != 0; it->next()) {
@@ -1753,8 +1753,9 @@ void RocksDBStore::RocksDBTransactionImpl::rm_range_keys(const string &prefix,
                      << " start=" << pretty_binary_string(start)
 		     << " end=" << pretty_binary_string(end) << dendl;
   auto p_iter = db->cf_handles.find(prefix);
+  uint64_t cnt = db->get_delete_range_threshold();
   if (p_iter == db->cf_handles.end()) {
-    uint64_t cnt = db->delete_range_threshold;
+    uint64_t cnt0 = cnt;
     bat.SetSavePoint();
     auto it = db->get_iterator(prefix);
     for (it->lower_bound(start);
@@ -1763,7 +1764,7 @@ void RocksDBStore::RocksDBTransactionImpl::rm_range_keys(const string &prefix,
       bat.Delete(db->default_cf, combine_strings(prefix, it->key()));
     }
     ldout(db->cct, 15) << __func__ << " count = "
-                       << db->delete_range_threshold - cnt
+                       << cnt0 - cnt
                        << dendl;
     if (cnt == 0) {
       ldout(db->cct, 10) << __func__ << " p_iter == end(), resorting to DeleteRange"
@@ -1775,13 +1776,21 @@ void RocksDBStore::RocksDBTransactionImpl::rm_range_keys(const string &prefix,
     } else {
       bat.PopSavePoint();
     }
+  } else if (cnt == 0) {
+    ceph_assert(p_iter->second.handles.size() >= 1);
+    for (auto cf : p_iter->second.handles) {
+      ldout(db->cct, 10) << __func__ << " p_iter != end(), resorting to DeleteRange"
+			   << dendl;
+	bat.DeleteRange(cf, rocksdb::Slice(start), rocksdb::Slice(end));
+    }
   } else {
     auto bounds = KeyValueDB::IteratorBounds();
     bounds.lower_bound = start;
     bounds.upper_bound = end;
     ceph_assert(p_iter->second.handles.size() >= 1);
     for (auto cf : p_iter->second.handles) {
-      uint64_t cnt = db->delete_range_threshold;
+      cnt = db->get_delete_range_threshold();
+      uint64_t cnt0 = cnt;
       bat.SetSavePoint();
       auto it = db->new_shard_iterator(cf, prefix, bounds);
       for (it->lower_bound(start);
@@ -1790,7 +1799,7 @@ void RocksDBStore::RocksDBTransactionImpl::rm_range_keys(const string &prefix,
 	bat.Delete(cf, it->key());
       }
       ldout(db->cct, 15) << __func__ << " count = "
-                         << db->delete_range_threshold - cnt
+                         << cnt0 - cnt
                          << dendl;
       if (cnt == 0) {
         ldout(db->cct, 10) << __func__ << " p_iter != end(), resorting to DeleteRange"
