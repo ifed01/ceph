@@ -768,12 +768,15 @@ EOF
         bluestore_block_wal_create = false
         bluestore_spdk_mem = 2048"
         else
-            BLUESTORE_OPTS="        bluestore block db path = $CEPH_DEV_DIR/osd\$id/block.db.file
-        bluestore block db size = 1073741824
-        bluestore block db create = true
-        bluestore block wal path = $CEPH_DEV_DIR/osd\$id/block.wal.file
-        bluestore block wal size = 1048576000
-        bluestore block wal create = true"
+            BLUESTORE_OPTS="
+        #bluestore block db path = $CEPH_DEV_DIR/osd\$id/block.db.file
+        #bluestore block db size = 1073741824
+        bluestore block db create = false
+        #bluestore block wal path = $CEPH_DEV_DIR/osd\$id/block.wal.file
+        #bluestore block wal size = 1048576000
+        bluestore block wal create = false
+        bluestore block path = /dev/s4600/data\$id
+        "
         fi
         if [ "$zoned_enabled" -eq 1 ]; then
             BLUESTORE_OPTS+="

@@ -16596,6 +16596,7 @@ int BlueStore::_rmattrs(TransContext *txc,
 
 void BlueStore::_do_omap_clear(TransContext *txc, OnodeRef& o)
 {
+  auto start_time = mono_clock::now();
   const string& omap_prefix = o->get_omap_prefix();
   string prefix, tail;
   o->get_omap_header(&prefix);
@@ -16603,6 +16604,23 @@ void BlueStore::_do_omap_clear(TransContext *txc, OnodeRef& o)
   txc->t->rm_range_keys(omap_prefix, prefix, tail);
   txc->t->rmkey(omap_prefix, tail);
   o->onode.clear_omap_flag();
+  bool abort = false;
+  log_latency_fn(
+    __func__,
+    l_bluestore_omap_clear_lat,
+    mono_clock::now() - start_time,
+    cct->_conf->bluestore_log_op_age,
+    [&](const ceph::timespan& lat) {
+      ostringstream ostr;
+      ostr << ", lat = " << timespan_str(lat)
+        << " cid =" << o->c->cid
+        << " oid =" << o->oid;
+      abort = true;
+      return ostr.str();
+    }
+  );
+//  ceph_assert(!abort);
+
   dout(20) << __func__ << " remove range start: "
            << pretty_binary_string(prefix) << " end: "
            << pretty_binary_string(tail) << dendl;
@@ -16613,7 +16631,7 @@ int BlueStore::_omap_clear(TransContext *txc,
 			   OnodeRef& o)
 {
   dout(15) << __func__ << " " << c->cid << " " << o->oid << dendl;
-  auto t0 = mono_clock::now();
+//  auto t0 = mono_clock::now();
 
   int r = 0;
   if (o->onode.has_omap()) {
@@ -16621,7 +16639,7 @@ int BlueStore::_omap_clear(TransContext *txc,
     _do_omap_clear(txc, o);
     txc->write_onode(o);
   }
-  logger->tinc(l_bluestore_omap_clear_lat, mono_clock::now() - t0);
+//  logger->tinc(l_bluestore_omap_clear_lat, mono_clock::now() - t0);
 
   dout(10) << __func__ << " " << c->cid << " " << o->oid << " = " << r << dendl;
   return r;
