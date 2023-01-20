@@ -775,7 +775,10 @@ EOF
         #bluestore block wal path = $CEPH_DEV_DIR/osd\$id/block.wal.file
         #bluestore block wal size = 1048576000
         bluestore block wal create = false
-        bluestore block path = /dev/s4600/data\$id
+        #bluestore block path = /dev/s4600/data\$id
+        bluestore block path = /dev/optane/swp
+        bluestore compression mode = force
+        bluestore compression algorithm = lz4
         "
         fi
         if [ "$zoned_enabled" -eq 1 ]; then
