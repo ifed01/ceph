@@ -304,11 +304,10 @@ class BlueRocksWritableFile : public rocksdb::WritableFile {
   }
 
  protected:
-  using rocksdb::WritableFile::Allocate;
   /*
    * Pre-allocate space for a file.
    */
-  rocksdb::Status Allocate(off_t offset, off_t len) {
+  rocksdb::Status Allocate(uint64_t offset, uint64_t len) override {
     int r = fs->preallocate(h->file, offset, len);
     return err_to_status(r);
   }
