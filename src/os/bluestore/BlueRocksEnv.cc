@@ -290,6 +290,7 @@ class BlueRocksWritableFile : public rocksdb::WritableFile {
   // nbytes specifies the length of the range to be synchronized.
   // This asks the OS to initiate flushing the cached data to disk,
   // without waiting for completion.
+  // Default implementation does nothing.
   rocksdb::Status RangeSync(uint64_t offset, uint64_t nbytes) override {
     // round down to page boundaries
     int partial = offset & 4095;
