@@ -770,6 +770,8 @@ prepare_conf() {
         $(format_conf "${msgr_conf}")
         $(format_conf "${extra_conf}")
         $AUTOSCALER_OPTS
+        ms_crc_data = false
+
 EOF
     if [ "$with_jaeger" -eq 1 ] ; then
         wconf <<EOF
@@ -885,6 +887,30 @@ $DAEMONOPTS
         osd class load list = *
         osd class default list = *
         osd fast shutdown = false
+        #bluestore wal = 2147483648
+        #bluestore wal = 4294967296
+        #bluestore_wal = 17179869184
+        #bluestore wal = 5368709120
+        #bluestore wal = 5351931904
+        #bluestore wal = 3221225472
+
+        bluestore wal flush ratio = 0.2
+        bluestore wal = 17179869184
+
+        #bluestore sync submit transaction = true
+        #bluefs_sync_write = true
+
+        #bluestore rocksdb options annex = 'disableWAL=true'
+        #bluestore rocksdb options annex = 'write_buffer_size=67108864'
+        #bluestore rocksdb options annex = 'write_buffer_size=33554432'
+        #bluestore rocksdb options annex = 'write_buffer_size=16777216'
+        #bluestore_rocksdb_cf = false
+        #osd_mclock_skip_benchmark = true
+        #bluestore_csum_type = none
+        #osd_numa_node = 0
+        #bdev_block_size = 512
+        #ms_async_op_threads = 4
+        #osd op num threads per shard = 4
 
         filestore wbthrottle xfs ios start flusher = 10
         filestore wbthrottle xfs ios hard limit = 20
@@ -892,8 +918,11 @@ $DAEMONOPTS
         filestore wbthrottle btrfs ios start flusher = 10
         filestore wbthrottle btrfs ios hard limit = 20
         filestore wbthrottle btrfs inodes hard limit = 30
-        bluestore fsck on mount = true
+        bluestore fsck on mount = false
         bluestore block create = true
+        #debug bluestore = 0
+        #debug bdev = 0
+        #osd op queue = wpq
 $BLUESTORE_OPTS
 
         ; kstore
