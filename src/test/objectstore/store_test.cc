@@ -1254,7 +1254,7 @@ TEST_P(StoreTest, CompressionTest) {
     return;
   }
 
-  SetVal(g_conf(), "bluestore_compression_algorithm", "snappy");
+  SetVal(g_conf(), "bluestore_compression_algorithm", "zstd");
   SetVal(g_conf(), "bluestore_compression_mode", "force");
   g_ceph_context->_conf.apply_changes(nullptr);
   doCompressionTest();
@@ -5237,7 +5237,7 @@ TEST_P(StoreTestSpecificAUSize, SyntheticMatrixCsumVsCompression) {
     { "max_size", "262144", 0 },
     { "alignment", "512", 0 },
     { "bluestore_compression_mode", "force", 0},
-    { "bluestore_compression_algorithm", "snappy", "zlib", 0 },
+    { "bluestore_compression_algorithm", "zstd", "zlib", 0 },
     { "bluestore_csum_type", "crc32c", 0 },
     { "bluestore_default_buffered_read", "true", "false", 0 },
     { "bluestore_default_buffered_write", "true", "false", 0 },
@@ -5273,7 +5273,7 @@ TEST_P(StoreTestSpecificAUSize, SyntheticMatrixCompressionAlgorithm) {
     { "max_write", "1048576", 0 },
     { "max_size", "4194304", 0 },
     { "alignment", "65536", 0 },
-    { "bluestore_compression_algorithm", "zlib", "snappy", 0 },
+    { "bluestore_compression_algorithm", "zlib", "zstd", 0 },
     { "bluestore_compression_mode", "force", 0 },
     { "bluestore_default_buffered_write", "false", 0 },
     { 0 },
@@ -10390,6 +10390,8 @@ TEST_P(StoreTestSpecificAUSize, SpilloverTest) {
     return;
   }
 
+//  SetVal(g_conf(), "bluestore_wal", "0");
+  SetVal(g_conf(), "bluestore_block_db_path", "db");
   SetVal(g_conf(), "bluestore_block_db_create", "true");
   SetVal(g_conf(), "bluestore_block_db_size", "3221225472");
   SetVal(g_conf(), "bluestore_volume_selection_policy", "rocksdb_original");
@@ -10705,6 +10707,7 @@ TEST_P(StoreTestSpecificAUSize, BluefsWriteInNoWalDiskEnvTest) {
   if (string(GetParam()) != "bluestore")
     return;
 
+  SetVal(g_conf(), "bluestore_wal", "0");
   SetVal(g_conf(), "bluestore_block_db_path", "db");
   SetVal(g_conf(), "bluestore_block_db_size", stringify(1ull << 31).c_str());
   SetVal(g_conf(), "bluestore_block_db_create", "true");
@@ -10860,6 +10863,129 @@ TEST_P(StoreTestOmapUpgrade, LargeLegacyToPG) {
   }
 }
 
+TEST_P(StoreTestSpecificAUSize, ConcurrentDBAccess) {
+
+  if (string(GetParam()) != "bluestore")
+    return;
+  if (smr) {
+    cout << "SKIP: no deferred" << std::endl;
+    return;
+  }
+
+  size_t block_size = 4096;
+//  SetVal(g_conf(), "bluestore_wal", "0");
+  StartDeferred(block_size);
+/*  SetVal(g_conf(), "bluestore_prefer_deferred_size", "65536");*/
+
+  g_conf().apply_changes(nullptr);
+
+  int r;
+  coll_t cid;
+  ghobject_t hoid(hobject_t("test", "", CEPH_NOSNAP, 0, -1, ""));
+  const string DEF_KEY("some key");
+
+  auto ch = store->create_new_collection(cid);
+  {
+    ObjectStore::Transaction t;
+    t.create_collection(cid, 0);
+    r = queue_transaction(store, ch, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+  {
+    ObjectStore::Transaction t;
+    t.touch(cid, hoid);
+    r = queue_transaction(store, ch, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+  size_t count = 1032768;
+  std::atomic<size_t> committed = 0;
+  std::atomic<bool> fail = false;
+
+  class TestThread : public Thread {
+    std::function<void ()> fn;
+    void *entry() override {
+      fn();
+      return NULL;
+    }
+  public:
+    TestThread(std::function<void ()> _fn) : fn(_fn) {}
+  };
+  class C_Test : public Context {
+    uint64_t idx;
+    std::function<void(uint64_t)> cb;
+  public:
+    C_Test(uint64_t _idx, std::function<void(uint64_t)> _cb) :
+      idx(_idx),
+      cb(_cb){
+    }
+    void finish(int r) override {
+      //printf("!!! got committed %lu\n", idx);
+      cb(idx);
+    }
+  };
+  auto f1 = [&]() {
+    size_t prev = 0;
+    size_t cnt = 0;
+    while(committed < count) {
+      auto cur = committed.load();
+      if (cur != prev) {
+        std::set<std::string> keys;
+        keys.emplace(DEF_KEY);
+        map<string, bufferlist> omap_out;
+        auto r = store->omap_get_values(ch, hoid, keys, &omap_out);
+        ASSERT_EQ(r, 0);
+        ASSERT_EQ(omap_out.count(DEF_KEY), 1);
+        uint64_t val = *(uint64_t*)(omap_out[DEF_KEY].c_str());
+        if (val < cur) {
+          printf("!!!! mismatch val = %lu < cur=%lu\n", val, cur);
+          fail = true;
+          ASSERT_TRUE(false);
+        }
+        prev = cur;
+        ++cnt;
+        if ((cnt % 1000) == 0) {
+          printf("<<< cnt %lu cur %lu\n", cnt, cur);
+        }
+      }
+      //sleep(0.01);
+    }
+  };
+  TestThread th(f1);
+  th.create("db_access_test");
+
+  for (uint64_t i = 1ul; i <= count; ++i) {
+    ObjectStore::Transaction t;
+    string id = stringify(i);
+    bufferlist id_bl;
+    id_bl.append((const char*)&i, sizeof(i));
+    map<string, bufferlist> km;
+    km[DEF_KEY] = id_bl;
+    km[id] = id_bl;
+    t.register_on_commit(new C_Test(i, [&](uint64_t id){
+      committed = id;
+    }));
+    t.omap_setkeys(cid, hoid, km);
+    r = queue_transaction(store, ch, std::move(t));
+    ASSERT_EQ(r, 0);
+    //committed = i;
+    if ((i % 1000) == 0) {
+      printf(">>> %lu\n", i);
+    }
+    if (fail) {
+      break;
+    }
+  }
+  th.join();
+  {
+    ObjectStore::Transaction t;
+    t.remove(cid, hoid);
+    t.remove_collection(cid);
+    cerr << "Cleaning" << std::endl;
+    r = queue_transaction(store, ch, std::move(t));
+    ASSERT_EQ(r, 0);
+  }
+}
+
 #endif  // WITH_BLUESTORE
 
 int main(int argc, char **argv) {
@@ -10907,8 +11033,11 @@ int main(int argc, char **argv) {
   g_ceph_context->_conf.set_val_or_die("bluestore_nid_prealloc", "10");
   g_ceph_context->_conf.set_val_or_die("bluestore_debug_randomize_serial_transaction",
 				 "10");
+  g_ceph_context->_conf.set_val_or_die("bluestore_compression_algorithm", "zstd");
 
   g_ceph_context->_conf.set_val_or_die("bdev_debug_aio", "true");
+  g_ceph_context->_conf.set_val_or_die("bluestore_block_db_path", "/dev/optane/data0");
+  g_ceph_context->_conf.set_val_or_die("bluestore_wal", "2147483648");
 
   // specify device size
   g_ceph_context->_conf.set_val_or_die("bluestore_block_size",
