@@ -18,6 +18,7 @@
 #include "os/bluestore/BlueStoreWAL.h"
 
 class BlueWALTestContext;
+
 class BluestoreWALTester : public BluestoreWAL {
 protected:
   struct TestTransactionImpl : public KeyValueDB::TransactionImpl {
@@ -90,8 +91,13 @@ protected:
     ++aio_submits;
   }
 
+  void do_flush_db() override {
+    ++db_flush_trigger_count;
+  }
+
 public:
   size_t aio_submits = 0;
+  size_t db_flush_trigger_count = 0;
   std::map<uint64_t, bufferlist> content;
   std::vector<std::pair<uint64_t, uint64_t>> reads;
   std::vector<std::pair<bufferlist, IOContext*>> writes;
@@ -99,11 +105,15 @@ public:
 
   BluestoreWALTester(CephContext* _cct,
 		      BlockDevice* _bdev,
+                      KeyValueDB* _db,
 		      const uuid_d& _uuid,
 		      uint64_t fsize,
 		      uint64_t psize,
 		      uint64_t bsize)
-    : BluestoreWAL(_cct, _bdev, _uuid, fsize, psize, bsize) {
+    : BluestoreWAL(_cct, _bdev, db,
+      _uuid, fsize, psize, bsize) {
+    // for the sake of testing simplicity do db flush synchronously
+    set_sync_flush(true);
   }
   auto make_transaction(const std::string& bytes) {
     KeyValueDB::Transaction t(std::make_shared<TestTransactionImpl>());
@@ -155,7 +165,8 @@ class BlueWALTestContext : public BlueWALContext {
     return t->get_as_bytes();
   }
 public:
-  BlueWALTestContext() : ioc(nullptr, nullptr) {
+  BlueWALTestContext()
+    : ioc(nullptr, nullptr) {
   }
 
   KeyValueDB::Transaction t;
@@ -165,7 +176,25 @@ public:
   }
 };
 
-TEST(BlueStoreWAL, basic) {
+class BlueWALTest : public virtual ::testing::Test {
+  void TearDown() override {
+    if (t) {
+      t->shutdown();
+    }
+    if (t2) {
+      t2->shutdown();
+    }
+    if (t3) {
+      t3->shutdown();
+    }
+  }
+public:
+  BluestoreWALTester* t = nullptr;
+  BluestoreWALTester* t2 = nullptr;
+  BluestoreWALTester* t3 = nullptr;
+};
+
+TEST_F(BlueWALTest, basic) {
   uuid_d uuid;
   uuid.generate_random();
 
@@ -185,51 +214,50 @@ TEST(BlueStoreWAL, basic) {
   uint64_t psize = 512;
   uint64_t bsize = 128;
   size_t page_count = 16;
-  BluestoreWALTester t(g_ceph_context,
+  t = new BluestoreWALTester(g_ceph_context,
+    nullptr,
     nullptr,
     uuid,
     psize * 2, // flush when 2 pages are ready
     psize,
     bsize);
-  t.init_add_pages(0, t.get_page_size() * 4);
-  t.init_add_pages(1ull << 32, t.get_page_size() * (page_count - 4));
+  t->init_add_pages(0, t->get_page_size() * 4);
+  t->init_add_pages(1ull << 32, t->get_page_size() * (page_count - 4));
 
-  ASSERT_EQ(psize, t.get_page_size());
-  ASSERT_EQ(psize * 16, t.get_total());
-  ASSERT_EQ(psize * 16, t.get_avail());
+  ASSERT_EQ(psize, t->get_page_size());
+  ASSERT_EQ(psize * 16, t->get_total());
+  ASSERT_EQ(psize * 16, t->get_avail());
 
   // just to make sure we operate headers small enough for block/page sizes
   // used in this test suite
-  auto head_size = t.get_header_size();
+  auto head_size = t->get_header_size();
   ASSERT_EQ(50, head_size);
 
-  size_t flush_cnt = 0;
   /////////////////////////////////////////////////
   std::cout << "Write 1, short transact" << std::endl;
   transactions.push_back("some transact");
   auto expected_w1 =
     round_up_to(head_size + transactions[0].length(), bsize);
-  txc.t = t.make_transaction(transactions[0]);
-  t.advertise_and_log(&txc);
+  txc.t = t->make_transaction(transactions[0]);
+  t->advertise_and_log(&txc);
 
-  ASSERT_EQ(1, t.writes.size());
-  ASSERT_EQ(expected_w1, t.writes[0].first.length());
-  ASSERT_EQ(1, t.aio_submits);
-  ASSERT_EQ(0, t.completed_writes.size());
+  ASSERT_EQ(1, t->writes.size());
+  ASSERT_EQ(expected_w1, t->writes[0].first.length());
+  ASSERT_EQ(1, t->aio_submits);
+  ASSERT_EQ(0, t->completed_writes.size());
   ASSERT_EQ(
     expected_w1,
-    t.get_total() - t.get_avail());
+    t->get_total() - t->get_avail());
 
-  txc.on_write_done(&t);
-  ASSERT_EQ(1, t.completed_writes.size());
-  ASSERT_EQ(1, t.completed_writes[0].first); // cur_page_seqno = 1
-  ASSERT_EQ(&txc, t.completed_writes[0].second);
+  txc.on_write_done(t);
+  ASSERT_EQ(1, t->completed_writes.size());
+  ASSERT_EQ(1, t->completed_writes[0].first); // cur_page_seqno = 1
+  ASSERT_EQ(&txc, t->completed_writes[0].second);
   // indicate txc has been submitted to DB
-  t.submitted(&txc,
-    [&]{
-      ASSERT_TRUE(false); // we shouldn't get here at this point
-    });
-  ASSERT_GE(t.get_total(), t.get_avail());
+  t->submitted(&txc);
+  // we shouldn't flush at this point
+  ASSERT_EQ(t->db_flush_trigger_count, 0);
+  ASSERT_GE(t->get_total(), t->get_avail());
 
   /////////////////////////////////////////////////
   // another op which consumes the same page
@@ -238,27 +266,26 @@ TEST(BlueStoreWAL, basic) {
 
   auto expected_w2 =
     round_up_to(head_size + transactions.back().length(), bsize);
-  txc2.t = t.make_transaction(transactions.back());
-  t.advertise_and_log(&txc2);
+  txc2.t = t->make_transaction(transactions.back());
+  t->advertise_and_log(&txc2);
 
-  ASSERT_EQ(2, t.writes.size());
-  ASSERT_EQ(expected_w2, t.writes[1].first.length());
-  ASSERT_EQ(2, t.aio_submits);
-  ASSERT_EQ(1, t.completed_writes.size());
+  ASSERT_EQ(2, t->writes.size());
+  ASSERT_EQ(expected_w2, t->writes[1].first.length());
+  ASSERT_EQ(2, t->aio_submits);
+  ASSERT_EQ(1, t->completed_writes.size());
   ASSERT_EQ(
     expected_w1 + expected_w2,
-    t.get_total() - t.get_avail());
+    t->get_total() - t->get_avail());
 
-  txc2.on_write_done(&t);
-  ASSERT_EQ(2, t.completed_writes.size());
-  ASSERT_EQ(1, t.completed_writes[1].first); // still cur_page_seqno = 1
-  ASSERT_EQ(&txc2, t.completed_writes[1].second);
+  txc2.on_write_done(t);
+  ASSERT_EQ(2, t->completed_writes.size());
+  ASSERT_EQ(1, t->completed_writes[1].first); // still cur_page_seqno = 1
+  ASSERT_EQ(&txc2, t->completed_writes[1].second);
 
   //no-op
-  t.submitted(&txc2,
-    [&]{
-      ASSERT_TRUE(false); // we shouldn't get here at this point
-    });
+  t->submitted(&txc2);
+  // we shouldn't flush at this point
+  ASSERT_EQ(t->db_flush_trigger_count, 0);
 
   /////////////////////////////////////////////////
   // another op which consumes the next page = 2
@@ -266,35 +293,35 @@ TEST(BlueStoreWAL, basic) {
   auto expected_w3 =
     round_up_to(head_size + transactions.back().length(), bsize);
   std::cout << "Write 3, len = " << expected_w3 << std::endl;
-  txc3.t = t.make_transaction(transactions.back());
-  t.advertise_and_log(&txc3);
+  txc3.t = t->make_transaction(transactions.back());
+  t->advertise_and_log(&txc3);
 
-  ASSERT_EQ(3, t.writes.size());
-  ASSERT_EQ(expected_w3, t.writes[2].first.length());
-  ASSERT_EQ(3, t.aio_submits);
-  ASSERT_EQ(2, t.completed_writes.size());
+  ASSERT_EQ(3, t->writes.size());
+  ASSERT_EQ(expected_w3, t->writes[2].first.length());
+  ASSERT_EQ(3, t->aio_submits);
+  ASSERT_EQ(2, t->completed_writes.size());
   ASSERT_EQ(
     psize // the first page is completely consumed although
 	  // the tail is unused
       + expected_w3,
-    t.get_total() - t.get_avail());
+    t->get_total() - t->get_avail());
 
-  txc3.on_write_done(&t);
-  ASSERT_EQ(3, t.completed_writes.size());
-  ASSERT_EQ(2, t.completed_writes[2].first); // cur page seqno = 2
-  ASSERT_EQ(&txc3, t.completed_writes[2].second);
+  txc3.on_write_done(t);
+  ASSERT_EQ(3, t->completed_writes.size());
+  ASSERT_EQ(2, t->completed_writes[2].first); // cur page seqno = 2
+  ASSERT_EQ(&txc3, t->completed_writes[2].second);
 
   // indicate everything prior to page 2 is committed
-  t.submitted(&txc3,
-    [&]{
-      ASSERT_TRUE(false); // we shouldn't get here at this point
-    });
+  t->submitted(&txc3);
+  // we shouldn't flush at this point
+  ASSERT_EQ(t->db_flush_trigger_count, 0);
+
   //avail is unchanged
   ASSERT_EQ(
     psize // the first page is completely consumed although
 	  // the tail is unused
       + expected_w3,
-    t.get_total() - t.get_avail());
+    t->get_total() - t->get_avail());
 
   /////////////////////////////////////////////////
   // forth op which fully consumes two following pages but the last block.
@@ -303,40 +330,37 @@ TEST(BlueStoreWAL, basic) {
   auto expected_w4 =
     round_up_to(2 * head_size + transactions.back().length(), psize);
   std::cout << "Write 4, len = " << expected_w4 << std::endl;
-  txc4.t = t.make_transaction(transactions.back());
-  t.advertise_and_log(&txc4);
+  txc4.t = t->make_transaction(transactions.back());
+  t->advertise_and_log(&txc4);
 
-  ASSERT_EQ(5, t.writes.size()); // +2 page writes
-  ASSERT_EQ(psize, t.writes[3].first.length());
-  ASSERT_EQ(psize - bsize, t.writes[4].first.length());
-  ASSERT_EQ(t.writes[3].second, t.writes[4].second); // IOCs are equal
+  ASSERT_EQ(5, t->writes.size()); // +2 page writes
+  ASSERT_EQ(psize, t->writes[3].first.length());
+  ASSERT_EQ(psize - bsize, t->writes[4].first.length());
+  ASSERT_EQ(t->writes[3].second, t->writes[4].second); // IOCs are equal
 
-  ASSERT_EQ(4, t.aio_submits);
-  ASSERT_EQ(3, t.completed_writes.size());
+  ASSERT_EQ(4, t->aio_submits);
+  ASSERT_EQ(3, t->completed_writes.size());
   ASSERT_EQ(
     psize
       + expected_w3 + expected_w4,
-    t.get_total() - t.get_avail());
+    t->get_total() - t->get_avail());
 
-  txc4.on_write_done(&t);
-  ASSERT_EQ(4, t.completed_writes.size());
+  txc4.on_write_done(t);
+  ASSERT_EQ(4, t->completed_writes.size());
 
   // cur page = 5 as huge write issues "self-submission"
   // indications
-  ASSERT_EQ(5, t.completed_writes[3].first);
-  ASSERT_EQ(&txc4, t.completed_writes[3].second);
-  flush_cnt = 0;
-  t.submitted(&txc4, // indicate everything prior to page 5
-                     // this includes txc4 itself
-    [&]{
-      flush_cnt++;
-    });
-  ASSERT_EQ(flush_cnt, 1);
+  ASSERT_EQ(5, t->completed_writes[3].first);
+  ASSERT_EQ(&txc4, t->completed_writes[3].second);
+  t->db_flush_trigger_count = 0;
+  t->submitted(&txc4); // indicate everything prior to page 5
+                      // this includes txc4 itself
+  ASSERT_EQ(t->db_flush_trigger_count, 1);
 
   //page 1-4 aren not wiped but available
   ASSERT_EQ(
     0,
-    t.get_total() - t.get_avail());
+    t->get_total() - t->get_avail());
 
   /////////////////////////////////////////////////
   // fifth op just regularly uses current page
@@ -345,276 +369,263 @@ TEST(BlueStoreWAL, basic) {
   auto expected_w5 =
     round_up_to(head_size + transactions[4].length(), bsize);
   std::cout << "Write 5, len = " << expected_w5 << std::endl;
-  txc5.t = t.make_transaction(transactions.back());
-  t.advertise_and_log(&txc5);
+  txc5.t = t->make_transaction(transactions.back());
+  t->advertise_and_log(&txc5);
 
-  ASSERT_EQ(5 + 1 + 4, t.writes.size()); //4 page wipings + 1 block write
-  ASSERT_EQ(bsize, t.writes[5].first.length());
-  ASSERT_EQ(bsize, t.writes[6].first.length());
-  ASSERT_EQ(bsize, t.writes[7].first.length());
-  ASSERT_EQ(bsize, t.writes[8].first.length());
-  ASSERT_EQ(expected_w5, t.writes[9].first.length());
-  ASSERT_EQ(t.writes[5].second, t.writes[6].second); // the same iocs
-  ASSERT_EQ(t.writes[5].second, t.writes[7].second); // the same iocs
-  ASSERT_EQ(t.writes[5].second, t.writes[8].second); // the same iocs
-  ASSERT_EQ(t.writes[5].second, t.writes[9].second); // the same iocs
-  ASSERT_EQ(5, t.aio_submits);
-  ASSERT_EQ(4, t.completed_writes.size()); // no change
+  ASSERT_EQ(5 + 1 + 4, t->writes.size()); //4 page wipings + 1 block write
+  ASSERT_EQ(bsize, t->writes[5].first.length());
+  ASSERT_EQ(bsize, t->writes[6].first.length());
+  ASSERT_EQ(bsize, t->writes[7].first.length());
+  ASSERT_EQ(bsize, t->writes[8].first.length());
+  ASSERT_EQ(expected_w5, t->writes[9].first.length());
+  ASSERT_EQ(t->writes[5].second, t->writes[6].second); // the same iocs
+  ASSERT_EQ(t->writes[5].second, t->writes[7].second); // the same iocs
+  ASSERT_EQ(t->writes[5].second, t->writes[8].second); // the same iocs
+  ASSERT_EQ(t->writes[5].second, t->writes[9].second); // the same iocs
+  ASSERT_EQ(5, t->aio_submits);
+  ASSERT_EQ(4, t->completed_writes.size()); // no change
   ASSERT_EQ(
     psize * 4     // page 1-4 are being wiped
     + expected_w5,
-    t.get_total() - t.get_avail());
+    t->get_total() - t->get_avail());
 
-  txc5.on_write_done(&t);
-  ASSERT_EQ(5, t.completed_writes.size());
-  ASSERT_EQ(&txc5, t.completed_writes[4].second);
-  ASSERT_EQ(5, t.completed_writes[4].first); // cur page = 5
+  txc5.on_write_done(t);
+  ASSERT_EQ(5, t->completed_writes.size());
+  ASSERT_EQ(&txc5, t->completed_writes[4].second);
+  ASSERT_EQ(5, t->completed_writes[4].first); // cur page = 5
 
   //pages 1-2 are now wiped
   ASSERT_EQ(
     + expected_w5,
-    t.get_total() - t.get_avail());
+    t->get_total() - t->get_avail());
 
   
   /////////////////////////////////////////////////
   //3 more transactions - last one starts new page 6
   // txc 5 is not submitted yet!!!!
   //
-  t.reset_all();
+  t->reset_all();
   transactions.push_back(std::string(8, 'd'));
   auto expected_w6 =
     round_up_to(head_size + transactions.back().length(), bsize);
   std::cout << "Write 6-8, len = 3x" << expected_w6 << std::endl;
-  txc6.t = t.make_transaction(transactions.back());
-  t.advertise_and_log(&txc6);
+  txc6.t = t->make_transaction(transactions.back());
+  t->advertise_and_log(&txc6);
 
   transactions.push_back(std::string(8, 'd'));
   auto expected_w7 = expected_w6;
-  txc7.t = t.make_transaction(transactions.back());
-  t.advertise_and_log(&txc7);
+  txc7.t = t->make_transaction(transactions.back());
+  t->advertise_and_log(&txc7);
 
   transactions.push_back(std::string(8, 'd'));
   auto expected_w8 = expected_w6;
-  txc8.t = t.make_transaction(transactions.back());
-  t.advertise_and_log(&txc8);
+  txc8.t = t->make_transaction(transactions.back());
+  t->advertise_and_log(&txc8);
 
-  ASSERT_EQ(3, t.writes.size());
-  ASSERT_EQ(expected_w6, t.writes[0].first.length());
-  ASSERT_EQ(expected_w7, t.writes[1].first.length());
-  ASSERT_EQ(expected_w8, t.writes[2].first.length());
+  ASSERT_EQ(3, t->writes.size());
+  ASSERT_EQ(expected_w6, t->writes[0].first.length());
+  ASSERT_EQ(expected_w7, t->writes[1].first.length());
+  ASSERT_EQ(expected_w8, t->writes[2].first.length());
 
-  ASSERT_EQ(3, t.aio_submits);
-  ASSERT_EQ(0, t.completed_writes.size()); // no change
+  ASSERT_EQ(3, t->aio_submits);
+  ASSERT_EQ(0, t->completed_writes.size()); // no change
   ASSERT_EQ(
     + psize       // ops 5-7 consume this page
     + expected_w8,
-    t.get_total() - t.get_avail());
+    t->get_total() - t->get_avail());
 
-  txc8.on_write_done(&t);
-  ASSERT_EQ(0, t.completed_writes.size()); // still wait for prior write to complete
-  txc7.on_write_done(&t);
-  ASSERT_EQ(0, t.completed_writes.size()); // still wait for prior write to complete
-  txc6.on_write_done(&t);
-  ASSERT_EQ(3, t.completed_writes.size()); // 3 pending writes are completed
+  txc8.on_write_done(t);
+  ASSERT_EQ(0, t->completed_writes.size()); // still wait for prior write to complete
+  txc7.on_write_done(t);
+  ASSERT_EQ(0, t->completed_writes.size()); // still wait for prior write to complete
+  txc6.on_write_done(t);
+  ASSERT_EQ(3, t->completed_writes.size()); // 3 pending writes are completed
 
-  ASSERT_EQ(5, t.completed_writes[0].first);
-  ASSERT_EQ(&txc6, t.completed_writes[0].second); // cur page = 5
-  ASSERT_EQ(5, t.completed_writes[1].first);
-  ASSERT_EQ(&txc7, t.completed_writes[1].second); // cur page = 5
-  ASSERT_EQ(6, t.completed_writes[2].first);
-  ASSERT_EQ(&txc8, t.completed_writes[2].second); // cur page = 6
+  ASSERT_EQ(5, t->completed_writes[0].first);
+  ASSERT_EQ(&txc6, t->completed_writes[0].second); // cur page = 5
+  ASSERT_EQ(5, t->completed_writes[1].first);
+  ASSERT_EQ(&txc7, t->completed_writes[1].second); // cur page = 5
+  ASSERT_EQ(6, t->completed_writes[2].first);
+  ASSERT_EQ(&txc8, t->completed_writes[2].second); // cur page = 6
 
   // ops 4-8 are not submitted yet!!!!
   ASSERT_EQ(
     + psize       // ops 5-7 consume this page
     + expected_w8,
-    t.get_total() - t.get_avail());
+    t->get_total() - t->get_avail());
 
-  flush_cnt = 0;
-  t.submitted(&txc5, // no-op
-    [&]{
-      flush_cnt++;
-    });
-  ASSERT_EQ(flush_cnt, 0);
+  t->db_flush_trigger_count = 0;
+  t->submitted(&txc5); // no-op
+  ASSERT_EQ(t->db_flush_trigger_count, 0);
 
   ASSERT_EQ(
     + psize       // ops 5-7 consume this page
     + expected_w8,
-    t.get_total() - t.get_avail());
+    t->get_total() - t->get_avail());
 
   // current *seqno validation
-  ASSERT_EQ(t.get_page_seqno(), 6);
-  ASSERT_EQ(t.get_transact_seqno(), 8);
+  ASSERT_EQ(t->get_page_seqno(), 6);
+  ASSERT_EQ(t->get_transact_seqno(), 8);
 
-  ASSERT_EQ(t.get_last_submitted_page_seqno(), 4);
-  ASSERT_EQ(t.get_last_committed_page_seqno(), 4);
-  ASSERT_EQ(t.get_last_wiping_page_seqno(), 4);
-  ASSERT_EQ(t.get_last_wiped_page_seqno(), 4);
+  ASSERT_EQ(t->get_last_submitted_page_seqno(), 4);
+  ASSERT_EQ(t->get_last_committed_page_seqno(), 4);
+  ASSERT_EQ(t->get_last_wiping_page_seqno(), 4);
+  ASSERT_EQ(t->get_last_wiped_page_seqno(), 4);
 
-  flush_cnt = 0;
-  t.submitted(&txc6, // no-op, page 5 again
-    [&]{
-      ++flush_cnt;
-    });
-  ASSERT_EQ(flush_cnt, 0);
+  t->db_flush_trigger_count = 0;
+  t->submitted(&txc6); // no-op, page 5 again
+  ASSERT_EQ(t->db_flush_trigger_count, 0);
 
-  flush_cnt = 0;
-  t.submitted(&txc8, // page 6, not enough for a flush, no pages released
-    [&]{
-      ++flush_cnt;
-    });
-  ASSERT_EQ(flush_cnt, 0);
+  t->db_flush_trigger_count = 0;
+  t->submitted(&txc8); // page 6, not enough for a flush, no pages released
+  ASSERT_EQ(t->db_flush_trigger_count, 0);
 
   ASSERT_EQ(
     + psize
     + expected_w8,
-    t.get_total() - t.get_avail());
-  ASSERT_EQ(t.get_last_submitted_page_seqno(), 5);
-  ASSERT_EQ(t.get_last_committed_page_seqno(), 4);
-  ASSERT_EQ(t.get_last_wiping_page_seqno(), 4);
-  ASSERT_EQ(t.get_last_wiped_page_seqno(), 4);
+    t->get_total() - t->get_avail());
+  ASSERT_EQ(t->get_last_submitted_page_seqno(), 5);
+  ASSERT_EQ(t->get_last_committed_page_seqno(), 4);
+  ASSERT_EQ(t->get_last_wiping_page_seqno(), 4);
+  ASSERT_EQ(t->get_last_wiped_page_seqno(), 4);
 
   /////////////////////////////////////////////////
   //1 huge transaction to take all the space but two pages
   // (including the current page one)  and a few(5) bytes
   //
-  t.reset_all();
+  t->reset_all();
   auto num_pages_w9 = page_count - 2; // = 14
-  auto page_seqno_before_w9 = t.get_page_seqno();
+  auto page_seqno_before_w9 = t->get_page_seqno();
   transactions.push_back(
     std::string(num_pages_w9 * (psize - head_size) - 5, 'e'));
   auto expected_w9 = round_up_to(transactions.back().length(), bsize);
   std::cout << "Write 9, len = " << expected_w9 << std::endl;
-  txc9.t = t.make_transaction(transactions.back());
-  t.advertise_and_log(&txc9);
+  txc9.t = t->make_transaction(transactions.back());
+  t->advertise_and_log(&txc9);
 
-  ASSERT_EQ(num_pages_w9, t.writes.size());
-  for (size_t i = 0; i < t.writes.size(); ++i) {
-    ASSERT_EQ(psize, t.writes[i].first.length());
+  ASSERT_EQ(num_pages_w9, t->writes.size());
+  for (size_t i = 0; i < t->writes.size(); ++i) {
+    ASSERT_EQ(psize, t->writes[i].first.length());
   }
 
-  ASSERT_EQ(1, t.aio_submits);
-  ASSERT_EQ(0, t.completed_writes.size());
+  ASSERT_EQ(1, t->aio_submits);
+  ASSERT_EQ(0, t->completed_writes.size());
   ASSERT_EQ(
     0,
-    t.get_avail());
+    t->get_avail());
 
   // page seqno to be increased by num_pages_w9 due to huge txc alignment
   // with page boundary
-  ASSERT_EQ(t.get_page_seqno(), num_pages_w9 + page_seqno_before_w9);
-  ASSERT_EQ(t.get_transact_seqno(), 9);
+  ASSERT_EQ(t->get_page_seqno(), num_pages_w9 + page_seqno_before_w9);
+  ASSERT_EQ(t->get_transact_seqno(), 9);
 
-  ASSERT_EQ(t.get_last_submitted_page_seqno(), 5);
-  ASSERT_EQ(t.get_last_committed_page_seqno(), 4);
+  ASSERT_EQ(t->get_last_submitted_page_seqno(), 5);
+  ASSERT_EQ(t->get_last_committed_page_seqno(), 4);
   // two unwiped pages are consumed by this txc hence seqs updated
-  ASSERT_EQ(t.get_last_wiping_page_seqno(), 4);
-  ASSERT_EQ(t.get_last_wiped_page_seqno(), 4);
+  ASSERT_EQ(t->get_last_wiping_page_seqno(), 4);
+  ASSERT_EQ(t->get_last_wiped_page_seqno(), 4);
 
-  txc9.on_write_done(&t);
-  ASSERT_EQ(1 , t.completed_writes.size());
+  txc9.on_write_done(t);
+  ASSERT_EQ(1 , t->completed_writes.size());
 
-  ASSERT_EQ(&txc9, t.completed_writes[0].second);
+  ASSERT_EQ(&txc9, t->completed_writes[0].second);
   // page seqno to be increased by 1 due to "self-submission"
   // indication for a huge page
-  ASSERT_EQ(t.get_page_seqno() + 1, t.completed_writes[0].first); // cur page = 21
+  ASSERT_EQ(t->get_page_seqno() + 1, t->completed_writes[0].first); // cur page = 21
 
-  flush_cnt = 0;
-  t.submitted(&txc9, // pages 4 - 20
-    [&]{
-      ++flush_cnt;
-    });
-  ASSERT_EQ(flush_cnt, 1);
+  t->db_flush_trigger_count = 0;
+  t->submitted(&txc9); // pages 4 - 20
+  ASSERT_EQ(t->db_flush_trigger_count, 1);
+
   ASSERT_EQ(
-    t.get_total(),
-    t.get_avail());
+    t->get_total(),
+    t->get_avail());
 
-  ASSERT_EQ(t.get_last_submitted_page_seqno(), 20);
-  ASSERT_EQ(t.get_last_committed_page_seqno(), 20);
-  ASSERT_EQ(t.get_last_wiping_page_seqno(), 4);
-  ASSERT_EQ(t.get_last_wiped_page_seqno(), 4);
+  ASSERT_EQ(t->get_last_submitted_page_seqno(), 20);
+  ASSERT_EQ(t->get_last_committed_page_seqno(), 20);
+  ASSERT_EQ(t->get_last_wiping_page_seqno(), 4);
+  ASSERT_EQ(t->get_last_wiped_page_seqno(), 4);
 
   /////////////////////////////////////////////////
   //simple transaction to trigger wiping for
   //submitted pages
   //
-  t.reset_all();
+  t->reset_all();
   transactions.push_back(std::string(1, 'f'));
   auto expected_w10 =
     round_up_to(head_size + transactions.back().length(), bsize);
   std::cout << "Write 10, len = " << expected_w10 << std::endl;
-  txc10.t = t.make_transaction(transactions.back());
-  t.advertise_and_log(&txc10);
-  txc10.on_write_done(&t);
-  flush_cnt = 0;
-  t.submitted(&txc10, // no-op
-    [&]{
-      ++flush_cnt;
-    });
-  ASSERT_EQ(0, flush_cnt);
+  txc10.t = t->make_transaction(transactions.back());
+  t->advertise_and_log(&txc10);
+  txc10.on_write_done(t);
+  t->db_flush_trigger_count = 0;
+  t->submitted(&txc10); // no-op
+  ASSERT_EQ(t->db_flush_trigger_count, 0);
+
   ASSERT_EQ(
     expected_w10,
-    t.get_total() - t.get_avail());
+    t->get_total() - t->get_avail());
 
-  ASSERT_EQ(t.get_last_submitted_page_seqno(), 20);
-  ASSERT_EQ(t.get_last_committed_page_seqno(), 20);
-  ASSERT_EQ(t.get_last_wiping_page_seqno(), 20);
-  ASSERT_EQ(t.get_last_wiped_page_seqno(), 20);
+  ASSERT_EQ(t->get_last_submitted_page_seqno(), 20);
+  ASSERT_EQ(t->get_last_committed_page_seqno(), 20);
+  ASSERT_EQ(t->get_last_wiping_page_seqno(), 20);
+  ASSERT_EQ(t->get_last_wiped_page_seqno(), 20);
 
 /*  // and one more simple op piggy backed with page wipe
   bl.clear();
   bl.append(string("aaa"));
   transactions.push_back(bl);
 
-  t.submit(&txc2, transactions[9]);
+  t->submit(&txc2, transactions[9]);
 
   // +1 write for the op + 15 writes to wipe pages
-  ASSERT_EQ(26 + page_count, t.writes.size());
-  ASSERT_EQ(10, t.aio_submits);
-  ASSERT_EQ(9, t.completed_writes.size());
+  ASSERT_EQ(26 + page_count, t->writes.size());
+  ASSERT_EQ(10, t->aio_submits);
+  ASSERT_EQ(9, t->completed_writes.size());
   // less than a single page is avail atm
   uint64_t expected_w10 = round_up_to(phead_size + thead_size + bl.length(), bsize);
   ASSERT_EQ(
     psize - expected_w10,
-    t.get_avail());
+    t->get_avail());
 
-  ASSERT_EQ(t.get_page_seqno(), 22);
-  ASSERT_EQ(t.get_transact_seqno(), 10);
+  ASSERT_EQ(t->get_page_seqno(), 22);
+  ASSERT_EQ(t->get_transact_seqno(), 10);
 
-  ASSERT_EQ(t.get_last_outdated_page_seqno(), 21);
-  ASSERT_EQ(t.get_last_wiping_page_seqno(), 21);
+  ASSERT_EQ(t->get_last_outdated_page_seqno(), 21);
+  ASSERT_EQ(t->get_last_wiping_page_seqno(), 21);
   // we've just reused a single non-wiped page
-  ASSERT_EQ(t.get_last_wiped_page_seqno(), 6);
+  ASSERT_EQ(t->get_last_wiped_page_seqno(), 6);
 
-  t.on_write(t.writes[20].second);
-  ASSERT_EQ(10, t.completed_writes.size());
+  t->on_write(t->writes[20].second);
+  ASSERT_EQ(10, t->completed_writes.size());
 
   // duplicate request for commit indication for page seq 21
-  ASSERT_EQ(21, t.completed_writes[9].first);
-  ASSERT_EQ(&txc2, t.completed_writes[9].second);
+  ASSERT_EQ(21, t->completed_writes[9].first);
+  ASSERT_EQ(&txc2, t->completed_writes[9].second);
 
   // less than a single page is avail atm
   ASSERT_EQ(
     psize * page_count - expected_w10,
-    t.get_avail());
+    t->get_avail());
 
-  ASSERT_EQ(t.get_last_outdated_page_seqno(), 21);
-  ASSERT_EQ(t.get_last_wiping_page_seqno(), 21);
-  ASSERT_EQ(t.get_last_wiped_page_seqno(), 21);
+  ASSERT_EQ(t->get_last_outdated_page_seqno(), 21);
+  ASSERT_EQ(t->get_last_wiping_page_seqno(), 21);
+  ASSERT_EQ(t->get_last_wiped_page_seqno(), 21);
 
-  t.committed(21); // duplicate commit for page seq 21
+  t->committed(21); // duplicate commit for page seq 21
   ASSERT_EQ(
-    t.get_total() - expected_w10,
-    t.get_avail());
-  ASSERT_EQ(t.get_last_outdated_page_seqno(), 21);
-  ASSERT_EQ(t.get_last_wiping_page_seqno(), 21);
-  ASSERT_EQ(t.get_last_wiped_page_seqno(), 21);
+    t->get_total() - expected_w10,
+    t->get_avail());
+  ASSERT_EQ(t->get_last_outdated_page_seqno(), 21);
+  ASSERT_EQ(t->get_last_wiping_page_seqno(), 21);
+  ASSERT_EQ(t->get_last_wiped_page_seqno(), 21);
 
   // 
   // FIXME: verify shutdown - wipe all the pages
   */
 }
 
-TEST(BlueStoreWAL, basic_replay) {
+TEST_F(BlueWALTest, basic_replay) {
   uuid_d uuid;
   uuid.generate_random();
 
@@ -634,29 +645,30 @@ TEST(BlueStoreWAL, basic_replay) {
   uint64_t psize = 1024;
   uint64_t bsize = 256;
   size_t page_count = 8;
-  BluestoreWALTester t(g_ceph_context,
+  t = new BluestoreWALTester(g_ceph_context,
+    nullptr,
     nullptr,
     uuid,
     psize * 4,
     psize,
     bsize);
-  t.init_add_pages(0, t.get_page_size() * 4);
-  t.init_add_pages(1ull << 16, t.get_page_size() * 3);
-  t.init_add_pages(1ull << 24, t.get_page_size() * 1);
+  t->init_add_pages(0, t->get_page_size() * 4);
+  t->init_add_pages(1ull << 16, t->get_page_size() * 3);
+  t->init_add_pages(1ull << 24, t->get_page_size() * 1);
 
-  BluestoreWALTester t2(g_ceph_context,
+  t2 = new BluestoreWALTester(g_ceph_context,
+    nullptr,
     nullptr,
     uuid,
     psize * 4,
     psize,
     bsize);
-  t2.init_add_pages(0, t2.get_page_size() * 4);
-  t2.init_add_pages(1ull << 16, t2.get_page_size() * 3);
-  t2.init_add_pages(1ull << 24, t2.get_page_size() * 1);
+  t2->init_add_pages(0, t2->get_page_size() * 4);
+  t2->init_add_pages(1ull << 16, t2->get_page_size() * 3);
+  t2->init_add_pages(1ull << 24, t2->get_page_size() * 1);
 
-  auto head_size = t.get_header_size();
+  auto head_size = t->get_header_size();
 
-  int flush_cnt = 0;
   int db_submit_cnt = 0;
   std::vector<std::string> db_submit_data;
   auto submit_db_fn = [&](const std::string& payload) {
@@ -664,40 +676,36 @@ TEST(BlueStoreWAL, basic_replay) {
     db_submit_data.emplace_back(payload);
     return 0;
   };
-  auto flush_db_fn = [&]() {
-    ++flush_cnt;
-  };
 
-  flush_cnt = 0;
-  t.shutdown(flush_db_fn);
-  ASSERT_EQ(flush_cnt, 1);
+  t->shutdown();
+  ASSERT_EQ(t->db_flush_trigger_count, 1);
 
   db_submit_cnt = 0;
-  flush_cnt = 0;
-  t.replay(true, submit_db_fn, flush_db_fn);
-  ASSERT_EQ(t.get_total(), t.get_avail());
+  t->db_flush_trigger_count = 0;
+  t->replay(true, submit_db_fn);
+  ASSERT_EQ(t->get_total(), t->get_avail());
   ASSERT_EQ(db_submit_cnt, 0);
-  ASSERT_EQ(flush_cnt, 0);
-  ASSERT_EQ(page_count, t.reads.size());
-  ASSERT_EQ(0, t.reads[0].first);
-  ASSERT_EQ(bsize, t.reads[0].second);
-  ASSERT_EQ(1 * psize, t.reads[1].first);
-  ASSERT_EQ(bsize, t.reads[1].second);
-  ASSERT_EQ(2 * psize, t.reads[2].first);
-  ASSERT_EQ(bsize, t.reads[2].second);
-  ASSERT_EQ(3 * psize, t.reads[3].first);
-  ASSERT_EQ(bsize, t.reads[3].second);
-  ASSERT_EQ((1ull << 16) + 0 * psize, t.reads[4].first);
-  ASSERT_EQ(bsize, t.reads[4].second);
-  ASSERT_EQ((1ull << 16) + 1 * psize, t.reads[5].first);
-  ASSERT_EQ(bsize, t.reads[5].second);
-  ASSERT_EQ((1ull << 16) + 2 * psize, t.reads[6].first);
-  ASSERT_EQ(bsize, t.reads[6].second);
-  ASSERT_EQ((1ull << 24) + 0 * psize, t.reads[7].first);
-  ASSERT_EQ(bsize, t.reads[7].second);
-  ASSERT_EQ(0, t.writes.size());
+  ASSERT_EQ(t->db_flush_trigger_count, 0);
+  ASSERT_EQ(page_count, t->reads.size());
+  ASSERT_EQ(0, t->reads[0].first);
+  ASSERT_EQ(bsize, t->reads[0].second);
+  ASSERT_EQ(1 * psize, t->reads[1].first);
+  ASSERT_EQ(bsize, t->reads[1].second);
+  ASSERT_EQ(2 * psize, t->reads[2].first);
+  ASSERT_EQ(bsize, t->reads[2].second);
+  ASSERT_EQ(3 * psize, t->reads[3].first);
+  ASSERT_EQ(bsize, t->reads[3].second);
+  ASSERT_EQ((1ull << 16) + 0 * psize, t->reads[4].first);
+  ASSERT_EQ(bsize, t->reads[4].second);
+  ASSERT_EQ((1ull << 16) + 1 * psize, t->reads[5].first);
+  ASSERT_EQ(bsize, t->reads[5].second);
+  ASSERT_EQ((1ull << 16) + 2 * psize, t->reads[6].first);
+  ASSERT_EQ(bsize, t->reads[6].second);
+  ASSERT_EQ((1ull << 24) + 0 * psize, t->reads[7].first);
+  ASSERT_EQ(bsize, t->reads[7].second);
+  ASSERT_EQ(0, t->writes.size());
 
-  t.reset_all();
+  t->reset_all();
   // this will use a single block
   transactions.push_back("transact1");
   // takes all the rest blocks in the page but the last one
@@ -717,50 +725,51 @@ TEST(BlueStoreWAL, basic_replay) {
   transactions.push_back(std::string(bsize - head_size - head_size + 5, '9'));
   transactions.push_back("10");
 
-  txc.t = t.make_transaction(transactions[0]);
-  t.advertise_and_log(&txc);
-  txc2.t = t.make_transaction(transactions[1]);
-  t.advertise_and_log(&txc2);
-  txc3.t = t.make_transaction(transactions[2]);
-  t.advertise_and_log(&txc3);
-  txc4.t = t.make_transaction(transactions[3]);
-  t.advertise_future_op(2);
-  t.log(&txc4);
-  txc5.t = t.make_transaction(transactions[4]);
-  t.log(&txc5);
+  txc.t = t->make_transaction(transactions[0]);
+  t->advertise_and_log(&txc);
+  txc2.t = t->make_transaction(transactions[1]);
+  t->advertise_and_log(&txc2);
+  txc3.t = t->make_transaction(transactions[2]);
+  t->advertise_and_log(&txc3);
+  txc4.t = t->make_transaction(transactions[3]);
+  t->advertise_future_op(2);
+  t->log(&txc4);
+  txc5.t = t->make_transaction(transactions[4]);
+  t->log(&txc5);
 
-  txc6.t = t.make_transaction(transactions[5]);
-  t.advertise_future_op(3);
-  t.log(&txc6);
-  txc7.t = t.make_transaction(transactions[6]);
-  t.log(&txc7);
-  txc8.t = t.make_transaction(transactions[7]);
-  t.log(&txc8);
-  txc9.t = t.make_transaction(transactions[8]);
-  t.advertise_and_log(&txc9);
-  txc10.t = t.make_transaction(transactions[9]);
-  t.advertise_and_log(&txc10);
+  txc6.t = t->make_transaction(transactions[5]);
+  t->advertise_future_op(3);
+  t->log(&txc6);
+  txc7.t = t->make_transaction(transactions[6]);
+  t->log(&txc7);
+  txc8.t = t->make_transaction(transactions[7]);
+  t->log(&txc8);
+  txc9.t = t->make_transaction(transactions[8]);
+  t->advertise_and_log(&txc9);
+  txc10.t = t->make_transaction(transactions[9]);
+  t->advertise_and_log(&txc10);
 
   // txc 4 & 5 are merged into a single write, the same for txc 6 & 7 & 8
-  ASSERT_EQ(7, t.writes.size());
-  ASSERT_EQ(7, t.aio_submits);
-  ASSERT_EQ(0, t.completed_writes.size());
+  ASSERT_EQ(7, t->writes.size());
+  ASSERT_EQ(7, t->aio_submits);
+  ASSERT_EQ(0, t->completed_writes.size());
 
   // just to reset wal op context in txc
   // and hence be able to use it again
-  txc.on_write_done(&t);
+  txc.on_write_done(t);
 
-  flush_cnt = 0;
-  t.shutdown(flush_db_fn);
-  ASSERT_EQ(flush_cnt, 1);
+  t->db_flush_trigger_count = 0;
+  t->shutdown();
+  std::cout << t << std::endl;
+  ASSERT_EQ(t->db_flush_trigger_count, 1);
 
   // clone disk content to t2 to be able to use "pure" WAL object
-  t.clone_content(t2);
+  t->clone_content(*t2);
 
   db_submit_cnt = 0;
-  flush_cnt = 0;
-  t2.replay(true, submit_db_fn, flush_db_fn);
-  ASSERT_EQ(t2.get_total(), t2.get_avail() + bsize); // dummy txc expected
+  t2->db_flush_trigger_count = 0;
+  t2->replay(true, submit_db_fn);
+  ASSERT_EQ(t2->get_total(), t2->get_avail() + bsize); // dummy txc expected
   ASSERT_EQ(db_submit_cnt, 10);
   for (size_t i = 0; i < (size_t)db_submit_cnt; i++) {
     if (db_submit_data[i] != transactions[i]) {
@@ -768,7 +777,7 @@ TEST(BlueStoreWAL, basic_replay) {
     }
     ASSERT_EQ(db_submit_data[i], transactions[i]);
   }
-  ASSERT_EQ(flush_cnt, 1);
+  ASSERT_EQ(t2->db_flush_trigger_count, 1);
   ASSERT_EQ(
     + 1 // block for txc1
     + 2 // 2 blocks for txc2: head + tail
@@ -779,60 +788,61 @@ TEST(BlueStoreWAL, basic_replay) {
     + 2 // 2 blocks at page 2 for txc 6 & 7 & 8
     + 2 // 2 blocks at page 2 for txc 9 & 10
     + page_count,
-    t2.reads.size());
-  ASSERT_EQ(4, t2.writes.size()); //3 pages wiped + dummy txc
+    t2->reads.size());
+  ASSERT_EQ(4, t2->writes.size()); //3 pages wiped + dummy txc
 
-  t2.writes.clear();
-  t2.reads.clear();
+  t2->writes.clear();
+  t2->reads.clear();
   db_submit_data.clear();
-  flush_cnt = 0;
+  t2->db_flush_trigger_count = 0;
   db_submit_cnt = 0;
-  t2.shutdown(flush_db_fn);
-  ASSERT_EQ(flush_cnt, 1);
-  ASSERT_EQ(0, t2.writes.size());
+  t2->shutdown();
+  ASSERT_EQ(t2->db_flush_trigger_count, 1);
+  ASSERT_EQ(0, t2->writes.size());
 
   db_submit_cnt = 0;
-  flush_cnt = 0;
-  t2.replay(true, submit_db_fn, flush_db_fn);
-  ASSERT_EQ(t2.get_total(), t2.get_avail() + bsize); //dummy txc expected
+  t2->db_flush_trigger_count = 0;
+  t2->replay(true, submit_db_fn);
+  ASSERT_EQ(t2->get_total(), t2->get_avail() + bsize); //dummy txc expected
   ASSERT_EQ(db_submit_cnt, 0);
-  ASSERT_EQ(flush_cnt, 0);
+  ASSERT_EQ(t2->db_flush_trigger_count, 0);
   ASSERT_EQ(
     + 1 // 1 dummy txc block
     + 1 // 1 unused block at the end
     + page_count,
-    t2.reads.size());
+    t2->reads.size());
 
   {
     // yet another new instance for the same WAL
-    BluestoreWALTester t3(g_ceph_context,
+    t3 = new BluestoreWALTester(g_ceph_context,
+      nullptr,
       nullptr,
       uuid,
       psize * 4,
       psize,
       bsize);
-    t3.init_add_pages(0, t3.get_page_size() * 4);
-    t3.init_add_pages(1ull << 16, t3.get_page_size() * 3);
-    t3.init_add_pages(1ull << 24, t3.get_page_size() * 1);
-    t2.clone_content(t3);
+    t3->init_add_pages(0, t3->get_page_size() * 4);
+    t3->init_add_pages(1ull << 16, t3->get_page_size() * 3);
+    t3->init_add_pages(1ull << 24, t3->get_page_size() * 1);
+    t2->clone_content(*t3);
 
     db_submit_cnt = 0;
-    flush_cnt = 0;
-    t3.replay(true, submit_db_fn, flush_db_fn);
-    ASSERT_EQ(t3.get_total(), t3.get_avail() + bsize); //dummy txc expected
+    t3->db_flush_trigger_count = 0;
+    t3->replay(true, submit_db_fn);
+    ASSERT_EQ(t3->get_total(), t3->get_avail() + bsize); //dummy txc expected
     ASSERT_EQ(db_submit_cnt, 0);
-    ASSERT_EQ(flush_cnt, 0);
+    ASSERT_EQ(t3->db_flush_trigger_count, 0);
     ASSERT_EQ(
       + 1 // 1 dummy txc block
       + 1 // 1 unused block at the end
       + page_count,
-      t3.reads.size());
+      t3->reads.size());
 
-    t3.advertise_and_log(&txc);
-    txc.on_write_done(&t3);
-    ASSERT_EQ(1, t3.completed_writes.size());
-    ASSERT_EQ(&txc, t3.completed_writes[0].second);
-    ASSERT_EQ(6, t3.completed_writes[0].first); // cur_page_seqno = 6
+    t3->advertise_and_log(&txc);
+    txc.on_write_done(t3);
+    ASSERT_EQ(1, t3->completed_writes.size());
+    ASSERT_EQ(&txc, t3->completed_writes[0].second);
+    ASSERT_EQ(6, t3->completed_writes[0].first); // cur_page_seqno = 6
   }
 }
 
