@@ -229,11 +229,8 @@ using bptr_c_it_t = buffer::ptr::const_iterator;
 class BlueWALContext {
   void* wal_op_ctx = nullptr;   ///< opaque WAL I/O context
   uint64_t wal_seq = 0;         ///< WAL seq to return back once txc is committed
-protected:
-  BlueStore* store = nullptr;
 
 public:
-  BlueWALContext(BlueStore* _store) : store(_store) {}
   virtual ~BlueWALContext() {}
   virtual IOContext* get_ioc() = 0;
   virtual const std::string& get_payload() = 0;
@@ -253,6 +250,7 @@ public:
   virtual void wal_aio_finish() = 0;
 };
 class BlueWALContextSync : public BlueWALContext {
+  BlueStore* store;
   IOContext ioc;
   KeyValueDB::Transaction t;
   std::condition_variable_any cond;
@@ -263,7 +261,7 @@ public:
   BlueWALContextSync(CephContext* cct,
                      BlueStore* _store,
                      KeyValueDB::Transaction _t)
-    : BlueWALContext(_store),
+    : store(_store),
       ioc(cct, nullptr, false),
       t(_t) {
     store = _store;
@@ -311,7 +309,7 @@ public:
   typedef boost::intrusive_ptr<Collection> CollectionRef;
 
   struct AioContext {
-    virtual void aio_finish(BlueStore *store) = 0;
+    virtual void aio_finish() = 0;
     virtual ~AioContext() {}
   };
 
@@ -1876,11 +1874,10 @@ private:
     ZTracer::Trace trace;
 #endif
 
-    explicit TransContext(CephContext* cct, BlueStore* _store, Collection *c,
+    explicit TransContext(CephContext* cct, Collection *c,
                           OpSequencer *o, KeyValueDB::Transaction _t,
 			  std::list<Context*> *on_commits)
-      : BlueWALContext(_store),
-        ch(c),
+      : ch(c),
 	osr(o),
 	t(_t),
 	ioc(cct, this),
@@ -1930,7 +1927,7 @@ private:
     }
 #endif
 
-    void aio_finish(BlueStore *store) override;
+    void aio_finish() override;
     void wal_aio_finish() override;
     IOContext* get_ioc() override {
       return &ioc;
@@ -2081,8 +2078,9 @@ private:
 		       uint64_t seq, uint64_t offset, uint64_t length,
 		       ceph::buffer::list::const_iterator& p);
 
-    void aio_finish(BlueStore *store) override {
-      store->_deferred_aio_finish(osr);
+    void aio_finish() override {
+      ceph_assert(osr->store);
+      osr->store->_deferred_aio_finish(osr);
     }
   };
 

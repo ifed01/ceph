@@ -61,6 +61,34 @@ struct bluewal_head_t {
 };
 WRITE_CLASS_DENC(bluewal_head_t)
 
+class BluestoreWAL;
+class WALAsyncOpThread : public Thread {
+  std::atomic<bool> do_stop = false;
+  ceph::mutex lock = ceph::make_mutex("WALAsyncOpThread::lock");
+  ceph::condition_variable cond;
+
+  void *entry() override;
+protected:
+  BluestoreWAL& wal;
+  virtual void do_op();
+public:
+  explicit WALAsyncOpThread(BluestoreWAL& _wal) : wal(_wal) {}
+
+  void trigger_op() {
+    std::unique_lock l(lock);
+    cond.notify_all();
+  }
+  void stop() {
+    {
+      std::unique_lock l(lock);
+      do_stop = true;
+      cond.notify_all();
+    }
+    join();
+    do_stop = false;
+  }
+};
+
 class BluestoreWAL {
 protected:
   static const size_t MAX_TXCS_PER_OP = 16;
@@ -109,6 +137,8 @@ protected:
 
   CephContext* cct = nullptr;
   BlockDevice* bdev = nullptr;
+  KeyValueDB* db = nullptr;
+  WALAsyncOpThread flush_thread;
 
   uuid_d uuid;
   uint64_t total = 0;
@@ -279,6 +309,7 @@ protected:
 
   PerfCounters* logger = nullptr;
 
+  bool sync_flush = false;
 protected:
   void assess_payload(const chest_t& chest, size_t* _need_pages);
   bool init_op(const chest_t& chest, size_t* _need_pages, Op**);
@@ -308,6 +339,8 @@ protected:
 		   IOContext* ioc,
 		   bool buffered);
 
+  virtual void do_flush_db();
+
   void _finish_op(Op& op, bool deep);
   Op* _log(BlueWALContext* txc, bool force);
   void _prepare_txc_submit(bluewal_head_t& header,
@@ -335,6 +368,7 @@ public:
   BluestoreWAL(
     CephContext* _cct,
     BlockDevice* _bdev,
+    KeyValueDB* _db,
     const uuid_d& _uuid,
     uint64_t fsize = DEF_PAGE_SIZE,
     uint64_t psize = DEF_PAGE_SIZE,
@@ -356,8 +390,7 @@ public:
 
   int advertise_and_log(BlueWALContext* txc);
 
-  void submitted(BlueWALContext* txc,
-    std::function<void()> flush_db_fn);
+  void submitted(BlueWALContext* txc);
 
   // made virtual to be able to make UT stubs if needed
   virtual void aio_submit(IOContext* ioc) {
@@ -365,10 +398,11 @@ public:
   }
   void aio_finish(BlueWALContext* txc);
 
-  void shutdown(std::function<void()> flush_db_fn);
+  void shutdown();
   int replay(bool wipe_on_complete,
-    std::function<int(const std::string&)> submit_db_fn,
-    std::function<void()> flush_db_fn);
+    std::function<int(const std::string&)> submit_db_fn);
+
+  void flush_db();
 
   uint64_t get_total() const {
     return total;
@@ -384,6 +418,11 @@ public:
   }
   uint64_t get_header_size() const {
     return head_size;
+  }
+
+  //primarily for UT purposes
+  void set_sync_flush(bool b) {
+    sync_flush = b;
   }
 };
 
