@@ -939,26 +939,23 @@ int BlueWALContextSync::wal_submitted()
   ceph_assert(wal);
   int r = db->submit_transaction_sync(t);
   if (r >= 0) {
-    wal->submitted(this,
-      [&]() {
-        db->flush_all();
-      });
+    wal->submitted(this);
   }
   return r;
 }
 
-void BlueStore::TransContext::aio_finish(BlueStore *_store)
+void BlueStore::TransContext::aio_finish()
 {
-  ceph_assert(store);
-  store->txc_aio_finish(this);
+  ceph_assert(osr->store);
+  osr->store->txc_aio_finish(this);
 }
 
 void BlueStore::TransContext::wal_aio_finish()
 {
-  ceph_assert(store);
+  ceph_assert(osr->store);
   ceph_assert(state == STATE_GOING_WAL);
   set_state(TransContext::STATE_WAL_DONE);
-  store->txc_aio_finish(this);
+  osr->store->txc_aio_finish(this);
 }
 
 // Garbage Collector
@@ -4650,9 +4647,8 @@ bufferlist BlueStore::OmapIteratorImpl::value()
 
 static void aio_cb(void *priv, void *priv2)
 {
-  BlueStore *store = static_cast<BlueStore*>(priv);
   BlueStore::AioContext *c = static_cast<BlueStore::AioContext*>(priv2);
-  c->aio_finish(store);
+  c->aio_finish();
 }
 
 static void discard_cb(void *priv, void *priv2)
@@ -5688,14 +5684,15 @@ int BlueStore::_maybe_open_wal()
       (wal_ext.length % BluestoreWAL::DEF_PAGE_SIZE) == 0);
 
     ceph_assert(wal_ext.length != 0);
-    uint64_t flush_thr = wal_ext.length * cct->_conf->bluestore_wal_flush_ratio;
+    uint64_t flush_thrs = wal_ext.length * cct->_conf->bluestore_wal_flush_ratio;
     wal = new BluestoreWAL(
       cct,
       bdev,
+      db,
       fsid,
-      flush_thr);
+      flush_thrs);
     dout(1) << __func__ << " " << wal_ext << std::hex
-            << " flush threshold:" << flush_thr
+            << " flush threshold:" << flush_thrs
             << std::dec << dendl;
     wal->init_add_pages(wal_ext.offset, wal_ext.length);
   }
@@ -5705,10 +5702,7 @@ int BlueStore::_maybe_open_wal()
 void BlueStore::_close_wal()
 {
   if (wal) {
-    wal->shutdown(
-      [&]() {
-        db->flush_all();
-      });
+    wal->shutdown();
     delete wal;
     wal = nullptr;
   }
@@ -6928,9 +6922,6 @@ int BlueStore::_open_db(bool create,
           t->set_from_bytes(bytes);
           ++replay_cnt;
           return db->submit_transaction_sync(t);
-        },
-        [&]() {
-          db->flush_all();
         });
       dout(0) << __func__ << " wal replay returned:" << cpp_strerror(r)
               << " replayed txc:" << replay_cnt
@@ -12748,7 +12739,7 @@ BlueStore::TransContext *BlueStore::_txc_create(
   list<Context*> *on_commits,
   TrackedOpRef osd_op)
 {
-  TransContext *txc = new TransContext(cct, this, c, osr, db->get_transaction(),
+  TransContext *txc = new TransContext(cct, c, osr, db->get_transaction(),
     on_commits);
 
 #ifdef WITH_BLKIN
@@ -12906,7 +12897,6 @@ void BlueStore::_txc_state_proc(TransContext *txc)
       if (txc->had_ios) {
 	++txc->osr->txc_with_unstable_io;
       }
-
       throttle.log_state_latency(*txc, logger, l_bluestore_state_io_done_lat);
       if (wal) {
 	txc->set_state(TransContext::STATE_GOING_WAL);
@@ -13688,9 +13678,12 @@ void BlueStore::_kv_sync_thread()
 #if defined(WITH_LTTNG)
       auto sync_start = mono_clock::now();
 #endif
-      //FIXME: we don't need sync submit when BlueWAL is in use. May be consider different
-      // location for aux submissions coming with synct: deferred writes del, nid_max update etc?
       // submit synct synchronously (block and wait for it to commit)
+
+      //RocksDBStore::submit_transaction_sync falls back to async mode if
+      // disableWAL=true (applies to BlueWAL as well).
+      // Hence we're getting async txc submission when there is no embedded WAL
+      // Which is what we actually need anyway.
       int r = cct->_conf->bluestore_debug_omit_kv_commit ? 0 : _submit_transaction_sync(synct);
       ceph_assert(r == 0);
 
@@ -13763,11 +13756,13 @@ void BlueStore::_kv_sync_thread()
 	ceph::timespan dur_flush = after_flush - start;
 	ceph::timespan dur_kv = finish - after_flush;
 	ceph::timespan dur = finish - start;
-	dout(20) << __func__ << " committed " << committing_size
-	  << " cleaned " << deferred_size
-	  << " in " << dur
-	  << " (" << dur_flush << " flush + " << dur_kv << " kv commit)"
+        if (dur >= make_timespan(cct->_conf->bluestore_log_op_age)) {
+	  dout(8) << __func__ << " committed " << committing_size
+	    << " cleaned " << deferred_size
+	    << " in " << dur
+	    << " (" << dur_flush << " flush + " << dur_kv << " kv commit)"
 	  << dendl;
+        }
 	log_latency("kv_flush",
 	  l_bluestore_kv_flush_lat,
 	  dur_flush,
@@ -13824,10 +13819,7 @@ void BlueStore::_kv_finalize_thread()
       if (wal && !kv_committed.empty()) {
         // use the last txc to confirm all the previous wal pages
 	TransContext *txc = kv_committed.back();
-	wal->submitted(txc,
-	  [&]() {
-	    db->flush_all();
-	  });
+	wal->submitted(txc);
       }
       while (!kv_committed.empty()) {
 	TransContext *txc = kv_committed.front();
@@ -16953,7 +16945,9 @@ int BlueStore::_omap_setkeys(TransContext *txc,
     final_key.resize(base_key_len); // keep prefix
     final_key += key;
     dout(20) << __func__ << "  " << pretty_binary_string(final_key)
-	     << " <- " << key << dendl;
+	     << " <- " << key
+             << ", " << value.length() << " bytes"
+             << dendl;
     txc->t->set(prefix, final_key, value);
   }
   r = 0;
