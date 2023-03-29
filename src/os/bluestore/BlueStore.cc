@@ -12808,7 +12808,7 @@ void BlueStore::_txc_update_store_statfs(TransContext *txc)
   txc->statfs_delta.reset();
 }
 
-void BlueStore::_txc_queue_kv(TransContext *txc )
+void BlueStore::_txc_queue_kv(TransContext *txc)
 {
   txc->set_state(TransContext::STATE_KV_QUEUED);
   if (cct->_conf->bluestore_sync_submit_transaction) {
@@ -12824,9 +12824,9 @@ void BlueStore::_txc_queue_kv(TransContext *txc )
       // sequencer that is committing serially it is possible to keep
       // submitting new transactions fast enough that we get stuck doing
       // so.  the alternative is to block here... fixme?
-    /*} else if (txc->osr->txc_with_unstable_io) {
+    } else if (txc->osr->txc_with_unstable_io) {
       dout(20) << __func__ << " prior txc(s) with unstable ios "
-               << txc->osr->txc_with_unstable_io.load() << dendl;*/
+               << txc->osr->txc_with_unstable_io.load() << dendl;
     } else if (cct->_conf->bluestore_debug_randomize_serial_transaction &&
                rand() % cct->_conf->bluestore_debug_randomize_serial_transaction
                  == 0) {
@@ -12843,7 +12843,7 @@ void BlueStore::_txc_queue_kv(TransContext *txc )
       kv_sync_in_progress = true;
       kv_cond.notify_one();
     }
-    if (txc->get_state() != TransContext::STATE_KV_SUBMITTED_SYNC) {
+    if (txc->get_state() != TransContext::STATE_KV_SUBMITTED) {
       kv_queue_unsubmitted.push_back(txc);
       ++txc->osr->kv_committing_serially;
     }
@@ -12920,19 +12920,22 @@ void BlueStore::_txc_state_proc(TransContext *txc)
     case TransContext::STATE_WAL_DONE:
       throttle.log_state_latency(*txc, logger,
         l_bluestore_state_going_wal_lat);
-      //txc->set_state(TransContext::STATE_WAL_DONE);
+      txc->set_state(TransContext::STATE_WAL_DONE);
       //OpSequencer *osr = txc->osr.get();
-      //FIXME: std::lock_guard l(osr->qlock); ????
-      _txc_queue_kv(txc);
+      //FIXME: std::lock_guard l(osr->qlock);
+      if (txc->ch->commit_queue) {
+        txc->ch->commit_queue->queue(txc->oncommits);
+      } else {
+        finisher.queue(txc->oncommits);
+      }
       throttle.log_state_latency(*txc, logger, l_bluestore_state_wal_done_lat);
-      logger->tinc(l_bluestore_wal_commit_lat, mono_clock::now() - txc->start); //FIXME: remove?
-      dout(0) << __func__ << " " << txc << dendl;
-
-      return;
+      logger->tinc(l_bluestore_wal_commit_lat, mono_clock::now() - txc->start);
+      _txc_queue_kv(txc);
+       return;
     case TransContext::STATE_KV_SUBMITTED:
-    case TransContext::STATE_KV_SUBMITTED_SYNC:
       _txc_committed_kv(txc);
       // ** fall-thru **
+
     case TransContext::STATE_KV_DONE:
       throttle.log_state_latency(*txc, logger, l_bluestore_state_kv_done_lat);
       if (txc->deferred_txn) {
@@ -13145,12 +13148,7 @@ void BlueStore::_txc_apply_kv(TransContext *txc, bool sync_submit_transaction)
 
     int r = cct->_conf->bluestore_debug_omit_kv_commit ? 0 : db->submit_transaction(txc->t);
     ceph_assert(r == 0);
-    if (sync_submit_transaction) {
-      txc->set_state(TransContext::STATE_KV_SUBMITTED_SYNC);
-      _txc_committed_kv_ack(txc);
-    } else {
-      txc->set_state(TransContext::STATE_KV_SUBMITTED);
-    }
+    txc->set_state(TransContext::STATE_KV_SUBMITTED);
     if (txc->osr->kv_submitted_waiters) {
       std::lock_guard l(txc->osr->qlock);
       txc->osr->qcond.notify_all();
@@ -13181,14 +13179,24 @@ void BlueStore::_txc_apply_kv(TransContext *txc, bool sync_submit_transaction)
   }
 }
 
-void BlueStore::_txc_committed_kv_ack(TransContext *txc)
+void BlueStore::_txc_committed_kv(TransContext *txc)
 {
-  if (txc->ch->commit_queue) {
-    txc->ch->commit_queue->queue(txc->oncommits);
-  } else {
-    finisher.queue(txc->oncommits);
+  dout(20) << __func__ << " txc " << txc << dendl;
+  throttle.complete_kv(*txc);
+
+  {
+    if (!wal) {
+      std::lock_guard l(txc->osr->qlock);
+      txc->set_state(TransContext::STATE_KV_DONE);
+      if (txc->ch->commit_queue) {
+        txc->ch->commit_queue->queue(txc->oncommits);
+      } else {
+        finisher.queue(txc->oncommits);
+      }
+    }
   }
-  dout(0) << __func__ << " " << txc << dendl;
+
+  throttle.log_state_latency(*txc, logger, l_bluestore_state_kv_committing_lat);
   log_latency_fn(
     __func__,
     l_bluestore_commit_lat,
@@ -13198,20 +13206,6 @@ void BlueStore::_txc_committed_kv_ack(TransContext *txc)
       return ", txc = " + stringify(txc);
     }
   );
-}
-
-void BlueStore::_txc_committed_kv(TransContext *txc)
-{
-  dout(20) << __func__ << " txc " << txc << dendl;
-  throttle.complete_kv(*txc);
-  {
-    bool need_ack = txc->get_state() == TransContext::STATE_KV_SUBMITTED;
-    txc->set_state(TransContext::STATE_KV_DONE);
-    if (need_ack) {
-      _txc_committed_kv_ack(txc);
-    }
-  }
-  throttle.log_state_latency(*txc, logger, l_bluestore_state_kv_committing_lat);
 }
 
 void BlueStore::_txc_finish(TransContext *txc)
@@ -13652,8 +13646,7 @@ void BlueStore::_kv_sync_thread()
 	  _txc_apply_kv(txc, false);
 	  --txc->osr->kv_committing_serially;
 	} else {
-	  ceph_assert(txc->get_state() == TransContext::STATE_KV_SUBMITTED ||
-            txc->get_state() == TransContext::STATE_KV_SUBMITTED_SYNC);
+	  ceph_assert(txc->get_state() == TransContext::STATE_KV_SUBMITTED);
 	}
 	if (txc->had_ios) {
 	  --txc->osr->txc_with_unstable_io;
@@ -13830,8 +13823,7 @@ void BlueStore::_kv_finalize_thread()
       }
       while (!kv_committed.empty()) {
 	TransContext *txc = kv_committed.front();
-        ceph_assert(txc->get_state() == TransContext::STATE_KV_SUBMITTED ||
-          txc->get_state() == TransContext::STATE_KV_SUBMITTED_SYNC);
+	ceph_assert(txc->get_state() == TransContext::STATE_KV_SUBMITTED);
 	_txc_state_proc(txc);
 	kv_committed.pop_front();
       }
