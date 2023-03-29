@@ -1763,8 +1763,9 @@ private:
       STATE_IO_DONE,
       STATE_GOING_WAL,
       STATE_WAL_DONE,
-      STATE_KV_QUEUED,     // queued for kv_sync_thread submission
-      STATE_KV_SUBMITTED,  // submitted to kv; not yet synced
+      STATE_KV_QUEUED,          // queued for kv_sync_thread submission
+      STATE_KV_SUBMITTED,       // submitted to kv; not yet synced
+      STATE_KV_SUBMITTED_SYNC,  // submitted to kv; synced
       STATE_KV_DONE,
       STATE_DEFERRED_QUEUED,    // in deferred_queue (pending or running)
       STATE_DEFERRED_CLEANUP,   // remove deferred kv record
@@ -1782,6 +1783,7 @@ private:
       case STATE_WAL_DONE: return "wal_done";
       case STATE_KV_QUEUED: return "kv_queued";
       case STATE_KV_SUBMITTED: return "kv_submitted";
+      case STATE_KV_SUBMITTED_SYNC: return "kv_submitted_sync";
       case STATE_KV_DONE: return "kv_done";
       case STATE_DEFERRED_QUEUED: return "deferred_queued";
       case STATE_DEFERRED_CLEANUP: return "deferred_cleanup";
@@ -2809,6 +2811,7 @@ private:
   void _txc_finalize_kv(TransContext *txc, KeyValueDB::Transaction t);
   void _txc_apply_kv(TransContext *txc, bool sync_submit_transaction);
   void _txc_committed_kv(TransContext *txc);
+  void _txc_committed_kv_ack(TransContext *txc);
   void _txc_finish(TransContext *txc);
   void _txc_release_alloc(TransContext *txc);
 
