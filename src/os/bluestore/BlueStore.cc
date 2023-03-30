@@ -12824,9 +12824,9 @@ void BlueStore::_txc_queue_kv(TransContext *txc)
       // sequencer that is committing serially it is possible to keep
       // submitting new transactions fast enough that we get stuck doing
       // so.  the alternative is to block here... fixme?
-    } else if (txc->osr->txc_with_unstable_io) {
+    /*} else if (txc->osr->txc_with_unstable_io) {
       dout(20) << __func__ << " prior txc(s) with unstable ios "
-               << txc->osr->txc_with_unstable_io.load() << dendl;
+               << txc->osr->txc_with_unstable_io.load() << dendl;*/
     } else if (cct->_conf->bluestore_debug_randomize_serial_transaction &&
                rand() % cct->_conf->bluestore_debug_randomize_serial_transaction
                  == 0) {
