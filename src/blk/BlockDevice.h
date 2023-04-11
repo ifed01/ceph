@@ -177,6 +177,7 @@ protected:
   uint64_t size = 0;
   uint64_t block_size = 0;
   uint64_t optimal_io_size = 0;
+  uint64_t minimal_io_size = 0;
   bool support_discard = false;
   bool rotational = true;
   bool lock_exclusive = true;
@@ -236,6 +237,7 @@ public:
   uint64_t get_size() const { return size; }
   uint64_t get_block_size() const { return block_size; }
   uint64_t get_optimal_io_size() const { return optimal_io_size; }
+  uint64_t get_minimal_io_size() const { return minimal_io_size; }
 
   /// hook to provide utilization of thinly-provisioned device
   virtual int get_ebd_state(ExtBlkDevState &state) const {

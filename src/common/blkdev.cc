@@ -222,6 +222,11 @@ int BlkDev::get_optimal_io_size() const
 	return get_int_property("queue/optimal_io_size");
 }
 
+int BlkDev::get_minimal_io_size() const
+{
+	return get_int_property("queue/minimum_io_size");
+}
+
 bool BlkDev::is_rotational() const
 {
   return get_int_property("queue/rotational") > 0;
