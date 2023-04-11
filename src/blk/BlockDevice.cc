@@ -194,8 +194,8 @@ BlockDevice *BlockDevice::create(
 }
 
 bool BlockDevice::is_valid_io(uint64_t off, uint64_t len) const {
-  bool ret = (off % block_size == 0 &&
-    len % block_size == 0 &&
+  bool ret = (off % minimal_io_size == 0 &&
+    len % minimal_io_size == 0 &&
     len > 0 &&
     off < size &&
     off + len <= size);
@@ -203,7 +203,7 @@ bool BlockDevice::is_valid_io(uint64_t off, uint64_t len) const {
   if (!ret) {
     derr << __func__ << " " << std::hex
          << off << "~" << len
-         << " block_size " << block_size
+         << " minimal_io_size " << minimal_io_size
          << " size " << size
          << std::dec << dendl;
   }

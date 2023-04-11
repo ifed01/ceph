@@ -263,6 +263,7 @@ int KernelDevice::open(const string& p)
       rotational = blkdev_buffered.is_rotational();
       support_discard = blkdev_buffered.support_discard();
       optimal_io_size = blkdev_buffered.get_optimal_io_size();
+      minimal_io_size = blkdev_buffered.get_minimal_io_size();
       this->devname = devname;
       // check if any extended block device plugin recognizes this device
       // detect_vdo has moved into the VDO plugin
@@ -357,6 +358,7 @@ int KernelDevice::collect_metadata(const string& prefix, map<string,string> *pm)
   (*pm)[prefix + "size"] = stringify(get_size());
   (*pm)[prefix + "block_size"] = stringify(get_block_size());
   (*pm)[prefix + "optimal_io_size"] = stringify(get_optimal_io_size());
+  (*pm)[prefix + "minimal_io_size"] = stringify(get_minimal_io_size());
   (*pm)[prefix + "driver"] = "KernelDevice";
   if (rotational) {
     (*pm)[prefix + "type"] = "hdd";
