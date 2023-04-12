@@ -4924,6 +4924,14 @@ options:
   flags:
   - startup
   with_legacy: true
+- name: bluestore_wal_txc_merge_delay_nsec
+  type: uint
+  level: dev
+  desc: If non-zero txc is delayed to merge more txcs in a single batch and hence reduce WAL write amplification
+  default: 10000
+  flags:
+  - create
+  with_legacy: true
 - name: bluestore_allocator
   type: str
   level: advanced

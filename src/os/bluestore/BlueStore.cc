@@ -12861,9 +12861,6 @@ void BlueStore::_txc_state_proc(TransContext *txc)
     switch (txc->get_state()) {
     case TransContext::STATE_PREPARE:
       throttle.log_state_latency(*txc, logger, l_bluestore_state_prepare_lat);
-      if (wal) {
-        wal->advertise_future_op();
-      }
       if (txc->ioc.has_pending_aios()) {
 	txc->set_state(TransContext::STATE_AIO_WAIT);
 #ifdef WITH_BLKIN
@@ -14504,6 +14501,9 @@ int BlueStore::queue_transactions(
     handle->reset_tp_timeout();
 
   logger->inc(l_bluestore_txc);
+  if (wal) {
+    wal->advertise_future_op();
+  }
 
   // execute (start)
   _txc_state_proc(txc);
