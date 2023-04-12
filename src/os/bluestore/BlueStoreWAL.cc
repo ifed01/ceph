@@ -70,8 +70,12 @@ enum {
   l_bluestore_wal_match_miss_ops,
   l_bluestore_wal_wipe_bytes,
   l_bluestore_wal_knocking_avg,
+  l_bluestore_wal_submit_lat,
   l_bluestore_wal_queued_lat,
+  l_bluestore_wal_aio_lat,
+  l_bluestore_wal_aio_done_lat,
   l_bluestore_wal_aio_finish_lat,
+  l_bluestore_wal_aio_finish_misordered,
   l_bluestore_wal_flush_lat,
   l_bluestore_wal_last
 };
@@ -129,12 +133,20 @@ BluestoreWAL::BluestoreWAL(CephContext* _cct,
 
     b.add_u64_counter(l_bluestore_wal_wipe_bytes, "wipe_bytes",
       "Byte count written by WAL to disk when wiping");
-    b.add_time_avg(l_bluestore_wal_aio_finish_lat, "aio_finish_lat",
-      "Average aio_finish latency");
-    b.add_u64_avg(l_bluestore_wal_knocking_avg, "knocking_avg",
-      "Average amount of ops acquiring entrance lock");
+    b.add_time_avg(l_bluestore_wal_submit_lat, "submit_lat",
+      "Average submit latency");
     b.add_time_avg(l_bluestore_wal_queued_lat, "queued_lat",
       "Average queued latency");
+    b.add_time_avg(l_bluestore_wal_aio_lat, "aio_lat",
+      "Average aio latency");
+    b.add_time_avg(l_bluestore_wal_aio_done_lat, "aio_done_lat",
+      "Average ordered aio latency");
+    b.add_time_avg(l_bluestore_wal_aio_finish_lat, "aio_finish_lat",
+      "Average aio_finish latency");
+    b.add_u64_counter(l_bluestore_wal_aio_finish_misordered, "aio_finish_mis",
+      "");
+    b.add_u64_avg(l_bluestore_wal_knocking_avg, "knocking_avg",
+      "Average amount of ops acquiring entrance lock");
     b.add_time_avg(l_bluestore_wal_flush_lat, "flush_lat",
       "Average DB flushing latency");
 
@@ -353,6 +365,7 @@ void BluestoreWAL::aio_finish(BlueWALContext* txc)
   ceph_assert(txc->get_ioc()->num_running == 0);
   txc->get_ioc()->release_running_aios();
   Op& op = *static_cast<Op*>(txc->get_wal_op_ctx());
+  logger->tinc(l_bluestore_wal_aio_lat, mono_clock::now() - op.io_start);
   txc->set_wal_op_ctx(nullptr);
   dout(7) << __func__ << " Op " << op.op_seqno
           << " min Op  " << min_pending_io_seqno << dendl;
@@ -366,12 +379,16 @@ void BluestoreWAL::aio_finish(BlueWALContext* txc)
       flush_cond.notify_all();
       l.unlock();
     }
+  } else {
+    logger->inc(l_bluestore_wal_aio_finish_misordered);
   }
   logger->tinc(l_bluestore_wal_aio_finish_lat, mono_clock::now() - t0);
 }
 
 void BluestoreWAL::_finish_op(Op& op, bool deep)
 {
+  logger->tinc(l_bluestore_wal_aio_done_lat, mono_clock::now() - op.io_start);
+
   ceph_assert(!op.running);
   ceph_assert(op.op_seqno == min_pending_io_seqno);
   dout(7) << __func__ << " processing Op " << op.op_seqno
@@ -533,10 +550,12 @@ int BluestoreWAL::log(BlueWALContext* txc, bool force)
 {
   ceph_assert(txc);
   ceph_assert(!txc->get_wal_op_ctx());
-
   Op* op = _log(txc, false);
   if (op) {
+    logger->tinc(l_bluestore_wal_submit_lat,
+      mono_clock::now() - op->birth_time);
     txc->set_wal_op_ctx(op);
+    op->io_start = mono_clock::now();
     aio_submit(txc->get_ioc());
     return 0;
   }
@@ -553,6 +572,7 @@ int BluestoreWAL::log_submit_sync(BlueWALContextSync* txc)
   Op* op = _log(txc, true);
   if (op) {
     txc->set_wal_op_ctx(op);
+    op->io_start = mono_clock::now();
     auto* ioc = txc->get_ioc();
     bdev->aio_submit(ioc);
     ioc->aio_wait();
@@ -574,6 +594,7 @@ int BluestoreWAL::log_submit_sync(BlueWALContextSync* txc)
 
 BluestoreWAL::Op* BluestoreWAL::_log(BlueWALContext* txc, bool force)
 {
+  auto birth_time = mono_clock::now();
   auto& t = txc->get_payload();
   size_t t_len = t.length();
   dout(7) << __func__ << " txc " << txc
@@ -636,6 +657,7 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueWALContext* txc, bool force)
       mono_clock::now() - t0);
   }
   auto& op = *op_ptr;
+  op.birth_time = birth_time;
 
   size_t chest_pos = 0;
   size_t txc_size = 0;
