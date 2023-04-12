@@ -10579,6 +10579,8 @@ void BlueStore::collect_metadata(map<string,string> *pm)
       (*pm)["objectstore_numa_node"] = stringify(node);
     }
   }
+  (*pm)["bluestore_wal"] = \
+    stringify((uint64_t)(wal ? wal->get_total() : 0));
   (*pm)["bluestore_min_alloc_size"] = stringify(min_alloc_size);
 }
 
