@@ -605,9 +605,15 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueWALContext* txc, bool force)
   logger->inc(l_bluestore_wal_input_avg, t_len);
   chest_t my_chest;
   {
-    std::unique_lock l(gate_lock);
     ceph_assert(future_ops);
     --future_ops;
+    auto merge_delay = cct->_conf->bluestore_wal_txc_merge_delay_nsec;
+    if (!force && !future_ops && merge_delay &&
+        gate_chest.get_entry_count() == 0) {
+      const timespec ts = {0, merge_delay};
+      nanosleep(&ts, nullptr);
+    }
+    std::unique_lock l(gate_lock);
     // We can temporarily store op in the chest if more ops to come.
     // Last op or absence of space in the chest will force pending ops to go.
     // The rationale is to try to merge multiple ops into a single
