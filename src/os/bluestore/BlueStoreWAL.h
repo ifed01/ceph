@@ -99,6 +99,9 @@ protected:
     uint64_t wiping_pages = 0;
     bool running = false;
     size_t num_txcs = 0;
+    mono_clock::time_point io_start;
+    mono_clock::time_point birth_time;
+
     BlueWALContext* txc[MAX_TXCS_PER_OP] = {nullptr};
 
     void run(uint64_t wp, uint64_t pseq, BlueWALContext* _txc) {
