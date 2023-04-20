@@ -2140,7 +2140,7 @@ void RocksDBStore::flush_all()
 {
   utime_t start = ceph_clock_now();
   rocksdb::FlushOptions options;
-
+  options.allow_write_stall = true; //FIXME: make configurable
   db->Flush(options);
   if (!all_cf_handles.empty()) {
     db->Flush(options, all_cf_handles);
