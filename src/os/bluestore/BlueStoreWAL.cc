@@ -64,6 +64,8 @@ enum {
   l_bluestore_wal_input_avg,
   l_bluestore_wal_pad_bytes,
   l_bluestore_wal_output_avg,
+  l_bluestore_wal_throttle_avg,
+  l_bluestore_wal_merge_avg,
   l_bluestore_wal_chest_avg,
   l_bluestore_wal_matched_ops,
   l_bluestore_wal_not_matched_ops,
@@ -121,6 +123,10 @@ BluestoreWAL::BluestoreWAL(CephContext* _cct,
       "Byte count added as padding when writing to WAL");
     b.add_u64_avg(l_bluestore_wal_output_avg, "output_avg",
       "Writes average submitted to disk");
+    b.add_time_avg(l_bluestore_wal_throttle_avg, "throttle_avg",
+      "Average throttled latency");
+    b.add_time_avg(l_bluestore_wal_merge_avg, "merge_avg",
+      "Average merging delay latency");
     b.add_u64_avg(l_bluestore_wal_chest_avg, "chest_avg",
       "Average ops submitted to WAL per batch (excluding single item batches)");
     b.add_u64_counter(l_bluestore_wal_matched_ops, "matched_ops",
@@ -218,6 +224,12 @@ bool BluestoreWAL::init_op(const chest_t& chest, size_t* _need_pages, Op** op)
     non_wiped_avail_pages = last_committed_page_seqno - last_wiping_page_seqno;
   }
   if (avail_pages + non_wiped_avail_pages < *_need_pages) {
+    dout(7) << __func__
+            << " waiting on avail pages: "
+            << avail_pages << " non-wiped avail pages: "
+            << non_wiped_avail_pages << " need pages: "
+            << *_need_pages
+            << dendl;
     return false;
   }
 
@@ -607,11 +619,46 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueWALContext* txc, bool force)
   {
     ceph_assert(future_ops);
     --future_ops;
-    auto merge_delay = cct->_conf->bluestore_wal_txc_merge_delay_nsec;
-    if (!force && !future_ops && merge_delay &&
-        gate_chest.get_entry_count() == 0) {
-      const timespec ts = {0, merge_delay};
-      nanosleep(&ts, nullptr);
+
+    if(!force) {
+      uint64_t wait_nsec = 0;
+      uint64_t throttled_space = get_total() *
+        (1 - cct->_conf->bluestore_wal_throttle_enable_threshold);
+      if (throttled_space > get_avail()) {
+        wait_nsec =
+          cct->_conf->bluestore_wal_throttle_max_delay_nsec;
+        if (get_avail()) {
+          uint64_t base_thottle_nsec =
+            cct->_conf->bluestore_wal_throttle_base_delay_nsec;
+          double r_pct = (double)get_avail() / throttled_space;
+          double k = 1 / (r_pct * r_pct);
+          wait_nsec = std::min(
+            wait_nsec,
+            uint64_t(base_thottle_nsec * k));
+        }
+        /*FIXME: may be log long lasting throttling?
+          if (wait_nsec > 10000000) {
+          dout(0) << __func__ << " throttling " << txc << " "
+                  << wait_nsec << " nsec "
+                  << " avail = " << get_avail()
+                  << dendl;
+        }*/
+        logger->tinc(l_bluestore_wal_throttle_avg,
+          utime_t(0, wait_nsec));
+      }
+      if (!future_ops && !wait_nsec) {
+        uint64_t merge_delay =
+          cct->_conf->bluestore_wal_txc_merge_delay_nsec;
+        if(merge_delay && gate_chest.get_entry_count() == 0) {
+          wait_nsec = merge_delay;
+          logger->tinc(l_bluestore_wal_merge_avg,
+            utime_t(0, wait_nsec));
+        }
+      }
+      if (wait_nsec) {
+        timespec ts(wait_nsec/1000000000, wait_nsec%1000000000);
+        nanosleep(&ts, nullptr);
+      }
     }
     std::unique_lock l(gate_lock);
     // We can temporarily store op in the chest if more ops to come.
@@ -659,6 +706,10 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueWALContext* txc, bool force)
            << " Op " << op_ptr->op_seqno
            << dendl;
   if (was_queued) {
+    dout(10) << __func__ << " pending in queue for "
+             << mono_clock::now() - t0
+             << dendl;
+
     logger->tinc(l_bluestore_wal_queued_lat,
       mono_clock::now() - t0);
   }
