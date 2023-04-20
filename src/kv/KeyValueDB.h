@@ -131,6 +131,11 @@ public:
       const ceph::buffer::list  &value     ///< [in] value to be merged into key
     ) { ceph_abort_msg("Not implemented"); }
 
+    // put log record in txc batch
+    virtual void log(const ceph::bufferlist &bl) {
+      ceph_abort_msg("Not implemented");
+    }
+
     virtual ~TransactionImpl() {}
     // This assumes transaction is valid during
     // the life of the out buffer .

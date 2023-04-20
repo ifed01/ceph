@@ -1856,6 +1856,19 @@ void RocksDBStore::RocksDBTransactionImpl::merge(
   }
 }
 
+void RocksDBStore::RocksDBTransactionImpl::log(const ceph::bufferlist &bl)
+{
+  // bufferlist::c_str() is non-constant, so we can't call c_str()
+  if (bl.is_contiguous() && bl.length() > 0) {
+    bat.PutLogData(rocksdb::Slice(bl.buffers().front().c_str(),
+		   bl.length()));
+  } else {
+    bufferlist bl_cont(bl);
+    bat.PutLogData(rocksdb::Slice(bl_cont.c_str(),
+		   bl_cont.length()));
+  }
+}
+
 const std::string& RocksDBStore::RocksDBTransactionImpl::get_as_bytes()
 {
   return bat.Data();
