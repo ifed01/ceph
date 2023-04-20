@@ -136,6 +136,10 @@ public:
       ceph_abort_msg("Not implemented");
     }
 
+    virtual void iterate(TransactionImpl *target) {
+      ceph_abort_msg("Not implemented");
+    }
+
     virtual ~TransactionImpl() {}
     // This assumes transaction is valid during
     // the life of the out buffer .
