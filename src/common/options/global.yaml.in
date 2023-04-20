@@ -4932,6 +4932,30 @@ options:
   flags:
   - create
   with_legacy: true
+- name: bluestore_wal_throttle_base_delay_nsec
+  type: uint
+  level: dev
+  desc: Base delay used by BlueWAL throttle
+  default: 100000
+  flags:
+  - create
+  with_legacy: true
+- name: bluestore_wal_throttle_max_delay_nsec
+  type: uint
+  level: dev
+  desc: Maximum delay used by BlueWAL throttle
+  default: 500000000
+  flags:
+  - create
+  with_legacy: true
+- name: bluestore_wal_throttle_enable_threshold
+  type: float
+  level: dev
+  desc: WAL utilization ratio threshold to enable throttling
+  default: 0.5
+  flags:
+  - create
+  with_legacy: true
 - name: bluestore_allocator
   type: str
   level: advanced
