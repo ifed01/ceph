@@ -1869,6 +1869,27 @@ void RocksDBStore::RocksDBTransactionImpl::log(const ceph::bufferlist &bl)
   }
 }
 
+void RocksDBStore::RocksDBTransactionImpl::iterate(TransactionImpl *_target) {
+  struct BatchObserver : public rocksdb::WriteBatch::Handler {
+      BatchObserver(TransactionImpl *t) : target(t){}
+
+      //rocksdb::WriteBatch::Handler overrides
+
+      // TODO to implement: we might want to implement other methods from
+      // WriteBatch::Handler later. Omitting as they're not used for now.
+      //
+
+      void LogData(const rocksdb::Slice& blob) override {
+        bufferlist bl;
+        bl.append(blob.data(), blob.size());
+        target->log(bl);
+      }
+    private:
+      TransactionImpl* target;
+  } h(_target) ;
+  bat.Iterate(&h);
+}
+
 const std::string& RocksDBStore::RocksDBTransactionImpl::get_as_bytes()
 {
   return bat.Data();
