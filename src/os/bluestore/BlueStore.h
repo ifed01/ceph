@@ -229,6 +229,7 @@ using bptr_c_it_t = buffer::ptr::const_iterator;
 class BlueWALContext {
   void* wal_op_ctx = nullptr;   ///< opaque WAL I/O context
   uint64_t wal_seq = 0;         ///< WAL seq to return back once txc is committed
+  uint64_t wal_tseq = 0;        ///< WAL txc seqno associated with the context
 
 public:
   virtual ~BlueWALContext() {}
@@ -244,8 +245,14 @@ public:
   void set_wal_seq(uint64_t seq) {
     wal_seq = seq;
   }
+  void set_wal_tseq(uint64_t seq) {
+    wal_tseq = seq;
+  }
   uint64_t get_wal_seq() {
     return wal_seq;
+  }
+  uint64_t get_wal_tseq() {
+    return wal_tseq;
   }
   virtual void wal_aio_finish() = 0;
 };
