@@ -410,6 +410,7 @@ void BluestoreWAL::_finish_op(Op& op, bool deep)
   for (size_t i = 0; i < op.num_txcs; i++) {
     ceph_assert(op.txc[i]);
     op.txc[i]->set_wal_seq(op.page_seqno);
+    dout(15) << __func__ << " txc aio_finish tseq " << op.txc[i]->get_wal_tseq() << dendl;
     op.txc[i]->wal_aio_finish();
   }
   if (op.wiping_pages) {
@@ -455,8 +456,9 @@ void BluestoreWAL::_prepare_txc_submit(bluewal_head_t& header,
                                        bufferlist& bl)
 {
   auto& t = txc->get_payload();
+  txc->set_wal_tseq(++cur_txc_seqno);
   size_t t_len = t.length();
-  auto csum = ceph_crc32c(++cur_txc_seqno,
+  auto csum = ceph_crc32c(cur_txc_seqno,
     (const unsigned char*)t.c_str(),
     t_len);
 
@@ -475,10 +477,11 @@ void BluestoreWAL::_submit_huge_txc(bluewal_head_t& header,
                                         size_t pages)
 {
   auto& t = txc->get_payload();
+  txc->set_wal_tseq(++cur_txc_seqno);
   size_t t_len = t.size();
   const char* cptr = t.c_str();
   size_t max_t_len = page_size - head_size;
-  auto csum = ceph_crc32c(++cur_txc_seqno, (const unsigned char*)cptr, t_len);
+  auto csum = ceph_crc32c(cur_txc_seqno, (const unsigned char*)cptr, t_len);
 
   // first transaction's header keeps csum and len for the whole payload
   header.csum = csum;
@@ -839,7 +842,7 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueWALContext* txc, bool force)
 void BluestoreWAL::submitted(BlueWALContext* txc)
 {
   // txc's wal seqno indicates all the preceeding pages have been submitted,
-  // while the bound one is still being submitted (i.e. busy)
+  // while the bound one is still 1being submitted (i.e. busy)
   // we might get multiple confirmations for the same current page,
   // just ignore repeated/outdated ones.
 
@@ -1082,8 +1085,8 @@ int BluestoreWAL::replay(bool wipe_on_complete,
             dout(15) << __func__ << " dummy txc found."
                      << dendl;
           }
-          read_next = o < last_offset;
           pos = p.get_off();
+          read_next = pos < last_offset;
         }
       } catch (ceph::buffer::error& e) {
         std::string next_step;
