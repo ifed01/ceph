@@ -6916,7 +6916,7 @@ int BlueStore::_open_db(bool create,
       auto t = db->get_transaction();
       size_t replay_cnt = 0;
       int r = wal->replay(
-        true,
+        !restricted,
         [&](const std::string& bytes) {
           auto t = db->get_transaction();
           t->set_from_bytes(bytes);
