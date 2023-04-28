@@ -3473,7 +3473,7 @@ private:
     const ceph::buffer::list& bl,
     uint64_t logical_offset) const;
   int _decompress(ceph::buffer::list& source, ceph::buffer::list* result);
-  int _submit_transaction_sync(KeyValueDB::Transaction t);
+  int _submit_transaction_sync(KeyValueDB::Transaction t, bool nonempty_txn = true);
 
   // --------------------------------------------------------
   // write ops
