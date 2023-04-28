@@ -5720,7 +5720,7 @@ int BlueStore::_maybe_open_wal()
 void BlueStore::_close_wal()
 {
   if (wal) {
-    wal->shutdown();
+    wal->shutdown(db_was_restricted);
     delete wal;
     wal = nullptr;
   }
@@ -6881,6 +6881,7 @@ int BlueStore::_open_db(bool create,
     read_only = true;
   }
   db_was_opened_read_only = read_only;
+  db_was_restricted = restricted;
 
   if (!read_only) {
     r = _maybe_open_wal();
@@ -6934,7 +6935,7 @@ int BlueStore::_open_db(bool create,
       auto t = db->get_transaction();
       size_t replay_cnt = 0;
       int r = wal->replay(
-        !restricted,
+        restricted,
         [&](const std::string& bytes) {
           auto t = db->get_transaction();
           t->set_from_bytes(bytes);

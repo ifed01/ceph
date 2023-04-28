@@ -401,8 +401,8 @@ public:
   }
   void aio_finish(BlueWALContext* txc);
 
-  void shutdown();
-  int replay(bool wipe_on_complete,
+  void shutdown(bool restricted);
+  int replay(bool restricted,
     std::function<int(const std::string&)> submit_db_fn);
 
   void flush_db();

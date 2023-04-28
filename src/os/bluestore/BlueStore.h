@@ -2300,6 +2300,7 @@ private:
 
   // store open_db options:
   bool db_was_opened_read_only = true;
+  bool db_was_restricted = true;
   bool need_to_destage_allocation_file = false;
 
   ///< rwlock to protect coll_map/new_coll_map

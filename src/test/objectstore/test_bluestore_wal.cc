@@ -179,13 +179,13 @@ public:
 class BlueWALTest : public virtual ::testing::Test {
   void TearDown() override {
     if (t) {
-      t->shutdown();
+      t->shutdown(false);
     }
     if (t2) {
-      t2->shutdown();
+      t2->shutdown(false);
     }
     if (t3) {
-      t3->shutdown();
+      t3->shutdown(false);
     }
   }
 public:
@@ -677,12 +677,12 @@ TEST_F(BlueWALTest, basic_replay) {
     return 0;
   };
 
-  t->shutdown();
+  t->shutdown(false);
   ASSERT_EQ(t->db_flush_trigger_count, 1);
 
   db_submit_cnt = 0;
   t->db_flush_trigger_count = 0;
-  t->replay(true, submit_db_fn);
+  t->replay(false, submit_db_fn);
   ASSERT_EQ(t->get_total(), t->get_avail());
   ASSERT_EQ(db_submit_cnt, 0);
   ASSERT_EQ(t->db_flush_trigger_count, 0);
@@ -759,7 +759,7 @@ TEST_F(BlueWALTest, basic_replay) {
   txc.on_write_done(t);
 
   t->db_flush_trigger_count = 0;
-  t->shutdown();
+  t->shutdown(false);
   std::cout << t << std::endl;
   ASSERT_EQ(t->db_flush_trigger_count, 1);
 
@@ -768,7 +768,7 @@ TEST_F(BlueWALTest, basic_replay) {
 
   db_submit_cnt = 0;
   t2->db_flush_trigger_count = 0;
-  t2->replay(true, submit_db_fn);
+  t2->replay(false, submit_db_fn);
   ASSERT_EQ(t2->get_total(), t2->get_avail() + bsize); // dummy txc expected
   ASSERT_EQ(db_submit_cnt, 10);
   for (size_t i = 0; i < (size_t)db_submit_cnt; i++) {
@@ -796,13 +796,13 @@ TEST_F(BlueWALTest, basic_replay) {
   db_submit_data.clear();
   t2->db_flush_trigger_count = 0;
   db_submit_cnt = 0;
-  t2->shutdown();
+  t2->shutdown(false);
   ASSERT_EQ(t2->db_flush_trigger_count, 1);
   ASSERT_EQ(0, t2->writes.size());
 
   db_submit_cnt = 0;
   t2->db_flush_trigger_count = 0;
-  t2->replay(true, submit_db_fn);
+  t2->replay(false, submit_db_fn);
   ASSERT_EQ(t2->get_total(), t2->get_avail() + bsize); //dummy txc expected
   ASSERT_EQ(db_submit_cnt, 0);
   ASSERT_EQ(t2->db_flush_trigger_count, 0);
@@ -828,7 +828,7 @@ TEST_F(BlueWALTest, basic_replay) {
 
     db_submit_cnt = 0;
     t3->db_flush_trigger_count = 0;
-    t3->replay(true, submit_db_fn);
+    t3->replay(false, submit_db_fn);
     ASSERT_EQ(t3->get_total(), t3->get_avail() + bsize); //dummy txc expected
     ASSERT_EQ(db_submit_cnt, 0);
     ASSERT_EQ(t3->db_flush_trigger_count, 0);
