@@ -846,6 +846,143 @@ TEST_F(BlueWALTest, basic_replay) {
   }
 }
 
+TEST_F(BlueWALTest, replay_page_spanning) {
+  uuid_d uuid;
+  uuid.generate_random();
+
+  BlueWALTestContext txc;
+  BlueWALTestContext txc2;
+  BlueWALTestContext txc3;
+  BlueWALTestContext txc4;
+  BlueWALTestContext txc5;
+  BlueWALTestContext txc6;
+  BlueWALTestContext txc7;
+  BlueWALTestContext txc8;
+  BlueWALTestContext txc9;
+  BlueWALTestContext txc10;
+
+  std::vector<std::string> transactions;
+
+  uint64_t psize = 1024;
+  uint64_t bsize = 256;
+  size_t page_count = 2;
+  t = new BluestoreWALTester(g_ceph_context,
+    nullptr,
+    nullptr,
+    uuid,
+    psize * 4,  // flush threashold
+    psize,
+    bsize);
+  t->init_add_pages(0, t->get_page_size());
+  t->init_add_pages(1ull << 16, t->get_page_size());
+
+  auto head_size = t->get_header_size();
+
+  t->reset_all();
+  // txc which consumes full page but the laast block
+  transactions.push_back(std::string(psize - 1 * bsize - head_size, '1'));
+
+  // txc 2 & 3 can't be merged and to be written at different pages
+  // but txc 2 still exposes some chances for merging
+  transactions.push_back(std::string(bsize/4, '2'));
+  transactions.push_back(std::string(bsize - head_size * 1 - 1, '3'));
+
+  // txc 4 - followup txc taking the full block
+  transactions.push_back(std::string(bsize - head_size, '5'));
+
+  txc.t = t->make_transaction(transactions[0]);
+  t->advertise_and_log(&txc);
+
+  txc2.t = t->make_transaction(transactions[1]);
+  t->advertise_future_op(2);
+  t->log(&txc2);
+  txc3.t = t->make_transaction(transactions[2]);
+  t->log(&txc3);
+
+  txc4.t = t->make_transaction(transactions[3]);
+  t->advertise_and_log(&txc4);
+
+  // each txc has got individual write
+  // but txc 2 & 3 has got common submit
+  ASSERT_EQ(4, t->writes.size());
+  ASSERT_EQ(3, t->aio_submits);
+  ASSERT_EQ(0, t->completed_writes.size());
+
+  // just to reset wal op context in txc
+  // and hence be able to use it again
+  txc.on_write_done(t);
+
+  t->db_flush_trigger_count = 0;
+  t->shutdown(false);
+  std::cout << t << std::endl;
+  ASSERT_EQ(t->db_flush_trigger_count, 1);
+
+  // preparing wal2 to replay
+  t2 = new BluestoreWALTester(g_ceph_context,
+    nullptr,
+    nullptr,
+    uuid,
+    psize * 4,
+    psize,
+    bsize);
+  t2->init_add_pages(0, t->get_page_size());
+  t2->init_add_pages(1ull << 16, t->get_page_size());
+
+  int db_submit_cnt = 0;
+  std::vector<std::string> db_submit_data;
+  auto submit_db_fn = [&](const std::string& payload) {
+    ++db_submit_cnt;
+    db_submit_data.emplace_back(payload);
+    return 0;
+  };
+
+  // clone disk content to t2 to be able to use "pure" WAL object
+  t->clone_content(*t2);
+
+  db_submit_cnt = 0;
+  t2->db_flush_trigger_count = 0;
+  t2->replay(false, submit_db_fn);
+  ASSERT_EQ(t2->get_total(), t2->get_avail() + bsize); // dummy txc expected
+  ASSERT_EQ(db_submit_cnt, 4);
+  for (size_t i = 0; i < (size_t)db_submit_cnt; i++) {
+    if (db_submit_data[i] != transactions[i]) {
+      fprintf(stderr, " mismatch at %lu\n", i);
+    }
+    ASSERT_EQ(db_submit_data[i], transactions[i]);
+  }
+  ASSERT_EQ(t2->db_flush_trigger_count, 1);
+  ASSERT_EQ(
+    + 2 // 2 blocks for txc1: head + tail
+    + 1 // 1 block for txc2
+    + 1 // 1 block for txc3
+    + 1 // 1 block for txc4
+    + 1 // 1 unused block following txc4
+    + page_count,
+    t2->reads.size());
+  ASSERT_EQ(3, t2->writes.size()); //3 pages wiped + dummy txc
+
+  t2->writes.clear();
+  t2->reads.clear();
+  db_submit_data.clear();
+  t2->db_flush_trigger_count = 0;
+  db_submit_cnt = 0;
+  t2->shutdown(false);
+  ASSERT_EQ(t2->db_flush_trigger_count, 1);
+  ASSERT_EQ(0, t2->writes.size());
+
+  db_submit_cnt = 0;
+  t2->db_flush_trigger_count = 0;
+  t2->replay(false, submit_db_fn);
+  ASSERT_EQ(t2->get_total(), t2->get_avail() + bsize); //dummy txc expected
+  ASSERT_EQ(db_submit_cnt, 0);
+  ASSERT_EQ(t2->db_flush_trigger_count, 0);
+  ASSERT_EQ(
+    +1 // 1 dummy txc block
+    + 1 // 1 unused block at the end
+    + page_count,
+    t2->reads.size());
+}
+
 int main(int argc, char **argv) {
   std::vector<const char*> args;
   args = argv_to_vec(argc, (const char **)argv);

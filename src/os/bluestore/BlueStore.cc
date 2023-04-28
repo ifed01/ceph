@@ -3432,6 +3432,7 @@ void BlueStore::ExtentMap::fault_range(
 	  << " shard info: " << *(p->shard_info)
 	  << dendl;
       }
+      //ceph_assert(v.length() == p->shard_info->bytes);
       onode->c->store->logger->inc(l_bluestore_onode_shard_misses);
     } else {
       onode->c->store->logger->inc(l_bluestore_onode_shard_hits);
@@ -11542,12 +11543,12 @@ int BlueStore::_decompress(bufferlist& source, bufferlist* result)
   return r;
 }
 
-int BlueStore::_submit_transaction_sync(KeyValueDB::Transaction t)
+int BlueStore::_submit_transaction_sync(KeyValueDB::Transaction t, bool nonempty_txn)
 {
   int r = 0;
   if (wal) {
-    BlueWALContextSync txc(cct, this, t);
-    if (!txc.get_payload().length() == 0) {
+    if (nonempty_txn) {
+      BlueWALContextSync txc(cct, this, t);
       r = wal->log_submit_sync(&txc);
     }
   } else {
@@ -13636,6 +13637,7 @@ void BlueStore::_kv_sync_thread()
 
       // we will use one final transaction to force a sync
       KeyValueDB::Transaction synct = db->get_transaction();
+      bool nonempty_synct = false;
 
       // increase {nid,blobid}_max?  note that this covers both the
       // case where we are approaching the max and the case we passed
@@ -13647,6 +13649,7 @@ void BlueStore::_kv_sync_thread()
 	bufferlist bl;
 	encode(new_nid_max, bl);
 	synct->set(PREFIX_SUPER, "nid_max", bl);
+	nonempty_synct = true;
 	dout(10) << __func__ << " new_nid_max " << new_nid_max << dendl;
       }
       if (blobid_last + cct->_conf->bluestore_blobid_prealloc/2 > blobid_max) {
@@ -13654,6 +13657,7 @@ void BlueStore::_kv_sync_thread()
 	bufferlist bl;
 	encode(new_blobid_max, bl);
 	synct->set(PREFIX_SUPER, "blobid_max", bl);
+	nonempty_synct = true;
 	dout(10) << __func__ << " new_blobid_max " << new_blobid_max << dendl;
       }
 
@@ -13687,6 +13691,7 @@ void BlueStore::_kv_sync_thread()
 	  ceph_assert(wt.released.empty()); // only kraken did this
 	  string key;
 	  get_deferred_key(wt.seq, &key);
+	  nonempty_synct = true;
 	  synct->rm_single_key(PREFIX_DEFERRED, key);
 	  ++cnt;
 	}
@@ -13701,8 +13706,8 @@ void BlueStore::_kv_sync_thread()
       //RocksDBStore::submit_transaction_sync falls back to async mode if
       // disableWAL=true (applies to BlueWAL as well).
       // Hence we're getting async txc submission when there is no embedded WAL
-      // Which is what we actually need anyway.
-      int r = cct->_conf->bluestore_debug_omit_kv_commit ? 0 : _submit_transaction_sync(synct);
+      // Which is what we actually need anyway if synct is non-empty.
+      int r = cct->_conf->bluestore_debug_omit_kv_commit ? 0 : _submit_transaction_sync(synct, nonempty_synct);
       ceph_assert(r == 0);
 
 #ifdef WITH_BLKIN
@@ -17951,7 +17956,7 @@ void BlueStore::_record_onode(OnodeRef& o, KeyValueDB::Transaction &txn)
     o->extent_map.reshard(db, txn);
     o->extent_map.update(txn, true);
     if (o->extent_map.needs_reshard()) {
-      dout(20) << __func__ << " warning: still wants reshard, check options?"
+      dout(0) << __func__ << " warning: still wants reshard, check options?"
 		<< dendl;
       o->extent_map.clear_needs_reshard();
     }
@@ -19372,6 +19377,7 @@ int BlueStore::read_allocation_from_onodes(SimpleBitmap *sbmap, read_alloc_stats
       Onode::decode_raw(&dummy_on,
         it->value(),
         edecoder);
+      _dump_onode<0>(cct, dummy_on);
       ++stats.onode_count;
     } else {
       uint32_t offset;

@@ -282,7 +282,7 @@ size_t BluestoreWAL::wipe_pages(IOContext* ioc)
 	    << last_committed_page_seqno
 	    << dendl;
     wiping = last_committed_page_seqno - last_wiping_page_seqno;
-    ceph_assert(wiping < get_total_pages());
+    ceph_assert(wiping <= get_total_pages());
     ceph_assert(page_size * wiping <= avail);
     avail -= page_size * wiping;
 
@@ -410,7 +410,7 @@ void BluestoreWAL::_finish_op(Op& op, bool deep)
   for (size_t i = 0; i < op.num_txcs; i++) {
     ceph_assert(op.txc[i]);
     op.txc[i]->set_wal_seq(op.page_seqno);
-    dout(0) << __func__ << " txc aio_finish tseq " << op.txc[i]->get_wal_tseq() << dendl;
+    dout(1) << __func__ << " txc tseq " << op.txc[i]->get_wal_tseq() << dendl;
     op.txc[i]->wal_aio_finish();
   }
   if (op.wiping_pages) {
@@ -905,7 +905,6 @@ void BluestoreWAL::shutdown(bool restricted)
 }
 
 int BluestoreWAL::_read_page_header(uint64_t o,
-                                    uint64_t expected_page_no,
                                     uint64_t pcount,
                                     bluewal_head_t* header)
 {
@@ -931,8 +930,7 @@ int BluestoreWAL::_read_page_header(uint64_t o,
              << std::hex << o << std::dec
              << dendl;
       
-    if (!header->page_count ||
-        (expected_page_no && (header->page_seq % pcount) != expected_page_no)) {
+    if (!header->page_count) {
       dout(15) << __func__ << " page information is inconsistent, ignoring"
                << dendl;
     } else if (header->uuid != uuid) {
@@ -952,20 +950,23 @@ int BluestoreWAL::_read_page_header(uint64_t o,
 int BluestoreWAL::replay(bool restricted,
   std::function<int(const std::string&)> submit_db_fn)
 {
-  dout(10) << __func__ << " restricted = " << restricted << dendl;
+  dout(10) << __func__
+           << " page = " << page_size
+           << " head = " << head_size
+           << " block = " << block_size
+           << " restricted = " << restricted
+           << dendl;
   if (!flush_thread.is_started()) {
     flush_thread.create("bwal_kv_flush");
   }
-  size_t page_no = 0; // any no is expected on start
   auto page_count = page_offsets.size();
   std::deque<bluewal_head_t> valid_page_headers;
   for (auto poffs : page_offsets) {
     bluewal_head_t header;
-    int r = _read_page_header(poffs, page_no, page_count, &header);
+    int r = _read_page_header(poffs, page_count, &header);
     if (r == 0) {
       valid_page_headers.emplace_back(header);
       ceph_assert(header.page_count == 1); //FIXME add support for multi-page ops
-      page_no = header.page_seq + 1;
     }
   }
   if (valid_page_headers.empty()) {
@@ -1010,6 +1011,7 @@ int BluestoreWAL::replay(bool restricted,
       int r;
       auto delta = bl.length() - pos;
       if (delta < head_size) {
+        ceph_assert(o + block_size <= last_offset);
         dout(20) << __func__ << " reading block head at 0x"
                  << std::hex << o << "~" << block_size << std::dec
                  << dendl;
@@ -1042,7 +1044,6 @@ int BluestoreWAL::replay(bool restricted,
                    << ", stopping"
                    << dendl;
         } else {
-          ++next_txc_seqno;
 
           int64_t delta = (int64_t)h.len - (int64_t)p.get_remaining();
           if (delta > 0) {
@@ -1050,6 +1051,7 @@ int BluestoreWAL::replay(bool restricted,
             dout(20) << __func__ << " reading block tail at 0x"
                      << std::hex << o << "~" << to_read << std::dec
                      << dendl;
+            ceph_assert(o + to_read <= last_offset);
             r = read(o, to_read, &bl, &ioc, false);
             if (r < 0) {
               derr << __func__ << " failed reading block tail at 0x"
@@ -1088,24 +1090,22 @@ int BluestoreWAL::replay(bool restricted,
             dout(15) << __func__ << " dummy txc found."
                      << dendl;
           }
+          ++next_txc_seqno;
           pos = p.get_off();
-          read_next = pos < last_offset;
+          read_next = (pos + head_size <= page_size);
         }
       } catch (ceph::buffer::error& e) {
-        std::string next_step;
-        read_next = o < last_offset;
+        std::string next_step = ", trying next page";
         auto pos_bak = pos;
-        if (pos % block_size == 0 || !read_next) {
-          next_step = ", trying next page";
-          read_next = false;
-        } else {
+        read_next = ((pos % block_size) != 0) && (bl.length() + block_size <= page_size);
+        if (read_next) {
           ceph_assert(bl.length() - pos < block_size);
           pos = bl.length();
           next_step = ", trying next block";
         }
         dout(15) << __func__ << " undecodable txc header at offset 0x"
                  << std::hex << o00 << std::dec
-                 << " next " << next_step
+                 << next_step
                  << " bl " << bl.length()
                  << " pos " << pos_bak
                  << dendl;

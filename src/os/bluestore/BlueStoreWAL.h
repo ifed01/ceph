@@ -361,7 +361,6 @@ protected:
                            bufferlist& _bl,
                            wal_unique_lock_t* lck);
   int _read_page_header(uint64_t offset,
-                        uint64_t expected_page_no,
                         uint64_t page_count,
                         bluewal_head_t* header);
 public:
