@@ -3408,14 +3408,30 @@ void BlueStore::ExtentMap::fault_range(
       );
       p->extents = decode_some(v);
       p->loaded = true;
+      ceph_assert(p->dirty == false);
       dout(20) << __func__ << " open shard 0x" << std::hex
 	       << p->shard_info->offset
 	       << " for range 0x" << offset << "~" << length << std::dec
 	       << " (" << v.length() << " bytes)"
 	       << " shard info: " << *(p->shard_info)
 	       << dendl;
-      ceph_assert(p->dirty == false);
-      ceph_assert(v.length() == p->shard_info->bytes);
+      if (v.length() != p->shard_info->bytes) {
+	derr << __func__ << " inconsistent shard_info length detected, to be fixed automatically. "
+	      << " shard 0x" << std::hex
+	      << p->shard_info->offset
+	      << " for range 0x" << offset << "~" << length << std::dec
+	      << " (" << v.length() << " bytes)"
+	      << " shard info: " << *(p->shard_info)
+	      << dendl;
+	p->shard_info->bytes = v.length();
+      } else {
+	dout(20) << __func__ << " open shard 0x" << std::hex
+	  << p->shard_info->offset
+	  << " for range 0x" << offset << "~" << length << std::dec
+	  << " (" << v.length() << " bytes)"
+	  << " shard info: " << *(p->shard_info)
+	  << dendl;
+      }
       onode->c->store->logger->inc(l_bluestore_onode_shard_misses);
     } else {
       onode->c->store->logger->inc(l_bluestore_onode_shard_hits);
