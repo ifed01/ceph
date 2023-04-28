@@ -410,7 +410,7 @@ void BluestoreWAL::_finish_op(Op& op, bool deep)
   for (size_t i = 0; i < op.num_txcs; i++) {
     ceph_assert(op.txc[i]);
     op.txc[i]->set_wal_seq(op.page_seqno);
-    dout(15) << __func__ << " txc aio_finish tseq " << op.txc[i]->get_wal_tseq() << dendl;
+    dout(0) << __func__ << " txc aio_finish tseq " << op.txc[i]->get_wal_tseq() << dendl;
     op.txc[i]->wal_aio_finish();
   }
   if (op.wiping_pages) {
@@ -872,7 +872,7 @@ void BluestoreWAL::submitted(BlueWALContext* txc)
   }
 }
 
-void BluestoreWAL::shutdown()
+void BluestoreWAL::shutdown(bool restricted)
 {
   if (!flush_thread.is_started()) {
     return;
@@ -884,6 +884,9 @@ void BluestoreWAL::shutdown()
   ceph_assert(num_queued == 0);
   dout(15) << __func__ << " WAL thread stopped" << dendl;
 
+  if (restricted) {
+    return;
+  }
   do_flush_db();
   last_committed_page_seqno = last_submitted_page_seqno.load();
   IOContext ioctx(cct, nullptr);
@@ -946,10 +949,10 @@ int BluestoreWAL::_read_page_header(uint64_t o,
   return r;
 }
 
-int BluestoreWAL::replay(bool wipe_on_complete,
+int BluestoreWAL::replay(bool restricted,
   std::function<int(const std::string&)> submit_db_fn)
 {
-  dout(10) << __func__ << " WAL" << dendl;
+  dout(10) << __func__ << " restricted = " << restricted << dendl;
   if (!flush_thread.is_started()) {
     flush_thread.create("bwal_kv_flush");
   }
@@ -1109,7 +1112,7 @@ int BluestoreWAL::replay(bool wipe_on_complete,
       }
     } while(read_next);
   }
-  if (db_submitted) {
+  if (!restricted && db_submitted) {
     do_flush_db();
   }
   last_submitted_page_seqno = valid_page_headers.back().page_seq;
@@ -1123,7 +1126,7 @@ int BluestoreWAL::replay(bool wipe_on_complete,
   last_wiped_page_seqno = last_wiping_page_seqno;
   avail = total; // - page_size * (last_committed_page_seqno - last_wiped_page_seqno);
   cur_op_seqno = 0;
-  if (wipe_on_complete) {
+  if (!restricted) {
     dout(5) << __func__ << " completed, wiping pending:"
             << " avail:" << avail
             << " avail/page_size:" << avail / page_size
