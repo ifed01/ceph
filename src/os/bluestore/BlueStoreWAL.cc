@@ -410,7 +410,7 @@ void BluestoreWAL::_finish_op(Op& op, bool deep)
   for (size_t i = 0; i < op.num_txcs; i++) {
     ceph_assert(op.txc[i]);
     op.txc[i]->set_wal_seq(op.page_seqno);
-    dout(1) << __func__ << " txc tseq " << op.txc[i]->get_wal_tseq() << dendl;
+    dout(7) << __func__ << " txc tseq " << op.txc[i]->get_wal_tseq() << dendl;
     op.txc[i]->wal_aio_finish();
   }
   if (op.wiping_pages) {

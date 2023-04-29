@@ -3416,7 +3416,7 @@ void BlueStore::ExtentMap::fault_range(
 	       << " (" << v.length() << " bytes)"
 	       << " shard info: " << *(p->shard_info)
 	       << dendl;
-      if (v.length() != p->shard_info->bytes) {
+      /*if (v.length() != p->shard_info->bytes) {
 	derr << __func__ << " inconsistent shard_info length detected, to be fixed automatically. "
 	      << " shard 0x" << std::hex
 	      << p->shard_info->offset
@@ -3432,8 +3432,8 @@ void BlueStore::ExtentMap::fault_range(
 	  << " (" << v.length() << " bytes)"
 	  << " shard info: " << *(p->shard_info)
 	  << dendl;
-      }
-      //ceph_assert(v.length() == p->shard_info->bytes);
+      }*/
+      ceph_assert(v.length() == p->shard_info->bytes);
       onode->c->store->logger->inc(l_bluestore_onode_shard_misses);
     } else {
       onode->c->store->logger->inc(l_bluestore_onode_shard_hits);
@@ -18003,7 +18003,7 @@ void BlueStore::_record_onode(OnodeRef& o, KeyValueDB::Transaction &txn)
     o->extent_map.reshard(db, txn);
     o->extent_map.update(txn, true);
     if (o->extent_map.needs_reshard()) {
-      dout(0) << __func__ << " warning: still wants reshard, check options?"
+      dout(20) << __func__ << " warning: still wants reshard, check options?"
 		<< dendl;
       o->extent_map.clear_needs_reshard();
     }
@@ -19426,7 +19426,6 @@ int BlueStore::read_allocation_from_onodes(SimpleBitmap *sbmap, read_alloc_stats
       Onode::decode_raw(&dummy_on,
         it->value(),
         edecoder);
-      _dump_onode<0>(cct, dummy_on);
       ++stats.onode_count;
     } else {
       uint32_t offset;
