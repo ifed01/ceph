@@ -162,36 +162,29 @@ protected:
     size_t entry_count =0;
     std::array<BlueWALContext*, MAX_TXCS_PER_OP> txcs;
     std::array<size_t, MAX_TXCS_PER_OP> txc_sizes;
-    bool maybe_add(BlueWALContext* txc,
-                   size_t len,
-                   size_t h_len,
-                   size_t b_len,
-                   size_t p_len) {
-      // a single txc longer than max_size is allowed in a free slot
-      bool ret = entry_count < txcs.size();
-      if (ret) {
-        if(payload_len + h_len + len <= b_len) {
-          payload_len += h_len + len;
-          txc_sizes[entry_count] = h_len + len;
-          txcs[entry_count++] = txc;
-        } else if (payload_len == 0) {
-          if (h_len + len <= p_len) {
-            payload_len = h_len + len;
-            txc_sizes[entry_count] = payload_len;
-            txcs[entry_count++] = txc;
-          } else {
-            auto tail = len % (p_len - h_len);
-            auto p_count = len / (p_len - h_len);
-            payload_len = p_count * p_len + (tail ? h_len + tail : 0);
-            txc_sizes[entry_count] = payload_len;
-            txcs[entry_count++] = txc;
-          }
-        } else {
-          ret = false;
+    void do_add(BlueWALContext* txc,
+                size_t full_len) {
+      ceph_assert(entry_count < txcs.size());
+      payload_len += full_len;
+      txc_sizes[entry_count] = full_len;
+      txcs[entry_count++] = txc;
+    }
+    bool has_conflicts(BlueWALContext* txc) {
+      for (size_t i = 0; i < entry_count; i++) {
+        if (txcs[i]->get_sequence_ctx() == txc->get_sequence_ctx()) {
+          return true;
         }
       }
-      return ret;
+      return false;
     }
+    bool can_add(BlueWALContext* txc,
+                   size_t len,
+                   size_t max_len) {
+      bool res = (entry_count < txcs.size()) &&
+                   (payload_len == 0 || (payload_len + len <= max_len));
+      return res;
+    }
+
     BlueWALContext* maybe_get(size_t pos) {
       return pos < entry_count ? txcs[pos]: nullptr;
     }
@@ -205,6 +198,7 @@ protected:
   };
 
   class chest_t {
+    size_t block_size;
     // total number of entries in the chest
     std::atomic<size_t> total_entry_count = 0;
 
@@ -214,13 +208,7 @@ protected:
     // keep one txc less than Op can fit
     std::array<chest_entry_t, MAX_TXCS_PER_OP> entries;
   public:
-    size_t get_payload_len(size_t alignment) const {
-      size_t res = 0;
-      for (size_t row = 0; row < row_count; row++) {
-        res += p2roundup(entries[row].payload_len, alignment);
-      }
-      return res;
-    }
+    chest_t(size_t _block_size) : block_size(_block_size) {}
     void foreach_row(std::function<void (size_t)> fn) const {
       size_t row = 0;
       size_t res;
@@ -233,31 +221,40 @@ protected:
     size_t get_entry_count() const {
       return total_entry_count;
     }
-    bool add(BlueWALContext* txc,
-      size_t len,
-      size_t h_len,
-      size_t b_len,
-      size_t p_len,
-      bool permit_last) {
-      bool ret = false;
+    int add(BlueWALContext* txc,
+              size_t len,
+              bool permit_last) {
+      int ret = -1;
       size_t max_entries = entries.size();
       if (!permit_last) {
         --max_entries;
       }
       if (total_entry_count < max_entries) {
-        for(size_t i = 0; i < row_count; i++) {
-          if (entries[i].maybe_add(txc, len, h_len, b_len, p_len)) {
-            total_entry_count++;
-            return true;
+        size_t candidate_row = 0;
+        bool has_candidate = false;
+        // Looking for the chest entry which can accomodate new txc,
+        // either by merging with existing ones or putting it standalone.
+        // We have to run through every chest entry though to make sure
+        // there are no sequencing conflicts, i.e. other txcs with the
+        // same sequencer.
+        // If ones exist then the new txc to be inserted after them.
+        for (size_t i = 0; i < row_count; i++) {
+          if (has_candidate && entries[i].has_conflicts(txc)) {
+            has_candidate = false;
+          }
+          if (!has_candidate) {
+            candidate_row = i;
+            has_candidate = entries[i].can_add(txc, len, block_size);
           }
         }
-        ceph_assert(row_count < entries.size());
-        entries[row_count].reset();
-        ret = entries[row_count].maybe_add(txc, len, h_len, b_len, p_len);
-        if (ret) {
-          total_entry_count++;
-          row_count++;
+        if (!has_candidate) {
+          ceph_assert(row_count < entries.size());
+          entries[row_count].reset();
+          candidate_row = row_count++;
         }
+        entries[candidate_row].do_add(txc, len);
+        total_entry_count++;
+        ret = candidate_row;
       }
       return ret;
     }
@@ -345,6 +342,7 @@ protected:
   virtual void do_flush_db();
 
   void _finish_op(Op& op, bool deep);
+  void _maybe_throttle();
   Op* _log(BlueWALContext* txc, bool force);
   void _prepare_txc_submit(bluewal_head_t& header,
                            BlueWALContext* txc,
@@ -387,7 +385,7 @@ public:
   void advertise_future_op(size_t num = 1) {
     future_ops += num;
   }
-  int log(BlueWALContext* txc, bool force = true);
+  int log(BlueWALContext* txc);
   int log_submit_sync(BlueWALContextSync* txc);
 
   int advertise_and_log(BlueWALContext* txc);

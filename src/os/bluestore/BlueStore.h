@@ -235,6 +235,7 @@ public:
   virtual ~BlueWALContext() {}
   virtual IOContext* get_ioc() = 0;
   virtual const std::string& get_payload() = 0;
+  virtual void* get_sequence_ctx() = 0;
 
   void set_wal_op_ctx(void* _ctx) {
     wal_op_ctx = _ctx;
@@ -281,6 +282,9 @@ public:
   };
   const std::string& get_payload() override {
     return t->get_as_bytes();
+  }
+  void* get_sequence_ctx() override {
+    return nullptr;
   }
 };
 
@@ -1942,6 +1946,10 @@ private:
     const std::string& get_payload() override {
       return t->get_as_bytes();
     }
+    void* get_sequence_ctx() override {
+      return osr->get();
+    }
+
 
   private:
     state_t state = STATE_PREPARE;

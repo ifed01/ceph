@@ -153,25 +153,31 @@ public:
 
 class BlueWALTestContext : public BlueWALContext {
   IOContext ioc;
-  BluestoreWALTester* tester = nullptr;
+  BluestoreWALTester* tester;
+  void* sequence_ctx = nullptr;
+
   void wal_aio_finish() override {
-    ceph_assert(tester);
     tester->completed_writes.emplace_back(get_wal_seq(), this);
   }
   IOContext* get_ioc() override {
     return &ioc;
   }
+  void* get_sequence_ctx() override {
+    return sequence_ctx ? sequence_ctx : this;
+  }
   const std::string& get_payload() {
     return t->get_as_bytes();
   }
 public:
-  BlueWALTestContext()
-    : ioc(nullptr, nullptr) {
+  BlueWALTestContext(BluestoreWALTester* _tester, void* seq_ctx = nullptr)
+    : ioc(nullptr, nullptr), tester(_tester), sequence_ctx(seq_ctx) {
   }
 
   KeyValueDB::Transaction t;
-  void on_write_done(BluestoreWALTester* _tester) {
-    tester = _tester;
+  void on_write_done(BluestoreWALTester* t = nullptr) {
+    if (t) {
+      tester = t;
+    }
     tester->aio_finish(this);
   }
 };
@@ -198,19 +204,6 @@ TEST_F(BlueWALTest, basic) {
   uuid_d uuid;
   uuid.generate_random();
 
-  BlueWALTestContext txc;
-  BlueWALTestContext txc2;
-  BlueWALTestContext txc3;
-  BlueWALTestContext txc4;
-  BlueWALTestContext txc5;
-  BlueWALTestContext txc6;
-  BlueWALTestContext txc7;
-  BlueWALTestContext txc8;
-  BlueWALTestContext txc9;
-  BlueWALTestContext txc10;
-
-  std::vector<std::string> transactions;
-
   uint64_t psize = 512;
   uint64_t bsize = 128;
   size_t page_count = 16;
@@ -227,6 +220,19 @@ TEST_F(BlueWALTest, basic) {
   ASSERT_EQ(psize, t->get_page_size());
   ASSERT_EQ(psize * 16, t->get_total());
   ASSERT_EQ(psize * 16, t->get_avail());
+
+  BlueWALTestContext txc(t);
+  BlueWALTestContext txc2(t);
+  BlueWALTestContext txc3(t);
+  BlueWALTestContext txc4(t);
+  BlueWALTestContext txc5(t);
+  BlueWALTestContext txc6(t);
+  BlueWALTestContext txc7(t);
+  BlueWALTestContext txc8(t);
+  BlueWALTestContext txc9(t);
+  BlueWALTestContext txc10(t);
+
+  std::vector<std::string> transactions;
 
   // just to make sure we operate headers small enough for block/page sizes
   // used in this test suite
@@ -249,7 +255,7 @@ TEST_F(BlueWALTest, basic) {
     expected_w1,
     t->get_total() - t->get_avail());
 
-  txc.on_write_done(t);
+  txc.on_write_done();
   ASSERT_EQ(1, t->completed_writes.size());
   ASSERT_EQ(1, t->completed_writes[0].first); // cur_page_seqno = 1
   ASSERT_EQ(&txc, t->completed_writes[0].second);
@@ -277,7 +283,7 @@ TEST_F(BlueWALTest, basic) {
     expected_w1 + expected_w2,
     t->get_total() - t->get_avail());
 
-  txc2.on_write_done(t);
+  txc2.on_write_done();
   ASSERT_EQ(2, t->completed_writes.size());
   ASSERT_EQ(1, t->completed_writes[1].first); // still cur_page_seqno = 1
   ASSERT_EQ(&txc2, t->completed_writes[1].second);
@@ -306,7 +312,7 @@ TEST_F(BlueWALTest, basic) {
       + expected_w3,
     t->get_total() - t->get_avail());
 
-  txc3.on_write_done(t);
+  txc3.on_write_done();
   ASSERT_EQ(3, t->completed_writes.size());
   ASSERT_EQ(2, t->completed_writes[2].first); // cur page seqno = 2
   ASSERT_EQ(&txc3, t->completed_writes[2].second);
@@ -345,7 +351,7 @@ TEST_F(BlueWALTest, basic) {
       + expected_w3 + expected_w4,
     t->get_total() - t->get_avail());
 
-  txc4.on_write_done(t);
+  txc4.on_write_done();
   ASSERT_EQ(4, t->completed_writes.size());
 
   // cur page = 5 as huge write issues "self-submission"
@@ -389,7 +395,7 @@ TEST_F(BlueWALTest, basic) {
     + expected_w5,
     t->get_total() - t->get_avail());
 
-  txc5.on_write_done(t);
+  txc5.on_write_done();
   ASSERT_EQ(5, t->completed_writes.size());
   ASSERT_EQ(&txc5, t->completed_writes[4].second);
   ASSERT_EQ(5, t->completed_writes[4].first); // cur page = 5
@@ -434,11 +440,11 @@ TEST_F(BlueWALTest, basic) {
     + expected_w8,
     t->get_total() - t->get_avail());
 
-  txc8.on_write_done(t);
+  txc8.on_write_done();
   ASSERT_EQ(0, t->completed_writes.size()); // still wait for prior write to complete
-  txc7.on_write_done(t);
+  txc7.on_write_done();
   ASSERT_EQ(0, t->completed_writes.size()); // still wait for prior write to complete
-  txc6.on_write_done(t);
+  txc6.on_write_done();
   ASSERT_EQ(3, t->completed_writes.size()); // 3 pending writes are completed
 
   ASSERT_EQ(5, t->completed_writes[0].first);
@@ -525,7 +531,7 @@ TEST_F(BlueWALTest, basic) {
   ASSERT_EQ(t->get_last_wiping_page_seqno(), 4);
   ASSERT_EQ(t->get_last_wiped_page_seqno(), 4);
 
-  txc9.on_write_done(t);
+  txc9.on_write_done();
   ASSERT_EQ(1 , t->completed_writes.size());
 
   ASSERT_EQ(&txc9, t->completed_writes[0].second);
@@ -557,13 +563,117 @@ TEST_F(BlueWALTest, basic) {
   std::cout << "Write 10, len = " << expected_w10 << std::endl;
   txc10.t = t->make_transaction(transactions.back());
   t->advertise_and_log(&txc10);
-  txc10.on_write_done(t);
+  txc10.on_write_done();
   t->db_flush_trigger_count = 0;
   t->submitted(&txc10); // no-op
   ASSERT_EQ(t->db_flush_trigger_count, 0);
 
   ASSERT_EQ(
     expected_w10,
+    t->get_total() - t->get_avail());
+
+  ASSERT_EQ(t->get_last_submitted_page_seqno(), 20);
+  ASSERT_EQ(t->get_last_committed_page_seqno(), 20);
+  ASSERT_EQ(t->get_last_wiping_page_seqno(), 20);
+  ASSERT_EQ(t->get_last_wiped_page_seqno(), 20);
+
+  /////////////////////////////////////////////////
+  // checking transactions merging and proper ordering
+  // given their sequence contexts
+  //
+  BlueWALTestContext txc11(t);
+  BlueWALTestContext txc12(t, (void*)1);
+  BlueWALTestContext txc13(t, (void*)1);
+  BlueWALTestContext txc14(t);
+  BlueWALTestContext txc15(t, (void*)1);
+  BlueWALTestContext txc16(t);
+
+  size_t expected_w11 = 0;
+  size_t expected_w12 = 0;
+  size_t expected_w13 = 0;
+
+  // 6 txc to follow
+  transactions.reserve(transactions.size() + 6);
+
+  // t11 occupies 4 bytes
+  size_t start_pos = transactions.size();
+  transactions.push_back(std::string(4, 'g')); // txc11
+  expected_w11 +=head_size + transactions.back().length();
+  // t12 is large enough to be collocated with a txc of 2 bytes (+header)
+  // hence it wouldn't collocate with t11
+  transactions.push_back(std::string(bsize - 2 * head_size - 2, 'h')); // txc12
+  expected_w12 +=head_size + transactions.back().length();
+  // t13 takes 5 bytes and potentially can be merged with t11
+  // but due to t13's sequence context it should follow t12.
+  // The latter is pretty long though and disk block wouldn't fit both
+  // t12 and 13. Hence t13 takes the next disk block
+  transactions.push_back(std::string(5, 'i')); // txc13
+  expected_w13 += head_size + transactions.back().length();
+  // this transaction to be merged with t11 as its sequence ctx is unique
+  // and there is space at t11's disk block
+  transactions.push_back(std::string(6 + 1, 'j')); // txc14
+  expected_w11 += head_size + transactions.back().length();
+  // this transaction to be merged with t13 as its sequence ctx is the same
+  // as t12's and t13's ones and hence t14 has to follow t13 even if t12 still
+  // leave enough space
+  transactions.push_back(std::string(1, 'j')); // txc15
+  expected_w13 += head_size + transactions.back().length();
+  // this transaction to be merged with t12 as there are no sequencing requirement
+  // and t12 leaves enough space to accomodate 2 bytes length txc.
+  transactions.push_back(std::string(2, 'h')); // txc16
+  expected_w12 += head_size + transactions.back().length();
+
+  t->reset_all();
+  t->advertise_future_op(6);
+
+  expected_w11 = round_up_to(expected_w11, bsize);
+  expected_w12 = round_up_to(expected_w12, bsize);
+  expected_w13 = round_up_to(expected_w13, bsize);
+
+  std::cout << "Write 11-13, len = "
+            << expected_w11 << "+" << expected_w12 << "+" << expected_w13
+            << std::endl;
+
+  txc11.t = t->make_transaction(transactions[start_pos++]);
+  txc12.t = t->make_transaction(transactions[start_pos++]);
+  txc13.t = t->make_transaction(transactions[start_pos++]);
+  txc14.t = t->make_transaction(transactions[start_pos++]);
+  txc15.t = t->make_transaction(transactions[start_pos++]);
+  txc16.t = t->make_transaction(transactions[start_pos++]);
+
+  ASSERT_EQ(-EINPROGRESS, t->log(&txc11));
+  ASSERT_EQ(-EINPROGRESS, t->log(&txc12));
+  ASSERT_EQ(-EINPROGRESS, t->log(&txc13));
+  ASSERT_EQ(-EINPROGRESS, t->log(&txc14));
+  ASSERT_EQ(-EINPROGRESS, t->log(&txc15));
+  ASSERT_EQ(0, t->log(&txc16));
+
+  ASSERT_EQ(1, t->writes.size()); //1 block write
+  ASSERT_EQ(expected_w11 + expected_w12 + expected_w13, t->writes[0].first.length());
+
+  ASSERT_EQ(1, t->aio_submits);
+  ASSERT_EQ(0, t->completed_writes.size()); // no change
+
+  txc16.on_write_done();
+  ASSERT_EQ(6, t->completed_writes.size());
+  ASSERT_EQ(&txc11, t->completed_writes[0].second);
+  ASSERT_EQ(&txc14, t->completed_writes[1].second);
+  ASSERT_EQ(&txc12, t->completed_writes[2].second);
+  ASSERT_EQ(&txc16, t->completed_writes[3].second);
+  ASSERT_EQ(&txc13, t->completed_writes[4].second);
+  ASSERT_EQ(&txc15, t->completed_writes[5].second);
+
+  t->db_flush_trigger_count = 0;
+  t->submitted(&txc11); // no-op
+  t->submitted(&txc12); // no-op
+  t->submitted(&txc13); // no-op
+  t->submitted(&txc14); // no-op
+  t->submitted(&txc15); // no-op
+  t->submitted(&txc16); // no-op
+  ASSERT_EQ(t->db_flush_trigger_count, 0);
+
+  ASSERT_EQ(
+    expected_w10 + expected_w11 + expected_w12 + expected_w13,
     t->get_total() - t->get_avail());
 
   ASSERT_EQ(t->get_last_submitted_page_seqno(), 20);
@@ -629,19 +739,6 @@ TEST_F(BlueWALTest, basic_replay) {
   uuid_d uuid;
   uuid.generate_random();
 
-  BlueWALTestContext txc;
-  BlueWALTestContext txc2;
-  BlueWALTestContext txc3;
-  BlueWALTestContext txc4;
-  BlueWALTestContext txc5;
-  BlueWALTestContext txc6;
-  BlueWALTestContext txc7;
-  BlueWALTestContext txc8;
-  BlueWALTestContext txc9;
-  BlueWALTestContext txc10;
-
-  std::vector<std::string> transactions;
-
   uint64_t psize = 1024;
   uint64_t bsize = 256;
   size_t page_count = 8;
@@ -655,6 +752,19 @@ TEST_F(BlueWALTest, basic_replay) {
   t->init_add_pages(0, t->get_page_size() * 4);
   t->init_add_pages(1ull << 16, t->get_page_size() * 3);
   t->init_add_pages(1ull << 24, t->get_page_size() * 1);
+
+  BlueWALTestContext txc(t);
+  BlueWALTestContext txc2(t);
+  BlueWALTestContext txc3(t);
+  BlueWALTestContext txc4(t);
+  BlueWALTestContext txc5(t);
+  BlueWALTestContext txc6(t);
+  BlueWALTestContext txc7(t);
+  BlueWALTestContext txc8(t);
+  BlueWALTestContext txc9(t);
+  BlueWALTestContext txc10(t);
+
+  std::vector<std::string> transactions;
 
   t2 = new BluestoreWALTester(g_ceph_context,
     nullptr,
@@ -756,11 +866,10 @@ TEST_F(BlueWALTest, basic_replay) {
 
   // just to reset wal op context in txc
   // and hence be able to use it again
-  txc.on_write_done(t);
+  txc.on_write_done();
 
   t->db_flush_trigger_count = 0;
   t->shutdown(false);
-  std::cout << t << std::endl;
   ASSERT_EQ(t->db_flush_trigger_count, 1);
 
   // clone disk content to t2 to be able to use "pure" WAL object
@@ -850,19 +959,6 @@ TEST_F(BlueWALTest, replay_page_spanning) {
   uuid_d uuid;
   uuid.generate_random();
 
-  BlueWALTestContext txc;
-  BlueWALTestContext txc2;
-  BlueWALTestContext txc3;
-  BlueWALTestContext txc4;
-  BlueWALTestContext txc5;
-  BlueWALTestContext txc6;
-  BlueWALTestContext txc7;
-  BlueWALTestContext txc8;
-  BlueWALTestContext txc9;
-  BlueWALTestContext txc10;
-
-  std::vector<std::string> transactions;
-
   uint64_t psize = 1024;
   uint64_t bsize = 256;
   size_t page_count = 2;
@@ -877,6 +973,19 @@ TEST_F(BlueWALTest, replay_page_spanning) {
   t->init_add_pages(1ull << 16, t->get_page_size());
 
   auto head_size = t->get_header_size();
+
+  BlueWALTestContext txc(t);
+  BlueWALTestContext txc2(t);
+  BlueWALTestContext txc3(t);
+  BlueWALTestContext txc4(t);
+  BlueWALTestContext txc5(t);
+  BlueWALTestContext txc6(t);
+  BlueWALTestContext txc7(t);
+  BlueWALTestContext txc8(t);
+  BlueWALTestContext txc9(t);
+  BlueWALTestContext txc10(t);
+
+  std::vector<std::string> transactions;
 
   t->reset_all();
   // txc which consumes full page but the laast block
@@ -910,11 +1019,10 @@ TEST_F(BlueWALTest, replay_page_spanning) {
 
   // just to reset wal op context in txc
   // and hence be able to use it again
-  txc.on_write_done(t);
+  txc.on_write_done();
 
   t->db_flush_trigger_count = 0;
   t->shutdown(false);
-  std::cout << t << std::endl;
   ASSERT_EQ(t->db_flush_trigger_count, 1);
 
   // preparing wal2 to replay

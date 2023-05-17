@@ -96,7 +96,8 @@ BluestoreWAL::BluestoreWAL(CephContext* _cct,
     uuid(_uuid),
     flush_threshold(fsize / psize),
     page_size(psize),
-    block_size(bsize)
+    block_size(bsize),
+    gate_chest(bsize)
 {
   ceph_assert(psize >= bsize);
   if (!flush_threshold) {
@@ -561,7 +562,7 @@ int BluestoreWAL::advertise_and_log(BlueWALContext* txc)
   return log(txc);
 }
 
-int BluestoreWAL::log(BlueWALContext* txc, bool force)
+int BluestoreWAL::log(BlueWALContext* txc)
 {
   ceph_assert(txc);
   ceph_assert(!txc->get_wal_op_ctx());
@@ -607,85 +608,110 @@ int BluestoreWAL::log_submit_sync(BlueWALContextSync* txc)
   return r;
 }
 
+void BluestoreWAL::_maybe_throttle()
+{
+  uint64_t wait_nsec = 0;
+  uint64_t throttled_space = get_total() *
+    (1 - cct->_conf->bluestore_wal_throttle_enable_threshold);
+  if (throttled_space > get_avail()) {
+    wait_nsec =
+      cct->_conf->bluestore_wal_throttle_max_delay_nsec;
+    if (get_avail()) {
+      uint64_t base_thottle_nsec =
+        cct->_conf->bluestore_wal_throttle_base_delay_nsec;
+      double r_pct = (double)get_avail() / throttled_space;
+      double k = 1 / (r_pct * r_pct);
+      wait_nsec = std::min(
+        wait_nsec,
+        uint64_t(base_thottle_nsec * k));
+    }
+    /*FIXME: may be log long lasting throttling?
+      if (wait_nsec > 10000000) {
+      dout(0) << __func__ << " throttling " << txc << " "
+              << wait_nsec << " nsec "
+              << " avail = " << get_avail()
+              << dendl;
+    }*/
+    logger->tinc(l_bluestore_wal_throttle_avg,
+      utime_t(0, wait_nsec));
+  }
+  if (!future_ops && !wait_nsec) {
+    uint64_t merge_delay =
+      cct->_conf->bluestore_wal_txc_merge_delay_nsec;
+    if (merge_delay && gate_chest.get_entry_count() == 0) {
+      wait_nsec = merge_delay;
+      logger->tinc(l_bluestore_wal_merge_avg,
+        utime_t(0, wait_nsec));
+    }
+  }
+  if (wait_nsec) {
+    timespec ts(wait_nsec / 1000000000, wait_nsec % 1000000000);
+    nanosleep(&ts, nullptr);
+  }
+}
+
 BluestoreWAL::Op* BluestoreWAL::_log(BlueWALContext* txc, bool force)
 {
   auto birth_time = mono_clock::now();
   auto& t = txc->get_payload();
   size_t t_len = t.length();
+  // depending on payload len we might need just a single header
+  // or multiple pages with a specific header each.
+  size_t full_len = head_size + t_len;
+  if (full_len > page_size) {
+    auto tail = t_len % (page_size - head_size);
+    auto p_count = t_len / (page_size - head_size);
+    full_len = p_count * page_size + (tail ? head_size + tail : 0);
+  }
   dout(7) << __func__ << " txc " << txc
+          << " txc seqctx: " << txc->get_sequence_ctx()
           << " txc plen:" << t_len
+          << " txc full_len:" << full_len
           << " force: " << force
           << dendl;
-
   logger->inc(l_bluestore_wal_input_avg, t_len);
-  chest_t my_chest;
-  {
-    ceph_assert(future_ops);
-    --future_ops;
 
-    if(!force) {
-      uint64_t wait_nsec = 0;
-      uint64_t throttled_space = get_total() *
-        (1 - cct->_conf->bluestore_wal_throttle_enable_threshold);
-      if (throttled_space > get_avail()) {
-        wait_nsec =
-          cct->_conf->bluestore_wal_throttle_max_delay_nsec;
-        if (get_avail()) {
-          uint64_t base_thottle_nsec =
-            cct->_conf->bluestore_wal_throttle_base_delay_nsec;
-          double r_pct = (double)get_avail() / throttled_space;
-          double k = 1 / (r_pct * r_pct);
-          wait_nsec = std::min(
-            wait_nsec,
-            uint64_t(base_thottle_nsec * k));
-        }
-        /*FIXME: may be log long lasting throttling?
-          if (wait_nsec > 10000000) {
-          dout(0) << __func__ << " throttling " << txc << " "
-                  << wait_nsec << " nsec "
-                  << " avail = " << get_avail()
-                  << dendl;
-        }*/
-        logger->tinc(l_bluestore_wal_throttle_avg,
-          utime_t(0, wait_nsec));
-      }
-      if (!future_ops && !wait_nsec) {
-        uint64_t merge_delay =
-          cct->_conf->bluestore_wal_txc_merge_delay_nsec;
-        if(merge_delay && gate_chest.get_entry_count() == 0) {
-          wait_nsec = merge_delay;
-          logger->tinc(l_bluestore_wal_merge_avg,
-            utime_t(0, wait_nsec));
-        }
-      }
-      if (wait_nsec) {
-        timespec ts(wait_nsec/1000000000, wait_nsec%1000000000);
-        nanosleep(&ts, nullptr);
-      }
-    }
-    std::unique_lock l(gate_lock);
-    // We can temporarily store op in the chest if more ops to come.
-    // Last op or absence of space in the chest will force pending ops to go.
-    // The rationale is to try to merge multiple ops into a single
-    // disk block to reduce amount of disk writes issued.
-    if (!force &&
-        future_ops &&
-        gate_chest.add(txc, t_len, head_size, block_size, page_size, false)) {
-          dout(7) << __func__ << " added to chest, items:"
-                  << gate_chest.get_entry_count() << dendl;
-          return nullptr;
-    }
-    my_chest.claim(gate_chest);
+  ceph_assert(future_ops);
+  --future_ops;
+  if(!force) {
+    _maybe_throttle();
   }
+
+  std::unique_lock glock(gate_lock);
+  // We can temporarily store op in the chest if more ops to come.
+  // Last op or absence of space in the chest will force pending ops to go.
+  // The rationale is to try to merge multiple ops into a single
+  // disk block to reduce amount of disk writes issued.
+  if (!force &&
+      future_ops) {
+    int add_pos = gate_chest.add(txc, full_len, false);
+    if (add_pos >= 0) {
+      dout(7) << __func__ << " added to chest,"
+              << " items:" << gate_chest.get_entry_count()
+              << " insert pos:" << add_pos
+              << dendl;
+      return nullptr;
+    }
+  }
+  chest_t my_chest(block_size);
+  my_chest.claim(gate_chest);
   // last txc should be added in any case
-  bool b = my_chest.add(txc, t_len, head_size, block_size, page_size, true);
-  ceph_assert(b);
+  int r =  my_chest.add(txc, full_len, true);
+  dout(7) << __func__ << " added to chest (last),"
+    << " items:" << gate_chest.get_entry_count()
+    << " insert pos:" << r
+    << dendl;
+  ceph_assert(r >= 0);
 
   if (my_chest.get_entry_count() > 1) {
     logger->inc(l_bluestore_wal_chest_avg, my_chest.get_entry_count());
   }
 
+  // take primary WAL lock to submit the ops
+  // and release gate lock to enable new ops accumulation
+  //
   std::unique_lock l(lock);
+  glock.unlock();
 
   size_t need_pages = 0;
   Op* op_ptr = nullptr;
@@ -1078,6 +1104,7 @@ int BluestoreWAL::replay(bool restricted,
               return r;
             }
             ++db_submitted;
+            dout(7) << __func__ << " submit txc " << h << dendl;
             r = submit_db_fn(content);
             if (r != 0) {
               derr << __func__ << " txc submit failed, txc " << h
