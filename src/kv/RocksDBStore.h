@@ -332,13 +332,29 @@ public:
       const std::string& k,
       const ceph::bufferlist &bl) override;
     void log(const ceph::bufferlist &bl) override;
-    void iterate(TransactionImpl *target) override;
     const std::string& get_as_bytes() override;
     void set_from_bytes(const std::string& s) override;
   };
 
+  class RocksDBTxcLogInspector : public KeyValueDB::TxcLogInspector {
+    rocksdb::WriteBatch bat;
+
+  public:
+    void set_from_bytes(const std::string& s) override;
+    bool iterate(CallBack cb) override;
+  };
+
+  static KeyValueDB::Transaction get_transaction_static(RocksDBStore* db) {
+    return std::make_shared<RocksDBTransactionImpl>(db);
+  }
   KeyValueDB::Transaction get_transaction() override {
-    return std::make_shared<RocksDBTransactionImpl>(this);
+    return get_transaction_static(this);
+  }
+  static KeyValueDB::TxcLogInspector* get_log_inspector_static() {
+    return new RocksDBTxcLogInspector;
+  }
+  KeyValueDB::TxcLogInspector* get_log_inspector() override {
+    return get_log_inspector_static();
   }
 
   int submit_transaction(KeyValueDB::Transaction t) override;

@@ -1373,4 +1373,30 @@ private:
   }
 };
 
+struct bluestore_alloc_log_entry_t
+{
+  // Constants to control <offset, len> pair squeeze into 64-bit
+  // Presuming OSD would never use devices with sizes > max_offset(=1PB)
+  // len is always below len_max(=4GB)
+  // and min_alloc_unit is never below the unit(=4K).
+  // The resulting mapping is is:
+  // len bits [12-31] -> int64 bits [0-19]
+  // offset bits [12-49] -> int64 bits [20-57]
+
+  // If the constraint failed we should avoid pair squeeze (TBD)
+  static const uint64_t max_offset_bits = 50;
+  static const uint64_t max_offset = 1ull << max_offset_bits; // 1PB
+  static const uint64_t max_len_bits = 32;
+  static const uint64_t max_len = 1ull << max_len_bits; // 4G
+  static const uint64_t unit_bits = 12;
+  static const uint64_t unit = 1ull << unit_bits; // 4K
+
+  static void encode(ceph::buffer::list& bl,
+	      uint64_t pool_id,
+              const interval_set<uint64_t>& allocated,
+              const interval_set<uint64_t>& released);
+  static void decode(ceph::buffer::list::const_iterator& p,
+    std::function<void(uint64_t, bool, uint64_t, uint64_t)> cb);
+};
+
 #endif

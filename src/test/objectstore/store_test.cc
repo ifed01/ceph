@@ -9221,10 +9221,7 @@ TEST_P(StoreTestSpecificAUSize, BluestoreRepairTest) {
   ASSERT_EQ(bstore->fsck(false), 0);
   ASSERT_EQ(bstore->repair(false), 0);
   bstore->mount();
-  if (!bstore->has_null_manager()) {
-    bstore->inject_leaked(0x30000);
-    err_was_injected = true;
-  }
+  err_was_injected = bstore->inject_leaked(0x30000);
 
   bstore->umount();
   if (err_was_injected) {
@@ -9236,10 +9233,7 @@ TEST_P(StoreTestSpecificAUSize, BluestoreRepairTest) {
   //////////// false free fix ////////////
   cerr << "fix false free pextents" << std::endl;
   bstore->mount();
-  if (!bstore->has_null_manager()) {
-    bstore->inject_false_free(cid, hoid);
-    err_was_injected = true;
-  }
+  err_was_injected = bstore->inject_false_free(cid, hoid);
   bstore->umount();
   if (err_was_injected) {
     ASSERT_EQ(bstore->fsck(false), 2);

@@ -9,6 +9,7 @@
 #include "os/bluestore/BlueStore.h"
 #include "os/bluestore/simple_bitmap.h"
 #include "os/bluestore/AvlAllocator.h"
+#include "kv/RocksDBStore.h"
 #include "common/ceph_argparse.h"
 #include "global/global_init.h"
 #include "global/global_context.h"
@@ -51,6 +52,64 @@ TEST(bluestore, sizeof) {
   P(SimpleBitmap);
   cout << "map<uint64_t,uint64_t>\t" << sizeof(map<uint64_t,uint64_t>) << std::endl;
   cout << "map<char,char>\t" << sizeof(map<char,char>) << std::endl;
+}
+
+TEST(bluestore, log_alloc)
+{
+  KeyValueDB::Transaction t =
+    RocksDBStore::get_transaction_static(nullptr); // carefully passing nullptr
+                                                   // as transaction wouldn't
+                                                   // need db pointer for log()
+                                                   // call.
+                                                   // For all other calls this
+                                                   // is rather inappropriate.
+
+  interval_set<uint64_t> allocated;
+  interval_set<uint64_t> released;
+  allocated.insert(0x10000, 0x20000);
+  allocated.insert(0x5000000, 0x1000);
+  released.insert(0x0, 0x10000);
+  released.insert(0x4fff000, 0x1000);
+  bufferlist bl;
+  bluestore_alloc_log_entry_t::encode(bl, allocated, released);
+  t->log(bl);
+  t->log(bufferlist());
+
+  std::unique_ptr<KeyValueDB::TxcLogInspector> li(RocksDBStore::get_log_inspector_static());
+  li->set_from_bytes(t->get_as_bytes());
+
+  size_t inspected_entries = 0;
+  size_t decode_failed = 0;
+  auto apply_fn = [&](bool alloc, uint64_t offs, uint32_t len) {
+    std::cout << __func__
+      << (alloc ? " allocated in wal: 0x" : " released in wal: 0x")
+      << std::hex << offs << "~" << len
+      << std::dec << std::endl;
+    if (alloc) {
+      allocated.erase(offs, len);
+    } else {
+      released.erase(offs, len);
+    }
+  };
+  auto inspect_entry_fn = [&](const ceph::bufferlist& bl) {
+    bluestore_alloc_log_entry_t e;
+    auto blp = bl.cbegin();
+    std::cout << __func__
+      << " decoding alloc log entry " << bl.length()
+      << std::endl;
+    ++inspected_entries;
+    try {
+      e.decode(blp, apply_fn);
+    } catch (ceph::buffer::error& e) {
+      ++decode_failed;
+    }
+  };
+
+  li->iterate(inspect_entry_fn);
+  ASSERT_EQ(2, inspected_entries);
+  ASSERT_EQ(1, decode_failed);
+  ASSERT_TRUE(allocated.empty());
+  ASSERT_TRUE(released.empty());
 }
 
 void dump_mempools()
