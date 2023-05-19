@@ -1869,27 +1869,6 @@ void RocksDBStore::RocksDBTransactionImpl::log(const ceph::bufferlist &bl)
   }
 }
 
-void RocksDBStore::RocksDBTransactionImpl::iterate(TransactionImpl *_target) {
-  struct BatchObserver : public rocksdb::WriteBatch::Handler {
-      BatchObserver(TransactionImpl *t) : target(t){}
-
-      //rocksdb::WriteBatch::Handler overrides
-
-      // TODO to implement: we might want to implement other methods from
-      // WriteBatch::Handler later. Omitting as they're not used for now.
-      //
-
-      void LogData(const rocksdb::Slice& blob) override {
-        bufferlist bl;
-        bl.append(blob.data(), blob.size());
-        target->log(bl);
-      }
-    private:
-      TransactionImpl* target;
-  } h(_target) ;
-  bat.Iterate(&h);
-}
-
 const std::string& RocksDBStore::RocksDBTransactionImpl::get_as_bytes()
 {
   return bat.Data();
@@ -1939,6 +1918,68 @@ int RocksDBStore::get(
   utime_t lat = ceph_clock_now() - start;
   logger->tinc(l_rocksdb_get_latency, lat);
   return 0;
+}
+
+void RocksDBStore::RocksDBTxcLogInspector::set_from_bytes(
+   const std::string& s) {
+  bat = rocksdb::WriteBatch(s);
+}
+
+bool RocksDBStore::RocksDBTxcLogInspector::iterate(
+   KeyValueDB::TxcLogInspector::CallBack cb) {
+
+  struct BatchObserver : public rocksdb::WriteBatch::Handler {
+    BatchObserver(CallBack _cb) : cb(_cb) {}
+
+    //rocksdb::WriteBatch::Handler overrides
+
+    // TODO to implement: we might want to implement other methods from
+    // WriteBatch::Handler later. Omitting as they're not used for now.
+    //
+    rocksdb::Status PutCF(uint32_t column_family_id, const rocksdb::Slice& key,
+			  const rocksdb::Slice& value) override {
+      return rocksdb::Status::OK();
+    }
+    virtual rocksdb::Status PutEntityCF(uint32_t /* column_family_id */,
+					 const rocksdb::Slice& /* key */,
+					 const rocksdb::Slice& /* entity */) {
+      return rocksdb::Status::OK();
+    }
+
+    rocksdb::Status DeleteCF(uint32_t column_family_id,
+			     const rocksdb::Slice& key) override {
+      return rocksdb::Status::OK();
+    }
+    rocksdb::Status SingleDeleteCF(uint32_t column_family_id,
+				    const rocksdb::Slice& key) override {
+      return rocksdb::Status::OK();
+    }
+    rocksdb::Status DeleteRangeCF(uint32_t /*column_family_id*/,
+				  const rocksdb::Slice& /*begin_key*/,
+				  const rocksdb::Slice& /*end_key*/) override {
+      return rocksdb::Status::OK();
+    }
+    rocksdb::Status MergeCF(uint32_t column_family_id,
+			    const rocksdb::Slice& key,
+			    const rocksdb::Slice& value) override {
+      return rocksdb::Status::OK();
+    }
+    rocksdb::Status PutBlobIndexCF(uint32_t /*column_family_id*/,
+				    const rocksdb::Slice& /*key*/,
+				    const rocksdb::Slice& /*value*/) override {
+      return rocksdb::Status::OK();
+    }
+    void LogData(const rocksdb::Slice& blob) override {
+      bufferlist bl;
+      bl.append(blob.data(), blob.size());
+      cb(bl);
+    }
+  private:
+    CallBack cb;
+  } observer(cb);
+  ceph_assert(bat.Data().size() > 0);
+  auto s = bat.Iterate(&observer);
+  return s.ok();
 }
 
 int RocksDBStore::get(

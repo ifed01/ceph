@@ -5677,26 +5677,22 @@ void BlueStore::_close_bdev()
   bdev = NULL;
 }
 
-int BlueStore::_maybe_open_wal()
+BluestoreWAL* BlueStore::_create_wal()
 {
-  // do nothing if already opened
-  if (wal) {
-    return 0;
-  }
-  int r = 0; // it's OK if there is no WAL
   bluefs_huge_extent_t wal_ext;
   BlockDevice* bdev = bluefs->get_external_wal(&wal_ext);
+  BluestoreWAL* w = nullptr;
   if (bdev) {
-    if(!bluefs_layout.dedicated_db) {
+    if (!bluefs_layout.dedicated_db) {
       // Due to design limitation we can't use WAL when there is no dedicated DB
       // volume - we need to submit WAL data to DB on startup's replay but
       // main(shared) device's allocation map isn't ready at this point
       // hence DB is unable to store data at that device and it needs dedicated
       // one.
       derr << __func__
-           << " error: BlueStore WAL is not permited without dedicated"
-           << " DB volume." << dendl;
-      return -ENOMEDIUM;
+	<< " error: BlueStore WAL is not permited without dedicated"
+	<< " DB volume." << dendl;
+      return nullptr;
     }
 
     ceph_assert(wal_ext.length &&
@@ -5704,21 +5700,31 @@ int BlueStore::_maybe_open_wal()
 
     ceph_assert(wal_ext.length != 0);
     uint64_t flush_thrs = wal_ext.length * cct->_conf->bluestore_wal_flush_ratio;
-    wal = new BluestoreWAL(
+    w = new BluestoreWAL(
       cct,
       bdev,
       db,
       fsid,
       flush_thrs);
     dout(1) << __func__ << " " << wal_ext << std::hex
-            << " flush threshold:" << flush_thrs
-            << std::dec << dendl;
-    wal->init_add_pages(wal_ext.offset, wal_ext.length);
+      << " flush threshold:" << flush_thrs
+      << std::dec << dendl;
+    w->init_add_pages(wal_ext.offset, wal_ext.length);
   }
-  return r;
+  return w;
 }
 
-void BlueStore::_close_wal()
+int BlueStore::_maybe_open_wal()
+{
+  // do nothing if already opened
+  if (wal) {
+    return 0;
+  }
+  wal = _create_wal();
+  return wal ? 0 : -ENOMEDIUM;
+}
+
+void BlueStore::_shutdown_wal()
 {
   if (wal) {
     wal->shutdown(db_was_restricted);
@@ -6089,7 +6095,18 @@ void BlueStore::_post_init_alloc(const std::map<uint64_t, uint64_t>& zone_adjust
       f->allocate(i.first, i.second, t);
       f->release(i.first, i.second, t);
     }
-    r = _submit_transaction_sync(t);
+    if (wal) {
+      derr << __func__
+	   << " standalone WAL and SMR support are mutually exclusive for now."
+	   << " Please adjust OSD settings";
+           << dendl;
+      ceph_assert(wal == nullptr); // we might need to fill allocated/released sets
+                                   // in case of standalone WAL.
+				   // It's unclear what to do with pool_id if any as well
+                                   // Not implemented atm.
+    uint64_t pool_id = 0;
+    interval_set<uint64_t> allocated, released;
+    r = _submit_transaction_sync(t, pool_id, allocated, released);
   } else
 #endif
   if (fm->is_null_manager()) {
@@ -6966,7 +6983,7 @@ void BlueStore::_close_db()
            << " per_pool=" << per_pool_stat_collection
            << " pool stats=" << osd_pools.size()
            << dendl;
-  _close_wal();
+  _shutdown_wal();
   if (!db) {
     return;
   }
@@ -9773,7 +9790,7 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
 
     dout(1) << __func__ << " sorting out misreferenced extents" << dendl;
     auto& misref_extents = repairer.get_misreferences();
-    interval_set<uint64_t> to_release;
+    interval_set<uint64_t> allocated, to_release;
     it = db->get_iterator(PREFIX_OBJ, KeyValueDB::ITERATOR_NOCACHE);
     if (it) {
       // fill global if not overriden below
@@ -9888,6 +9905,9 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
 	      bypass_rest = true;
 	      break;
 	    }
+	    for (auto& p : exts) {
+	      allocated.union_insert(p.offset, p.length);
+	    }
             expected_statfs->allocated += e->length;
 	    if (compressed) {
 	      expected_statfs->data_compressed_allocated += e->length;
@@ -9966,6 +9986,22 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
 	fm->release(it.get_start(), it.get_len(), txn);
       }
       alloc->release(to_release);
+
+      if (wal) {
+	// use dummy pool_id (=meta pool) here as it looks like there is no
+	// way to find proper one at this point. This has almost no drawbacks
+	// except an unlikely case when OSD crashes between standalone WAL
+	// submission and DB flush.
+	// In the latter case pools' statfs might be inconsistent.
+	// One can fix that by another one (successful!) BlueStore repair.
+	uint64_t pool_id = coll_t::meta().pool();
+
+	// log allocation info in txc hence _submit_transaction_sync
+	// can avoid that
+	_log_alloc_info(txn, pool_id, allocated, to_release);
+      }
+
+      allocated.clear();
       to_release.clear();
     } // if (it) {
   } //if (repair && repairer.preprocess_misreference()) {
@@ -10259,7 +10295,9 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
     dout(5) << __func__ << " applying repair results" << dendl;
     repaired = repairer.apply(
       [&](KeyValueDB::Transaction t) {
-        return _submit_transaction_sync(t);
+        return _submit_transaction_sync(t); // allocated/released sets
+	                                    // were applied to transaction
+	                                    // when being prepared
       },
       [&]() {
         db->compact();
@@ -10339,31 +10377,43 @@ void BlueStore::inject_stray_shared_blob_key(uint64_t sbid)
 };
 
 
-void BlueStore::inject_leaked(uint64_t len)
+bool BlueStore::inject_leaked(uint64_t len)
 {
+  // injection is unsupported if there is no way to persist it
+  if (fm->is_null_manager() && !wal) {
+    return false;
+  }
+
   PExtentVector exts;
   int64_t alloc_len = alloc->allocate(len, min_alloc_size,
 					   min_alloc_size * 256, 0, &exts);
 
-  if (fm->is_null_manager()) {
-    return;
-  }
-
   KeyValueDB::Transaction txn;
+  interval_set<uint64_t> allocated, released;
+
   txn = db->get_transaction();
 
   ceph_assert(alloc_len >= (int64_t)len);
   for (auto& p : exts) {
-    fm->allocate(p.offset, p.length, txn);
+    if (!fm->is_null_manager()) {
+      fm->allocate(p.offset, p.length, txn);
+    }
+    allocated.union_insert(p.offset, p.length);
   }
-  _submit_transaction_sync(txn);
+  _submit_transaction_sync(txn, coll_t::meta().pool() /*arbitrary pool*/,
+    allocated, released);
+  return true;
 }
 
-void BlueStore::inject_false_free(coll_t cid, ghobject_t oid)
+bool BlueStore::inject_false_free(coll_t cid, ghobject_t oid)
 {
-  ceph_assert(!fm->is_null_manager());
+  // injection is unsupported if there is no way to persist it
+  if (fm->is_null_manager() && !wal) {
+    return false;
+  }
 
   KeyValueDB::Transaction txn;
+  interval_set<uint64_t> allocated, released;
   OnodeRef o;
   CollectionRef c = _get_collection(cid);
   ceph_assert(c);
@@ -10394,6 +10444,7 @@ void BlueStore::inject_false_free(coll_t cid, ghobject_t oid)
 	  dout(20) << __func__ << " release 0x" << std::hex << p->offset
 	           << "~" << p->length << std::dec << dendl;
 	  fm->release(p->offset, p->length, txn);
+	  released.union_insert(p->offset, p->length);
 	  injected = true;
 	  break;
 	}
@@ -10402,7 +10453,9 @@ void BlueStore::inject_false_free(coll_t cid, ghobject_t oid)
     }
   }
   ceph_assert(injected);
-  _submit_transaction_sync(txn);
+  _submit_transaction_sync(txn, coll_t::meta().pool() /*arbitrary pool*/,
+    allocated, released);
+  return injected;
 }
 
 void BlueStore::inject_legacy_omap()
@@ -11543,13 +11596,27 @@ int BlueStore::_decompress(bufferlist& source, bufferlist* result)
   return r;
 }
 
-int BlueStore::_submit_transaction_sync(KeyValueDB::Transaction t, bool nonempty_txn)
+int BlueStore::_submit_transaction_sync(KeyValueDB::Transaction t,
+  bool nonempty_txn)
+{
+  interval_set<uint64_t> allocated, released;
+  return _submit_transaction_sync(t, 0 /*dummy*/, allocated, released, nonempty_txn);
+}
+
+int BlueStore::_submit_transaction_sync(KeyValueDB::Transaction t,
+  uint64_t pool_id,
+  const interval_set<uint64_t>& allocated,
+  const interval_set<uint64_t>& released,
+  bool nonempty_txn)
 {
   int r = 0;
   if (wal) {
     if (nonempty_txn) {
       BlueWALContextSync txc(cct, this, t);
-      r = wal->log_submit_sync(&txc);
+      _log_alloc_info(t, pool_id, allocated, released);
+      if (txc.get_payload().length()) {
+        r = wal->log_submit_sync(&txc);
+      }
     }
   } else {
     r = db->submit_transaction_sync(t);
@@ -12919,6 +12986,7 @@ void BlueStore::_txc_state_proc(TransContext *txc)
       throttle.log_state_latency(*txc, logger, l_bluestore_state_io_done_lat);
       if (wal) {
 	txc->set_state(TransContext::STATE_GOING_WAL);
+	_log_alloc_info(txc->t, txc->osd_pool_id, txc->allocated, txc->released);
         wal->log(txc);
       } else {
         _txc_queue_kv(txc);
@@ -18122,6 +18190,27 @@ void BlueStore::_record_allocation_stats()
   alloc_stats_history[0].swap(t0);
 }
 
+void BlueStore::_log_alloc_info(KeyValueDB::Transaction t,
+  uint64_t pool_id,
+  const interval_set<uint64_t>& allocated,
+  const interval_set<uint64_t>& released)
+{
+  if (pool_id == 0) {
+    return;
+  }
+  if (allocated.empty() && released.empty()) {
+    return;
+  }
+  bufferlist bl;
+  bluestore_alloc_log_entry_t::encode(bl, pool_id, allocated, released);
+  dout(20) << __func__ << " " << bl.length()
+          << std::hex
+          << " a:" << allocated
+          << " r:" << released
+          << std::dec << dendl;
+  t->log(bl);
+}
+
 // ===========================================
 // BlueStoreRepairer
 
@@ -19178,7 +19267,7 @@ int BlueStore::restore_allocator(Allocator* dest_allocator, uint64_t *num, uint6
 }
 
 //-----------------------------------------------------------------------------------
-void BlueStore::set_allocation_in_simple_bmap(SimpleBitmap* sbmap, uint64_t offset, uint64_t length)
+void BlueStore::note_allocation_in_simple_bmap(bool set, SimpleBitmap* sbmap, uint64_t offset, uint64_t length)
 {
   dout(30) << __func__ << " 0x" << std::hex
            << offset << "~" << length
@@ -19186,7 +19275,11 @@ void BlueStore::set_allocation_in_simple_bmap(SimpleBitmap* sbmap, uint64_t offs
            << dendl;
   ceph_assert((offset & min_alloc_size_mask) == 0);
   ceph_assert((length & min_alloc_size_mask) == 0);
-  sbmap->set(offset >> min_alloc_size_order, length >> min_alloc_size_order);
+  if (set) {
+    sbmap->set(offset >> min_alloc_size_order, length >> min_alloc_size_order);
+  } else {
+    sbmap->clr(offset >> min_alloc_size_order, length >> min_alloc_size_order);
+  }
 }
 
 void BlueStore::ExtentDecoderPartial::_consume_new_blob(bool spanning,
@@ -19215,7 +19308,7 @@ void BlueStore::ExtentDecoderPartial::_consume_new_blob(bool spanning,
         ++stats.skipped_illegal_extent;
         continue;
       }
-      store.set_allocation_in_simple_bmap(&sbmap, pe.offset, pe.length);
+      store.note_allocation_in_simple_bmap(true, &sbmap, pe.offset, pe.length);
 
       per_pool_statfs->allocated() += pe.length;
       if (compressed) {
@@ -19329,7 +19422,7 @@ int BlueStore::read_allocation_from_onodes(SimpleBitmap *sbmap, read_alloc_stats
       uint64_t allocated = 0;
       for (auto& r : shared_blob.ref_map.ref_map) {
         ceph_assert(r.first != bluestore_pextent_t::INVALID_OFFSET);
-        set_allocation_in_simple_bmap(sbmap, r.first, r.second.length);
+        note_allocation_in_simple_bmap(true, sbmap, r.first, r.second.length);
         allocated += r.second.length;
       }
       auto &sbi = sb_info.add_or_adopt(sbid);
@@ -19428,7 +19521,7 @@ int BlueStore::reconstruct_allocations(SimpleBitmap *sbmap, read_alloc_stats_t &
 {
   // first set space used by superblock
   auto super_length = std::max<uint64_t>(min_alloc_size, SUPER_RESERVED);
-  set_allocation_in_simple_bmap(sbmap, 0, super_length);
+  note_allocation_in_simple_bmap(true, sbmap, 0, super_length);
   stats.extent_count++;
 
   // then set all space taken by Objects
@@ -19436,6 +19529,48 @@ int BlueStore::reconstruct_allocations(SimpleBitmap *sbmap, read_alloc_stats_t &
   if (ret < 0) {
     derr << "failed read_allocation_from_onodes()" << dendl;
     return ret;
+  }
+
+  // We have to apply allocations/releases from BlueStore WAL to make
+  // allocator map state consistent. Failing to do that might cause data
+  // corruption, particularly on a shared main/db device
+  BluestoreWAL* _wal = _create_wal();
+  // BlueStore WAL may be not setup though.
+  if (_wal) {
+    std::unique_ptr<KeyValueDB::TxcLogInspector> log_insp(db->get_log_inspector());
+
+    auto apply_fn = [&](uint64_t pool_id, bool alloc, uint64_t offs, uint64_t len) {
+      dout(7) << __func__
+	<< " pool " << pool_id
+	<< (alloc ? " allocated in wal: 0x" : " released in wal: 0x")
+	<< std::hex << offs << "~" << len
+	<< std::dec << dendl;
+      note_allocation_in_simple_bmap(alloc, sbmap, offs, len);
+    };
+    auto inspect_entry_fn = [&](const ceph::bufferlist& bl) {
+      bluestore_alloc_log_entry_t e;
+      auto blp = bl.cbegin();
+      try {
+	e.decode(blp, apply_fn);
+      } catch (ceph::buffer::error& e) {
+	bufferlist bl_tmp(bl);
+	string s = bl_tmp.c_str();
+	derr << __func__ << " failed to decode alloc_log_entry: "
+	  << pretty_binary_string(s) << dendl;
+	throw (e);
+      }
+    };
+    auto inspect_fn = [&](const std::string& bytes) {
+      log_insp->set_from_bytes(bytes);
+      bool b = log_insp->iterate(inspect_entry_fn);
+      ceph_assert(b);
+      return 0;
+    };
+
+    _wal->replay(true, inspect_fn);
+
+    // do not call shutdown to avoid WAL update
+    delete _wal;
   }
 
   return 0;

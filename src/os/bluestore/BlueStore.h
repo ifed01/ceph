@@ -2748,8 +2748,12 @@ private:
 	       bool read_only = false,
 	       bool restricted = false);
   void _close_db();
+
+  BluestoreWAL* _create_wal();
+
   int _maybe_open_wal();
-  void _close_wal();
+  void _shutdown_wal();
+
   int _open_fm(KeyValueDB::Transaction t,
                bool read_only,
                bool db_avail,
@@ -3372,8 +3376,8 @@ public:
   void inject_no_shared_blob_key();
   void inject_stray_shared_blob_key(uint64_t sbid);
 
-  void inject_leaked(uint64_t len);
-  void inject_false_free(coll_t cid, ghobject_t oid);
+  bool inject_leaked(uint64_t len);
+  bool inject_false_free(coll_t cid, ghobject_t oid);
   void inject_statfs(const std::string& key, const store_statfs_t& new_statfs);
   void inject_global_statfs(const store_statfs_t& new_statfs);
   void inject_misreference(coll_t cid1, ghobject_t oid1,
@@ -3482,6 +3486,11 @@ private:
     uint64_t logical_offset) const;
   int _decompress(ceph::buffer::list& source, ceph::buffer::list* result);
   int _submit_transaction_sync(KeyValueDB::Transaction t, bool nonempty_txn = true);
+  int _submit_transaction_sync(KeyValueDB::Transaction t,
+    uint64_t pool_id,
+    const interval_set<uint64_t>& allocated,
+    const interval_set<uint64_t>& released,
+    bool nonempty_txn = true);
 
   // --------------------------------------------------------
   // write ops
@@ -3741,6 +3750,12 @@ private:
   void _collect_allocation_stats(uint64_t need, uint32_t alloc_size,
                                  const PExtentVector&);
   void _record_allocation_stats();
+
+  void _log_alloc_info(KeyValueDB::Transaction t,
+    uint64_t pool_id,
+    const interval_set<uint64_t>& allocated,
+    const interval_set<uint64_t>& released);
+
 private:
   uint64_t probe_count = 0;
   std::atomic<uint64_t> alloc_stats_count = {0};
@@ -3829,7 +3844,7 @@ public:
   int  push_allocation_to_rocksdb();
   int  read_allocation_from_drive_for_bluestore_tool();
 #endif
-  void set_allocation_in_simple_bmap(SimpleBitmap* sbmap, uint64_t offset, uint64_t length);
+  void note_allocation_in_simple_bmap(bool set, SimpleBitmap* sbmap, uint64_t offset, uint64_t length);
 
 private:
   struct  read_alloc_stats_t {

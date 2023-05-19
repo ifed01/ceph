@@ -900,12 +900,12 @@ void BluestoreWAL::submitted(BlueWALContext* txc)
 
 void BluestoreWAL::shutdown(bool restricted)
 {
+  dout(10) << __func__ << " WAL" << dendl;
   if (!flush_thread.is_started()) {
     return;
   }
-
-  dout(10) << __func__ << " WAL" << dendl;
   flush_thread.stop();
+
   std::unique_lock l(lock);
   ceph_assert(num_queued == 0);
   dout(15) << __func__ << " WAL thread stopped" << dendl;

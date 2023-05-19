@@ -379,6 +379,11 @@ public:
       cct->get_perfcounters_collection()->remove(logger);
       delete logger;
     }
+    // in case we bypassed shutdown() call
+    if (flush_thread.is_started()) {
+      flush_thread.stop();
+    }
+
   }
   void init_add_pages(uint64_t offset, uint64_t len);
 

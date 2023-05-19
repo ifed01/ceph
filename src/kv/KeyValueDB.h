@@ -136,10 +136,6 @@ public:
       ceph_abort_msg("Not implemented");
     }
 
-    virtual void iterate(TransactionImpl *target) {
-      ceph_abort_msg("Not implemented");
-    }
-
     virtual ~TransactionImpl() {}
     // This assumes transaction is valid during
     // the life of the out buffer .
@@ -154,6 +150,45 @@ public:
   };
   typedef std::shared_ptr< TransactionImpl > Transaction;
 
+  //
+  // Specific implementation of KeyValueDB::TransactionImpl
+  // for 'inspecting' log entries from a transaction through
+  // TransactionImpl::iterate() method
+  //
+  class TxcLogInspector : public KeyValueDB::TransactionImpl {
+  public:
+    using KeyValueDB::TransactionImpl::log;
+    typedef std::function<void(const ceph::bufferlist& bl)> CallBack;
+    virtual bool iterate(CallBack) = 0;
+
+  private:
+    using KeyValueDB::TransactionImpl::set;
+    using KeyValueDB::TransactionImpl::rmkey;
+    // defining all other methods as dummy
+    void set(
+      const std::string&,
+      const std::string&,
+      const ceph::buffer::list&) override {
+    }
+    void rmkey(
+      const std::string&,
+      const std::string&) override {
+    }
+    void rmkeys_by_prefix(
+      const std::string&) override {
+    }
+
+    void rm_range_keys(
+      const std::string&,
+      const std::string&,
+      const std::string&) override {
+    }
+    void merge(
+      const std::string&,
+      const std::string&,
+      const ceph::buffer::list&) override {
+    }
+  };
   /// create a new instance
   static KeyValueDB *create(CephContext *cct, const std::string& type,
 			    const std::string& dir,
@@ -177,6 +212,7 @@ public:
   virtual int repair(std::ostream &out) { return 0; }
 
   virtual Transaction get_transaction() = 0;
+  virtual TxcLogInspector* get_log_inspector() = 0;
   virtual int submit_transaction(Transaction) = 0;
   virtual int submit_transaction_sync(Transaction t) {
     return submit_transaction(t);
