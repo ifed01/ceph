@@ -2756,7 +2756,6 @@ private:
 
   int _open_fm(KeyValueDB::Transaction t,
                bool read_only,
-               bool db_avail,
                bool fm_restore = false);
   void _close_fm();
   int _write_out_fm_meta(uint64_t target_size);
