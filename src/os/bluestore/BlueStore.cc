@@ -5735,10 +5735,25 @@ void BlueStore::_shutdown_wal()
 
 int BlueStore::_open_fm(KeyValueDB::Transaction t,
                         bool read_only,
-                        bool db_avail,
                         bool fm_restore)
 {
   int r;
+  
+  // read freelist_type if not in create mode
+  if (!t)
+  {
+    ceph_assert(db);
+    bufferlist bl;
+    db->get(PREFIX_SUPER, "freelist_type", &bl);
+    if (bl.length()) {
+      freelist_type = std::string(bl.c_str(), bl.length());
+    }
+    else {
+      ceph_abort_msg("Not Support extent freelist manager");
+    }
+    dout(5) << __func__ << "::NCB::freelist_type=" << freelist_type << dendl;
+  }
+
 
   dout(5) << __func__ << "::NCB::freelist_type=" << freelist_type << dendl;
   ceph_assert(fm == NULL);
@@ -5750,7 +5765,6 @@ int BlueStore::_open_fm(KeyValueDB::Transaction t,
   // when function is called in repair mode (to_repair=true) we skip db->open()/create()
   bool can_have_null_fm = !is_db_rotational() &&
                           !read_only &&
-                          db_avail &&
                           cct->_conf->bluestore_allocation_from_file &&
                           !bdev->is_smr();
 
@@ -5958,6 +5972,29 @@ int BlueStore::_create_alloc()
 
 int BlueStore::_init_alloc(std::map<uint64_t, uint64_t> *zone_adjustments)
 {
+  ceph_assert(db);
+  {
+    bufferlist bl;
+    db->get(PREFIX_SUPER, "min_alloc_size", &bl);
+    auto p = bl.cbegin();
+    try {
+      uint64_t val;
+      decode(val, p);
+      min_alloc_size = val;
+      min_alloc_size_order = std::countr_zero(val);
+      min_alloc_size_mask = min_alloc_size - 1;
+
+      ceph_assert(min_alloc_size == 1u << min_alloc_size_order);
+    }
+    catch (ceph::buffer::error& e) {
+      derr << __func__ << " unable to read min_alloc_size" << dendl;
+      return -EIO;
+    }
+    dout(1) << __func__ << " min_alloc_size 0x" << std::hex << min_alloc_size
+      << std::dec << dendl;
+    logger->set(l_bluestore_alloc_unit, min_alloc_size);
+  }
+
   int r = _create_alloc();
   if (r < 0) {
     return r;
@@ -6628,12 +6665,13 @@ int BlueStore::_open_db_ex(bool read_only, bool to_repair)
     }
   });
 
-  r = _open_super_meta();
-  if (r < 0) {
-    return r;
-  }
-
-  r = _open_fm(nullptr, true, false);
+  // FIXME minor: if we introduce freelist_type update later and
+  // BlueWAL is in use we might need to handle reading the type 
+  // from DB more carefully since WAL is not replayed at this point.
+  // Hence _open_fm might read previous value. Not a big deal so far
+  // as we don't update freelist_type in DB yet.
+  //
+  r = _open_fm(nullptr, true);
   if (r < 0) {
     return r;
   }
@@ -6643,6 +6681,11 @@ int BlueStore::_open_db_ex(bool read_only, bool to_repair)
     }
   });
 
+  // FIXME minor: potentially min_alloc_size update from _upgrade_super
+  // might be missed if BlueWAL is enabled - the latter is not replayed
+  // at this point and hence we might read the prevoius value from DB.
+  // Unlikely to happen though.
+  //
   r = _init_alloc(&zone_adjustments);
   if (r < 0) {
     return r;
@@ -6654,7 +6697,6 @@ int BlueStore::_open_db_ex(bool read_only, bool to_repair)
   });
 
   // Re-open in the proper mode(s).
-
   // Can't simply bypass second open for read-only mode as we need to
   // load allocated extents from bluefs into allocator.
   // And now it's time to do that
@@ -6662,6 +6704,10 @@ int BlueStore::_open_db_ex(bool read_only, bool to_repair)
   _close_db();
   close_db = false;
   r = _open_db(false, to_repair, read_only);
+  if (r < 0) {
+    return r;
+  }
+  r = _open_super_meta();
   if (r < 0) {
     return r;
   }
@@ -7461,7 +7507,7 @@ int BlueStore::mkfs()
 
   {
     KeyValueDB::Transaction t = db->get_transaction();
-    r = _open_fm(t, false, true);
+    r = _open_fm(t, false);
     if (r < 0)
       goto out_close_db;
     {
@@ -12620,17 +12666,6 @@ int BlueStore::_open_super_meta()
     blobid_last = blobid_max.load();
   }
 
-  // freelist
-  {
-    bufferlist bl;
-    db->get(PREFIX_SUPER, "freelist_type", &bl);
-    if (bl.length()) {
-      freelist_type = std::string(bl.c_str(), bl.length());
-    } else {
-      ceph_abort_msg("Not Support extent freelist manager");
-    }
-    dout(5) << __func__ << "::NCB::freelist_type=" << freelist_type << dendl;
-  }
   // ondisk format
   int32_t compat_ondisk_format = 0;
   {
@@ -12673,27 +12708,6 @@ int BlueStore::_open_super_meta()
 	 << compat_ondisk_format << " but we only understand version "
 	 << latest_ondisk_format << dendl;
     return -EPERM;
-  }
-
-  {
-    bufferlist bl;
-    db->get(PREFIX_SUPER, "min_alloc_size", &bl);
-    auto p = bl.cbegin();
-    try {
-      uint64_t val;
-      decode(val, p);
-      min_alloc_size = val;
-      min_alloc_size_order = std::countr_zero(val);
-      min_alloc_size_mask  = min_alloc_size - 1;
-
-      ceph_assert(min_alloc_size == 1u << min_alloc_size_order);
-    } catch (ceph::buffer::error& e) {
-      derr << __func__ << " unable to read min_alloc_size" << dendl;
-      return -EIO;
-    }
-    dout(1) << __func__ << " min_alloc_size 0x" << std::hex << min_alloc_size
-	     << std::dec << dendl;
-    logger->set(l_bluestore_alloc_unit, min_alloc_size);
   }
 
   // smr fields
@@ -19892,7 +19906,7 @@ int BlueStore::reset_fm_for_restore()
   KeyValueDB::Transaction t = db->get_transaction();
   // call _open_fm() with fm_restore set to TRUE
   // this will mark the full device space as allocated (and not just the reserved space)
-  _open_fm(t, true, true, true);
+  _open_fm(t, true, true);
   if (fm == nullptr) {
     derr << "Failed _open_fm()" << dendl;
     return -1;
