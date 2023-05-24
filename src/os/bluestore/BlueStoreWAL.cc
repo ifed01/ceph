@@ -668,6 +668,7 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueWALContext* txc, bool force)
           << " txc plen:" << t_len
           << " txc full_len:" << full_len
           << " force: " << force
+          << " future ops: " << future_ops
           << dendl;
   logger->inc(l_bluestore_wal_input_avg, t_len);
 
@@ -900,7 +901,7 @@ void BluestoreWAL::submitted(BlueWALContext* txc)
 
 void BluestoreWAL::shutdown(bool restricted)
 {
-  dout(10) << __func__ << " WAL" << dendl;
+  dout(7) << __func__ << " WAL " << restricted << dendl;
   if (!flush_thread.is_started()) {
     return;
   }
@@ -918,14 +919,14 @@ void BluestoreWAL::shutdown(bool restricted)
   IOContext ioctx(cct, nullptr);
   auto wiping = wipe_pages(&ioctx);
   if (wiping) {
-    dout(10) << __func__
+    dout(7) << __func__
             << " wiping " << wiping
             << dendl;
 
     aio_submit(&ioctx);
     ioctx.aio_wait();
 
-    dout(10) << __func__
+    dout(7) << __func__
             << " wiped " << dendl;
   }
 }
@@ -976,7 +977,8 @@ int BluestoreWAL::_read_page_header(uint64_t o,
 int BluestoreWAL::replay(bool restricted,
   std::function<int(const std::string&)> submit_db_fn)
 {
-  dout(10) << __func__
+  dout(7) << __func__
+           << " start:"
            << " page = " << page_size
            << " head = " << head_size
            << " block = " << block_size
@@ -996,7 +998,7 @@ int BluestoreWAL::replay(bool restricted,
     }
   }
   if (valid_page_headers.empty()) {
-    dout(15) << __func__ << " wal is empty, completed." << dendl;
+    dout(15) << __func__ << " completed: wal is empty." << dendl;
     //FIXME: setup all the sequence numbers properly!
     //FIXME: actually we need to proceed with increasing txc_seqno to avoid potential issues
     //with accessing legacy blocks
@@ -1104,7 +1106,7 @@ int BluestoreWAL::replay(bool restricted,
               return r;
             }
             ++db_submitted;
-            dout(7) << __func__ << " submit txc " << h << dendl;
+            dout(15) << __func__ << " submit txc " << h << dendl;
             r = submit_db_fn(content);
             if (r != 0) {
               derr << __func__ << " txc submit failed, txc " << h
