@@ -5714,14 +5714,12 @@ BluestoreWAL* BlueStore::_create_wal()
   return w;
 }
 
-int BlueStore::_maybe_open_wal()
+void BlueStore::_maybe_open_wal()
 {
   // do nothing if already opened
-  if (wal) {
-    return 0;
+  if (!wal) {
+    wal = _create_wal(); // it's OK to get nullptr if WAL isn't configured
   }
-  wal = _create_wal();
-  return wal ? 0 : -ENOMEDIUM;
 }
 
 void BlueStore::_shutdown_wal()
@@ -6948,12 +6946,7 @@ int BlueStore::_open_db(bool create,
   db_was_restricted = restricted;
 
   if (!read_only) {
-    r = _maybe_open_wal();
-    if (r < 0) {
-      derr << __func__ << " failed to open WAL" << dendl;
-      _close_db();
-      return r;
-    }
+    _maybe_open_wal();
   } else {
     ceph_assert(!wal); //wal & read_only mode are incompatible
   }
