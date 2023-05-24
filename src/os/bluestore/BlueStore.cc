@@ -14397,7 +14397,7 @@ int BlueStore::_deferred_replay()
   if (bluefs) {
     bluefs->foreach_block_extents(
       bluefs_layout.shared_bdev,
-      [&] (uint64_t start, uint32_t len) {
+      [&] (uint64_t start, uint64_t len) {
         bluefs_extents.insert(start, len);
       }
     );
