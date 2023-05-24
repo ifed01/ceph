@@ -1666,105 +1666,6 @@ private:
     }
   };
 
-  struct volatile_statfs{
-    enum {
-      STATFS_ALLOCATED = 0,
-      STATFS_STORED,
-      STATFS_COMPRESSED_ORIGINAL,
-      STATFS_COMPRESSED,
-      STATFS_COMPRESSED_ALLOCATED,
-      STATFS_LAST
-    };
-    int64_t values[STATFS_LAST];
-    volatile_statfs() {
-      memset(this, 0, sizeof(volatile_statfs));
-    }
-    void reset() {
-      *this = volatile_statfs();
-    }
-    bool empty() const {
-      for (size_t i = 0; i < STATFS_LAST; ++i) {
-	if (values[i]) {
-	  return false;
-	}
-      }
-      return true;
-    }
-    void publish(store_statfs_t* buf) const {
-      buf->allocated = allocated();
-      buf->data_stored = stored();
-      buf->data_compressed = compressed();
-      buf->data_compressed_original = compressed_original();
-      buf->data_compressed_allocated = compressed_allocated();
-    }
-
-    volatile_statfs& operator+=(const volatile_statfs& other) {
-      for (size_t i = 0; i < STATFS_LAST; ++i) {
-	values[i] += other.values[i];
-      }
-      return *this;
-    }
-    int64_t& allocated() {
-      return values[STATFS_ALLOCATED];
-    }
-    int64_t& stored() {
-      return values[STATFS_STORED];
-    }
-    int64_t& compressed_original() {
-      return values[STATFS_COMPRESSED_ORIGINAL];
-    }
-    int64_t& compressed() {
-      return values[STATFS_COMPRESSED];
-    }
-    int64_t& compressed_allocated() {
-      return values[STATFS_COMPRESSED_ALLOCATED];
-    }
-    int64_t allocated() const {
-      return values[STATFS_ALLOCATED];
-    }
-    int64_t stored() const {
-      return values[STATFS_STORED];
-    }
-    int64_t compressed_original() const {
-      return values[STATFS_COMPRESSED_ORIGINAL];
-    }
-    int64_t compressed() const {
-      return values[STATFS_COMPRESSED];
-    }
-    int64_t compressed_allocated() const {
-      return values[STATFS_COMPRESSED_ALLOCATED];
-    }
-    volatile_statfs& operator=(const store_statfs_t& st) {
-      values[STATFS_ALLOCATED] = st.allocated;
-      values[STATFS_STORED] = st.data_stored;
-      values[STATFS_COMPRESSED_ORIGINAL] = st.data_compressed_original;
-      values[STATFS_COMPRESSED] = st.data_compressed;
-      values[STATFS_COMPRESSED_ALLOCATED] = st.data_compressed_allocated;
-      return *this;
-    }
-    bool is_empty() {
-      return values[STATFS_ALLOCATED] == 0 &&
-	values[STATFS_STORED] == 0 &&
-	values[STATFS_COMPRESSED] == 0 &&
-	values[STATFS_COMPRESSED_ORIGINAL] == 0 &&
-	values[STATFS_COMPRESSED_ALLOCATED] == 0;
-    }
-    void decode(ceph::buffer::list::const_iterator& it) {
-      using ceph::decode;
-      for (size_t i = 0; i < STATFS_LAST; i++) {
-	decode(values[i], it);
-      }
-    }
-
-    void encode(ceph::buffer::list& bl) {
-      using ceph::encode;
-      for (size_t i = 0; i < STATFS_LAST; i++) {
-	encode(values[i], bl);
-      }
-    }
-  };
-
-
   struct TransContext final : public AioContext, public BlueWALContext {
     MEMPOOL_CLASS_HELPERS();
 
@@ -3487,6 +3388,7 @@ private:
   int _submit_transaction_sync(KeyValueDB::Transaction t, bool nonempty_txn = true);
   int _submit_transaction_sync(KeyValueDB::Transaction t,
     uint64_t pool_id,
+    const volatile_statfs& statfs,
     const interval_set<uint64_t>& allocated,
     const interval_set<uint64_t>& released,
     bool nonempty_txn = true);
@@ -3752,6 +3654,7 @@ private:
 
   void _log_alloc_info(KeyValueDB::Transaction t,
     uint64_t pool_id,
+    const volatile_statfs& statfs,
     const interval_set<uint64_t>& allocated,
     const interval_set<uint64_t>& released);
 
@@ -3957,18 +3860,18 @@ private:
     FSCK_ObjectCtx& ctx);
 };
 
-inline std::ostream& operator<<(std::ostream& out, const BlueStore::volatile_statfs& s) {
+inline std::ostream& operator<<(std::ostream& out, const volatile_statfs& s) {
   return out 
     << " allocated:"
-      << s.values[BlueStore::volatile_statfs::STATFS_ALLOCATED]
+      << s.values[volatile_statfs::STATFS_ALLOCATED]
     << " stored:"
-      << s.values[BlueStore::volatile_statfs::STATFS_STORED]
+      << s.values[volatile_statfs::STATFS_STORED]
     << " compressed:"
-      << s.values[BlueStore::volatile_statfs::STATFS_COMPRESSED]
+      << s.values[volatile_statfs::STATFS_COMPRESSED]
     << " compressed_orig:"
-      << s.values[BlueStore::volatile_statfs::STATFS_COMPRESSED_ORIGINAL]
+      << s.values[volatile_statfs::STATFS_COMPRESSED_ORIGINAL]
     << " compressed_alloc:"
-      << s.values[BlueStore::volatile_statfs::STATFS_COMPRESSED_ALLOCATED];
+      << s.values[volatile_statfs::STATFS_COMPRESSED_ALLOCATED];
 }
 
 static inline void intrusive_ptr_add_ref(BlueStore::Onode *o) {
