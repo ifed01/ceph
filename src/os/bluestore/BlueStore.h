@@ -2751,7 +2751,7 @@ private:
 
   BluestoreWAL* _create_wal();
 
-  int _maybe_open_wal();
+  void _maybe_open_wal();
   void _shutdown_wal();
 
   int _open_fm(KeyValueDB::Transaction t,
