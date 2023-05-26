@@ -1280,7 +1280,6 @@ bool shared_blob_2hash_tracker_t::test_all_zero_range(
 
 void bluestore_alloc_log_entry_t::encode(ceph::buffer::list& bl,
 					 uint64_t pool_id,
-					 const volatile_statfs& statfs,
                                          const interval_set<uint64_t>& a,
                                          const interval_set<uint64_t>& r)
 {
@@ -1288,7 +1287,6 @@ void bluestore_alloc_log_entry_t::encode(ceph::buffer::list& bl,
   ceph_assert(64 >= (max_offset_bits - unit_bits) + (max_len_bits - unit_bits));
   ENCODE_START(1, 1, bl);
   encode(pool_id, bl);
-  statfs.encode(bl);
   encode(a.num_intervals(), bl);
   for (auto& e : a) {
     ceph_assert(e.first + e.second < max_offset);
@@ -1313,16 +1311,14 @@ void bluestore_alloc_log_entry_t::encode(ceph::buffer::list& bl,
 }
 
 void bluestore_alloc_log_entry_t::decode(ceph::buffer::list::const_iterator& p,
-  std::function<void(bool, uint64_t, const volatile_statfs&, uint64_t, uint64_t)> cb)
+  std::function<void(uint64_t, bool, uint64_t, uint64_t)> cb)
 {
   DECODE_START(1, p);
   uint64_t pool_id;
   uint64_t size;
-  volatile_statfs statfs;
   uint64_t v;
 
   decode(pool_id, p);
-  statfs.decode(p);
   decode(size, p);
   for (uint64_t i = 0; i < size; i++) {
     decode(v, p);
@@ -1330,7 +1326,7 @@ void bluestore_alloc_log_entry_t::decode(ceph::buffer::list::const_iterator& p,
       (v >> ((max_len_bits - unit_bits)) << unit_bits) & (max_offset - 1);
     uint64_t len = (v << unit_bits) & (max_len - 1);
 
-    cb(true, pool_id, statfs, offs, len);
+    cb(pool_id, true, offs, len);
   }
   decode(size, p);
   for (uint64_t i = 0; i < size; i++) {
@@ -1339,7 +1335,7 @@ void bluestore_alloc_log_entry_t::decode(ceph::buffer::list::const_iterator& p,
       (v >> ((max_len_bits - unit_bits)) << unit_bits) & (max_offset - 1);
     uint64_t len = (v << unit_bits) & (max_len - 1);
 
-    cb(false, pool_id, statfs, offs, len);
+    cb(pool_id, false, offs, len);
   }
   DECODE_FINISH(p);
 }

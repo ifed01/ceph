@@ -6944,7 +6944,6 @@ int BlueStore::_open_db(bool create,
   }
   db_was_opened_read_only = read_only;
   db_was_restricted = restricted;
-  dout(10) << __func__ << "::db_was_opened_read_only was set to " << read_only << dendl;
 
   if (!read_only) {
     _maybe_open_wal();
@@ -10028,18 +10027,17 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
       alloc->release(to_release);
 
       if (wal) {
-	// use dummy pool_id/statfs here as it looks like there is no
-	// way to find proper ones at this point. This has almost no drawbacks
+	// use dummy pool_id (=meta pool) here as it looks like there is no
+	// way to find proper one at this point. This has almost no drawbacks
 	// except an unlikely case when OSD crashes between standalone WAL
 	// submission and DB flush.
 	// In the latter case pools' statfs might be inconsistent.
 	// One can fix that by another one (successful!) BlueStore repair.
 	uint64_t pool_id = coll_t::meta().pool();
-	volatile_statfs dummy_statfs;
 
 	// log allocation info in txc hence _submit_transaction_sync
 	// can avoid that
-	_log_alloc_info(txn, pool_id, dummy_statfs, allocated, to_release);
+	_log_alloc_info(txn, pool_id, allocated, to_release);
       }
 
       allocated.clear();
@@ -10442,7 +10440,6 @@ bool BlueStore::inject_leaked(uint64_t len)
     allocated.union_insert(p.offset, p.length);
   }
   _submit_transaction_sync(txn, coll_t::meta().pool() /*arbitrary pool*/,
-    volatile_statfs(),
     allocated, released);
   return true;
 }
@@ -10496,7 +10493,6 @@ bool BlueStore::inject_false_free(coll_t cid, ghobject_t oid)
   }
   ceph_assert(injected);
   _submit_transaction_sync(txn, coll_t::meta().pool() /*arbitrary pool*/,
-    volatile_statfs(),
     allocated, released);
   return injected;
 }
@@ -11642,14 +11638,12 @@ int BlueStore::_decompress(bufferlist& source, bufferlist* result)
 int BlueStore::_submit_transaction_sync(KeyValueDB::Transaction t,
   bool nonempty_txn)
 {
-  volatile_statfs dummy_statfs;
   interval_set<uint64_t> allocated, released;
-  return _submit_transaction_sync(t, 0 /*dummy*/, dummy_statfs, allocated, released, nonempty_txn);
+  return _submit_transaction_sync(t, 0 /*dummy*/, allocated, released, nonempty_txn);
 }
 
 int BlueStore::_submit_transaction_sync(KeyValueDB::Transaction t,
   uint64_t pool_id,
-  const volatile_statfs& statfs,
   const interval_set<uint64_t>& allocated,
   const interval_set<uint64_t>& released,
   bool nonempty_txn)
@@ -11658,7 +11652,7 @@ int BlueStore::_submit_transaction_sync(KeyValueDB::Transaction t,
   if (wal) {
     if (nonempty_txn) {
       BlueWALContextSync txc(cct, this, t);
-      _log_alloc_info(t, pool_id, statfs, allocated, released);
+      _log_alloc_info(t, pool_id, allocated, released);
       if (txc.get_payload().length()) {
         r = wal->log_submit_sync(&txc);
       }
@@ -12999,11 +12993,7 @@ void BlueStore::_txc_state_proc(TransContext *txc)
       throttle.log_state_latency(*txc, logger, l_bluestore_state_io_done_lat);
       if (wal) {
 	txc->set_state(TransContext::STATE_GOING_WAL);
-	_log_alloc_info(txc->t,
-			txc->osd_pool_id,
-			txc->statfs_delta,
-			txc->allocated,
-			txc->released);
+	_log_alloc_info(txc->t, txc->osd_pool_id, txc->allocated, txc->released);
         wal->log(txc);
       } else {
         _txc_queue_kv(txc);
@@ -14554,6 +14544,7 @@ int BlueStore::queue_transactions(
   // prepare
   TransContext *txc = _txc_create(static_cast<Collection*>(ch.get()), osr,
 				  &on_commit, op);
+
   for (vector<Transaction>::iterator p = tls.begin(); p != tls.end(); ++p) {
     txc->bytes += (*p).get_num_bytes();
     _txc_add_transaction(txc, &(*p));
@@ -18208,21 +18199,18 @@ void BlueStore::_record_allocation_stats()
 
 void BlueStore::_log_alloc_info(KeyValueDB::Transaction t,
   uint64_t pool_id,
-  const volatile_statfs& statfs,
   const interval_set<uint64_t>& allocated,
   const interval_set<uint64_t>& released)
 {
   if (pool_id == 0) {
     return;
   }
-  if (statfs.is_empty() && allocated.empty() && released.empty()) {
+  if (allocated.empty() && released.empty()) {
     return;
   }
   bufferlist bl;
-  bluestore_alloc_log_entry_t::encode(bl, pool_id, statfs, allocated, released);
+  bluestore_alloc_log_entry_t::encode(bl, pool_id, allocated, released);
   dout(20) << __func__ << " " << bl.length()
-          << " for pool id " << pool_id
-          << " statfs delta {" << statfs << "}"
           << std::hex
           << " a:" << allocated
           << " r:" << released
@@ -18323,7 +18311,7 @@ bool BlueStoreRepairer::fix_statfs(KeyValueDB *db,
   if (!fix_statfs_txn) {
     fix_statfs_txn = db->get_transaction();
   }
-  volatile_statfs vstatfs;
+  BlueStore::volatile_statfs vstatfs;
   vstatfs = new_statfs;
   bufferlist bl;
   vstatfs.encode(bl);
@@ -19512,6 +19500,26 @@ int BlueStore::read_allocation_from_onodes(SimpleBitmap *sbmap, read_alloc_stats
     }
   }
 
+  std::lock_guard l(vstatfs_lock);
+  store_statfs_t s;
+  osd_pools.clear();
+  for (auto& p : stats.actual_pool_vstatfs) {
+    if (per_pool_stat_collection) {
+      osd_pools[p.first] = p.second;
+    }
+    stats.actual_store_vstatfs += p.second;
+    p.second.publish(&s);
+    dout(5) << __func__ << " recovered pool "
+            << std::hex
+            << p.first << "->" << s
+            << std::dec
+            << " per-pool:" << per_pool_stat_collection
+            << dendl;
+  }
+  vstatfs = stats.actual_store_vstatfs;
+  vstatfs.publish(&s);
+  dout(5) << __func__ << " recovered " << s
+          << dendl;
   return 0;
 }
 
@@ -19538,19 +19546,13 @@ int BlueStore::reconstruct_allocations(SimpleBitmap *sbmap, read_alloc_stats_t &
   if (_wal) {
     std::unique_ptr<KeyValueDB::TxcLogInspector> log_insp(db->get_log_inspector());
 
-    auto apply_fn = [&](bool alloc,
-                        uint64_t pool_id,
-                        const volatile_statfs& statfs_delta,
-                        uint64_t offs,
-		        uint64_t len) {
+    auto apply_fn = [&](uint64_t pool_id, bool alloc, uint64_t offs, uint64_t len) {
       dout(7) << __func__
 	<< " pool " << pool_id
-        << " statfs delta {" << statfs_delta << "}"
 	<< (alloc ? " allocated in wal: 0x" : " released in wal: 0x")
 	<< std::hex << offs << "~" << len
 	<< std::dec << dendl;
       note_allocation_in_simple_bmap(alloc, sbmap, offs, len);
-      stats.actual_pool_vstatfs[pool_id] += statfs_delta;
     };
     auto inspect_entry_fn = [&](const ceph::bufferlist& bl) {
       bluestore_alloc_log_entry_t e;
@@ -19577,6 +19579,7 @@ int BlueStore::reconstruct_allocations(SimpleBitmap *sbmap, read_alloc_stats_t &
     // do not call shutdown to avoid WAL update
     delete _wal;
   }
+
   return 0;
 }
 
@@ -19615,30 +19618,12 @@ int BlueStore::read_allocation_from_drive_on_startup()
 
   copy_simple_bitmap_to_allocator(&sbmap, alloc, min_alloc_size);
 
-  std::lock_guard l(vstatfs_lock);
-  store_statfs_t s;
-  for (auto& p : stats.actual_pool_vstatfs) {
-    if (per_pool_stat_collection) {
-      osd_pools[p.first] = p.second;
-    }
-    stats.actual_store_vstatfs += p.second;
-    p.second.publish(&s);
-    dout(5) << __func__ << " recovered pool "
-      << std::hex
-      << p.first << "->" << s
-      << std::dec
-      << " per-pool:" << per_pool_stat_collection
-      << dendl;
-  }
-  vstatfs = stats.actual_store_vstatfs;
-  vstatfs.publish(&s);
-
   utime_t duration = ceph_clock_now() - start;
-  dout(1) << "::Allocation Recovery was completed in " << duration << " seconds, extent_count=" << stats.extent_count
-          << " recovered statfs: " << s
-          << dendl;
+  dout(1) << "::Allocation Recovery was completed in " << duration << " seconds, extent_count=" << stats.extent_count << dendl;
   return ret;
 }
+
+
 
 
 // Only used for debugging purposes - we build a secondary allocator from the Onodes and compare it to the existing one
