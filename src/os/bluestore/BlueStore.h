@@ -3486,7 +3486,6 @@ private:
   int _decompress(ceph::buffer::list& source, ceph::buffer::list* result);
   int _submit_transaction_sync(KeyValueDB::Transaction t, bool nonempty_txn = true);
   int _submit_transaction_sync(KeyValueDB::Transaction t,
-    uint64_t pool_id,
     const interval_set<uint64_t>& allocated,
     const interval_set<uint64_t>& released,
     bool nonempty_txn = true);
@@ -3751,7 +3750,6 @@ private:
   void _record_allocation_stats();
 
   void _log_alloc_info(KeyValueDB::Transaction t,
-    uint64_t pool_id,
     const interval_set<uint64_t>& allocated,
     const interval_set<uint64_t>& released);
 
