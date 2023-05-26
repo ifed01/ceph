@@ -1392,11 +1392,10 @@ struct bluestore_alloc_log_entry_t
   static const uint64_t unit = 1ull << unit_bits; // 4K
 
   static void encode(ceph::buffer::list& bl,
-	      uint64_t pool_id,
               const interval_set<uint64_t>& allocated,
               const interval_set<uint64_t>& released);
   static void decode(ceph::buffer::list::const_iterator& p,
-    std::function<void(uint64_t, bool, uint64_t, uint64_t)> cb);
+    std::function<void(bool, uint64_t, uint64_t)> cb);
 };
 
 #endif

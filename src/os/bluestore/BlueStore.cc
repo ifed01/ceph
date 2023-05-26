@@ -6139,9 +6139,8 @@ void BlueStore::_post_init_alloc(const std::map<uint64_t, uint64_t>& zone_adjust
                                    // in case of standalone WAL.
 				   // It's unclear what to do with pool_id if any as well
                                    // Not implemented atm.
-    uint64_t pool_id = 0;
     interval_set<uint64_t> allocated, released;
-    r = _submit_transaction_sync(t, pool_id, allocated, released);
+    r = _submit_transaction_sync(t, allocated, released);
   } else
 #endif
   if (fm->is_null_manager()) {
@@ -10027,17 +10026,9 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
       alloc->release(to_release);
 
       if (wal) {
-	// use dummy pool_id (=meta pool) here as it looks like there is no
-	// way to find proper one at this point. This has almost no drawbacks
-	// except an unlikely case when OSD crashes between standalone WAL
-	// submission and DB flush.
-	// In the latter case pools' statfs might be inconsistent.
-	// One can fix that by another one (successful!) BlueStore repair.
-	uint64_t pool_id = coll_t::meta().pool();
-
 	// log allocation info in txc hence _submit_transaction_sync
 	// can avoid that
-	_log_alloc_info(txn, pool_id, allocated, to_release);
+	_log_alloc_info(txn, allocated, to_release);
       }
 
       allocated.clear();
@@ -10439,7 +10430,7 @@ bool BlueStore::inject_leaked(uint64_t len)
     }
     allocated.union_insert(p.offset, p.length);
   }
-  _submit_transaction_sync(txn, coll_t::meta().pool() /*arbitrary pool*/,
+  _submit_transaction_sync(txn,
     allocated, released);
   return true;
 }
@@ -10492,7 +10483,7 @@ bool BlueStore::inject_false_free(coll_t cid, ghobject_t oid)
     }
   }
   ceph_assert(injected);
-  _submit_transaction_sync(txn, coll_t::meta().pool() /*arbitrary pool*/,
+  _submit_transaction_sync(txn,
     allocated, released);
   return injected;
 }
@@ -11639,11 +11630,10 @@ int BlueStore::_submit_transaction_sync(KeyValueDB::Transaction t,
   bool nonempty_txn)
 {
   interval_set<uint64_t> allocated, released;
-  return _submit_transaction_sync(t, 0 /*dummy*/, allocated, released, nonempty_txn);
+  return _submit_transaction_sync(t, allocated, released, nonempty_txn);
 }
 
 int BlueStore::_submit_transaction_sync(KeyValueDB::Transaction t,
-  uint64_t pool_id,
   const interval_set<uint64_t>& allocated,
   const interval_set<uint64_t>& released,
   bool nonempty_txn)
@@ -11652,7 +11642,7 @@ int BlueStore::_submit_transaction_sync(KeyValueDB::Transaction t,
   if (wal) {
     if (nonempty_txn) {
       BlueWALContextSync txc(cct, this, t);
-      _log_alloc_info(t, pool_id, allocated, released);
+      _log_alloc_info(t, allocated, released);
       if (txc.get_payload().length()) {
         r = wal->log_submit_sync(&txc);
       }
@@ -12993,7 +12983,7 @@ void BlueStore::_txc_state_proc(TransContext *txc)
       throttle.log_state_latency(*txc, logger, l_bluestore_state_io_done_lat);
       if (wal) {
 	txc->set_state(TransContext::STATE_GOING_WAL);
-	_log_alloc_info(txc->t, txc->osd_pool_id, txc->allocated, txc->released);
+	_log_alloc_info(txc->t, txc->allocated, txc->released);
         wal->log(txc);
       } else {
         _txc_queue_kv(txc);
@@ -18198,18 +18188,14 @@ void BlueStore::_record_allocation_stats()
 }
 
 void BlueStore::_log_alloc_info(KeyValueDB::Transaction t,
-  uint64_t pool_id,
   const interval_set<uint64_t>& allocated,
   const interval_set<uint64_t>& released)
 {
-  if (pool_id == 0) {
-    return;
-  }
   if (allocated.empty() && released.empty()) {
     return;
   }
   bufferlist bl;
-  bluestore_alloc_log_entry_t::encode(bl, pool_id, allocated, released);
+  bluestore_alloc_log_entry_t::encode(bl, allocated, released);
   dout(20) << __func__ << " " << bl.length()
           << std::hex
           << " a:" << allocated
@@ -19546,9 +19532,8 @@ int BlueStore::reconstruct_allocations(SimpleBitmap *sbmap, read_alloc_stats_t &
   if (_wal) {
     std::unique_ptr<KeyValueDB::TxcLogInspector> log_insp(db->get_log_inspector());
 
-    auto apply_fn = [&](uint64_t pool_id, bool alloc, uint64_t offs, uint64_t len) {
+    auto apply_fn = [&](bool alloc, uint64_t offs, uint64_t len) {
       dout(7) << __func__
-	<< " pool " << pool_id
 	<< (alloc ? " allocated in wal: 0x" : " released in wal: 0x")
 	<< std::hex << offs << "~" << len
 	<< std::dec << dendl;
