@@ -28,7 +28,6 @@
 #include "compressor/Compressor.h"
 #include "common/Checksummer.h"
 #include "include/ceph_hash.h"
-#include "osd/osd_types.h"
 
 namespace ceph {
   class Formatter;
@@ -1374,105 +1373,6 @@ private:
   }
 };
 
-
-struct volatile_statfs {
-  enum {
-    STATFS_ALLOCATED = 0,
-    STATFS_STORED,
-    STATFS_COMPRESSED_ORIGINAL,
-    STATFS_COMPRESSED,
-    STATFS_COMPRESSED_ALLOCATED,
-    STATFS_LAST
-  };
-  int64_t values[STATFS_LAST];
-  volatile_statfs() {
-    memset(this, 0, sizeof(volatile_statfs));
-  }
-  void reset() {
-    *this = volatile_statfs();
-  }
-  bool empty() const {
-    for (size_t i = 0; i < STATFS_LAST; ++i) {
-      if (values[i]) {
-	return false;
-      }
-    }
-    return true;
-  }
-  void publish(store_statfs_t* buf) const {
-    buf->allocated = allocated();
-    buf->data_stored = stored();
-    buf->data_compressed = compressed();
-    buf->data_compressed_original = compressed_original();
-    buf->data_compressed_allocated = compressed_allocated();
-  }
-
-  volatile_statfs& operator+=(const volatile_statfs& other) {
-    for (size_t i = 0; i < STATFS_LAST; ++i) {
-      values[i] += other.values[i];
-    }
-    return *this;
-  }
-  int64_t& allocated() {
-    return values[STATFS_ALLOCATED];
-  }
-  int64_t& stored() {
-    return values[STATFS_STORED];
-  }
-  int64_t& compressed_original() {
-    return values[STATFS_COMPRESSED_ORIGINAL];
-  }
-  int64_t& compressed() {
-    return values[STATFS_COMPRESSED];
-  }
-  int64_t& compressed_allocated() {
-    return values[STATFS_COMPRESSED_ALLOCATED];
-  }
-  int64_t allocated() const {
-    return values[STATFS_ALLOCATED];
-  }
-  int64_t stored() const {
-    return values[STATFS_STORED];
-  }
-  int64_t compressed_original() const {
-    return values[STATFS_COMPRESSED_ORIGINAL];
-  }
-  int64_t compressed() const {
-    return values[STATFS_COMPRESSED];
-  }
-  int64_t compressed_allocated() const {
-    return values[STATFS_COMPRESSED_ALLOCATED];
-  }
-  volatile_statfs& operator=(const store_statfs_t& st) {
-    values[STATFS_ALLOCATED] = st.allocated;
-    values[STATFS_STORED] = st.data_stored;
-    values[STATFS_COMPRESSED_ORIGINAL] = st.data_compressed_original;
-    values[STATFS_COMPRESSED] = st.data_compressed;
-    values[STATFS_COMPRESSED_ALLOCATED] = st.data_compressed_allocated;
-    return *this;
-  }
-  bool is_empty() const {
-    return values[STATFS_ALLOCATED] == 0 &&
-      values[STATFS_STORED] == 0 &&
-      values[STATFS_COMPRESSED] == 0 &&
-      values[STATFS_COMPRESSED_ORIGINAL] == 0 &&
-      values[STATFS_COMPRESSED_ALLOCATED] == 0;
-  }
-  void decode(ceph::buffer::list::const_iterator& it) {
-    using ceph::decode;
-    for (size_t i = 0; i < STATFS_LAST; i++) {
-      decode(values[i], it);
-    }
-  }
-
-  void encode(ceph::buffer::list& bl) const {
-    using ceph::encode;
-    for (size_t i = 0; i < STATFS_LAST; i++) {
-      encode(values[i], bl);
-    }
-  }
-};
-
 struct bluestore_alloc_log_entry_t
 {
   // Constants to control <offset, len> pair squeeze into 64-bit
@@ -1493,11 +1393,10 @@ struct bluestore_alloc_log_entry_t
 
   static void encode(ceph::buffer::list& bl,
 	      uint64_t pool_id,
-	      const volatile_statfs& statfs,
               const interval_set<uint64_t>& allocated,
               const interval_set<uint64_t>& released);
   static void decode(ceph::buffer::list::const_iterator& p,
-    std::function<void(bool, uint64_t, const volatile_statfs& statfs, uint64_t, uint64_t)> cb);
+    std::function<void(uint64_t, bool, uint64_t, uint64_t)> cb);
 };
 
 #endif
