@@ -5677,23 +5677,20 @@ void BlueStore::_close_bdev()
   bdev = NULL;
 }
 
-BluestoreWAL* BlueStore::_create_wal()
+bool BlueStore::_is_wal()
 {
+  ceph_assert(bluefs);
+  bluefs_huge_extent_t wal_ext;
+  return bluefs->get_external_wal(&wal_ext) != nullptr;
+}
+
+BluestoreWAL* BlueStore::_maybe_open_wal()
+{
+  ceph_assert(bluefs);
   bluefs_huge_extent_t wal_ext;
   BlockDevice* bdev = bluefs->get_external_wal(&wal_ext);
   BluestoreWAL* w = nullptr;
   if (bdev) {
-    if (!bluefs_layout.dedicated_db) {
-      // Due to design limitation we can't use WAL when there is no dedicated DB
-      // volume - we need to submit WAL data to DB on startup's replay but
-      // main(shared) device's allocation map isn't ready at this point
-      // hence DB is unable to store data at that device and it needs dedicated
-      // one.
-      derr << __func__
-	<< " error: BlueStore WAL is not permited without dedicated"
-	<< " DB volume." << dendl;
-      return nullptr;
-    }
 
     ceph_assert(wal_ext.length &&
       (wal_ext.length % BluestoreWAL::DEF_PAGE_SIZE) == 0);
@@ -5714,18 +5711,10 @@ BluestoreWAL* BlueStore::_create_wal()
   return w;
 }
 
-void BlueStore::_maybe_open_wal()
-{
-  // do nothing if already opened
-  if (!wal) {
-    wal = _create_wal(); // it's OK to get nullptr if WAL isn't configured
-  }
-}
-
-void BlueStore::_shutdown_wal()
+void BlueStore::_maybe_shutdown_wal()
 {
   if (wal) {
-    wal->shutdown(db_was_restricted);
+    wal->shutdown(false);
     delete wal;
     wal = nullptr;
   }
@@ -6346,7 +6335,7 @@ bool BlueStore::test_mount_in_use()
   return ret;
 }
 
-int BlueStore::_minimal_open_bluefs(bool create, bool restricted)
+int BlueStore::_minimal_open_bluefs(bool create)
 {
   int r;
   bluefs = new BlueFS(cct);
@@ -6394,11 +6383,7 @@ int BlueStore::_minimal_open_bluefs(bool create, bool restricted)
     }
   }
   // Shared device.
-  // In restricted mode we provide no allocator for shared volume
-  // to prevent any allocations since the relevant allocator is
-  // likely not properly configured yet.
   bfn = path + "/block";
-  ceph_assert(!restricted || (restricted && !shared_alloc.a));
   r = bluefs->add_block_device(bluefs_layout.shared_bdev, bfn,
                                false, //never trim here
                                SUPER_RESERVED,
@@ -6454,9 +6439,9 @@ free_bluefs:
   return r;
 }
 
-int BlueStore::_open_bluefs(bool create, bool bluefs_restricted)
+int BlueStore::_open_bluefs(bool create)
 {
-  int r = _minimal_open_bluefs(create, bluefs_restricted);
+  int r = _minimal_open_bluefs(create);
   if (r < 0) {
     return r;
   }
@@ -6640,27 +6625,45 @@ int BlueStore::_open_db_and_around(bool read_only, bool to_repair)
   return r;
 }
 
+/****************************
+* A bit tricky DB opening scenario is as follows:
+ 1   Open DB in read-only,
+ 1.1 Unconditionally open DB in read-only mode to get minimal information
+     required to bring store up. The key point is that we don't have full
+     allocation map and hence mustn't permit DB to flush any data to disk.
+ 1.2 _open_statfs() reads staged statfs from DB, this might eb incomplete or
+     incorrect due to prior non-graceful OSD shutdown. Following allocator map
+     rebuilding procedure will fix that.
+ 1.3 _init_alloc() func and underlying NCB stuff retrieve (or rebuild if needed)
+     alloc map at this stage enabling further DB functioning in R/W mode.
+ 2   Open DB
+ 2.1 If DB to be opened for the repair - open in this mode without WAL and quit
+ 2.2 If R/W mode is requested or standalone WAL is enabled - open DB in R/W mode
+ 2.3 if WAL is enabled - replay the WAL.
+ 2.4 [Re-]open DB in read-only mode if it has been originally requested.
+ 3   Load crucial metadata
+*
+****************************/
+
 int BlueStore::_open_db_ex(bool read_only, bool to_repair)
 {
-  // SMR devices may require a freelist adjustment, but that can only happen after
-  // the db is read-write. we'll stash pending changes here.
-  std::map<uint64_t, uint64_t> zone_adjustments;
   int r = 0;
 
-  // we don't enforce read-only mode at this point any more
-  // but rather specify 'restricted' mode which forbids shared device writings.
-  //
-  r = _open_db(false, false, false, true);
-
+  ///////////////////////////
+  // 1.1 - unconditionally open DB in R/O mode
+  ///////////////////////////
+  dout(1) << __func__ << " running stage 1.1..." << dendl;
+  r = _open_db(false, false, true);
   if (r < 0) {
     return r;
   }
   bool close_db = true;
   auto shutdown_db = make_scope_guard([&] {
-    if (close_db) {
+    if (close_db && db) {
       _close_db();
     }
   });
+  bool is_wal = _is_wal();
 
   // FIXME minor: if we introduce freelist_type update later and
   // BlueWAL is in use we might need to handle reading the type 
@@ -6678,6 +6681,23 @@ int BlueStore::_open_db_ex(bool read_only, bool to_repair)
     }
   });
 
+  ///////////////////////////
+  // 1.2 - initialize alloc map: either by retrieval from DB or through
+  //       rebuilding
+  ///////////////////////////
+  dout(1) << __func__ << " running stage 1.2..." << dendl;
+
+  _open_statfs();
+
+  ///////////////////////////
+  // 1.3 - initialize alloc map: either by retrieval from DB or through
+  //       rebuilding
+  ///////////////////////////
+  dout(1) << __func__ << " running stage 1.3..." << dendl;
+
+  // SMR devices may require a freelist adjustment, but that can only happen after
+  // the db is read-write. we'll stash pending changes here.
+  std::map<uint64_t, uint64_t> zone_adjustments;
   // FIXME minor: potentially min_alloc_size update from _upgrade_super
   // might be missed if BlueWAL is enabled - the latter is not replayed
   // at this point and hence we might read the prevoius value from DB.
@@ -6693,25 +6713,80 @@ int BlueStore::_open_db_ex(bool read_only, bool to_repair)
     }
   });
 
-  // Re-open in the proper mode(s).
-  // Can't simply bypass second open for read-only mode as we need to
-  // load allocated extents from bluefs into allocator.
-  // And now it's time to do that
-  //
   _close_db();
-  close_db = false;
-  r = _open_db(false, to_repair, read_only);
-  if (r < 0) {
-    return r;
+
+  ///////////////////////////
+  // 2.1 If DB to be opened for repair
+  ///////////////////////////
+  dout(1) << __func__ << " running stage 2.1..." << dendl;
+  if (to_repair) {
+    r = _open_db(false, to_repair, read_only);
+    if (r < 0) {
+      return r;
+    }
+    goto load_meta;
   }
+  ///////////////////////////
+  // 2.2 If R/W mode requrested or standalone WAL is enabled - open DB
+  //     in R/W mode.
+  ///////////////////////////
+
+  dout(1) << __func__ << " running stage 2.2..." << dendl;
+  if (is_wal || !read_only) {
+    r = _open_db(false, false, false);
+    if (r < 0) {
+      return r;
+    }
+    ceph_assert(!wal);
+    wal = _maybe_open_wal();
+  }
+  ///////////////////////////
+  // 2.3 Replay the WAL if applicable
+  ///////////////////////////
+  dout(1) << __func__ << " running stage 2.3..." << dendl;
+  if (wal) {
+    auto t = db->get_transaction();
+    r = wal->replay(
+      false,
+      [&](const std::string& bytes) {
+	auto t = db->get_transaction();
+	t->set_from_bytes(bytes);
+	return db->submit_transaction_sync(t);
+      });
+    if (r < 0) {
+      derr << __func__ << " wal replay failed:" << cpp_strerror(r) << dendl;
+      return r;
+    }
+  }
+
+  ///////////////////////////
+  // 2.4 Reopen DB in read-only mode if it has been originally requested.
+  ///////////////////////////
+  dout(1) << __func__ << " running stage 2.4..." << dendl;
+  if (read_only) {
+    if (db) {
+      _close_db();
+    }
+    r = _open_db(false, false, read_only);
+    if (r < 0) {
+      return r;
+    }
+  }
+
+  ///////////////////////////
+  // 3   Load crucial metadata
+  ///////////////////////////
+load_meta:
+  dout(1) << __func__ << " running stage 3..." << dendl;
   r = _open_super_meta();
   if (r < 0) {
     return r;
   }
-  if (!read_only && !zone_adjustments.empty()) {
+  if (!read_only && !to_repair && !zone_adjustments.empty()) {
     // for SMR devices that have freelist mismatch with device write pointers
     _post_init_alloc(zone_adjustments);
   }
+  close_db = false; // to instruct guard to omit db close
   return r;
 }
 
@@ -6757,7 +6832,6 @@ BlueFS* BlueStore::get_bluefs() {
 }
 
 int BlueStore::_prepare_db_environment(bool create,
-                                       bool bluefs_restricted,
 				       std::string* _fn,
 				       std::string* _kv_backend)
 {
@@ -6796,7 +6870,7 @@ int BlueStore::_prepare_db_environment(bool create,
       derr << " backend must be rocksdb to use bluefs" << dendl;
       return -EINVAL;
     }
-    r = _open_bluefs(create, bluefs_restricted);
+    r = _open_bluefs(create);
     if (r < 0) {
       return r;
     }
@@ -6907,8 +6981,7 @@ int BlueStore::_prepare_db_environment(bool create,
 
 int BlueStore::_open_db(bool create,
                         bool to_repair_db,
-                        bool read_only,
-                        bool restricted)
+                        bool read_only)
 {
   int r;
   ceph_assert(!(create && read_only));
@@ -6918,10 +6991,13 @@ int BlueStore::_open_db(bool create,
   string kv_dir_fn;
   string kv_backend;
   std::string sharding_def;
+  dout(5) << __func__ << " create:" << create << " repair: " << to_repair_db
+          << " read-only:" << read_only
+          << dendl;
+
   // prevent write attempts to BlueFS in case we failed before BlueFS was opened
   db_was_opened_read_only = true;
   r = _prepare_db_environment(create,
-                              restricted,
                               &kv_dir_fn,
                               &kv_backend);
   if (r < 0) {
@@ -6930,27 +7006,9 @@ int BlueStore::_open_db(bool create,
   }
 
   // if reached here then BlueFS is already opened
-  if (restricted &&
-      !bluefs_layout.dedicated_db &&
-      !bluefs_layout.dedicated_wal) {
-
-    // GBH: can probably skip open_db step in REad-Only mode when operating in NULL-FM mode
-    // (might need to open if failed to restore from file)
-
-    // open in read-only first to read FM list and init allocator
-    // as they might be needed for some BlueFS procedures
-    read_only = true;
-  }
   db_was_opened_read_only = read_only;
-  db_was_restricted = restricted;
-
-  if (!read_only) {
-    _maybe_open_wal();
-  } else {
-    ceph_assert(!wal); //wal & read_only mode are incompatible
-  }
-
   dout(10) << __func__ << "::db_was_opened_read_only was set to " << read_only << dendl;
+
   if (kv_backend == "rocksdb") {
     options = cct->_conf->bluestore_rocksdb_options;
     options_annex = cct->_conf->bluestore_rocksdb_options_annex;
@@ -6987,21 +7045,6 @@ int BlueStore::_open_db(bool create,
     // we pass in cf list here, but it is only used if the db already has
     // column families created.
     r = db->open(err, sharding_def);
-    if (r == 0 && wal) {
-      auto t = db->get_transaction();
-      size_t replay_cnt = 0;
-      int r = wal->replay(
-        restricted,
-        [&](const std::string& bytes) {
-          auto t = db->get_transaction();
-          t->set_from_bytes(bytes);
-          ++replay_cnt;
-          return db->submit_transaction_sync(t);
-        });
-      dout(0) << __func__ << " wal replay returned:" << cpp_strerror(r)
-              << " replayed txc:" << replay_cnt
-              <<dendl;
-    }
   }
   if (r) {
     derr << __func__ << " erroring opening db: " << err.str() << dendl;
@@ -7015,16 +7058,14 @@ int BlueStore::_open_db(bool create,
 
 void BlueStore::_close_db()
 {
+  ceph_assert(db);
   dout(10) << __func__ << ":read_only=" << db_was_opened_read_only
            << " fm=" << fm
            << " destage_alloc_file=" << need_to_destage_allocation_file
            << " per_pool=" << per_pool_stat_collection
            << " pool stats=" << osd_pools.size()
            << dendl;
-  _shutdown_wal();
-  if (!db) {
-    return;
-  }
+  _maybe_shutdown_wal();
   bool do_destage = !db_was_opened_read_only && need_to_destage_allocation_file;
   if (do_destage && is_statfs_recoverable()) {
     auto t = db->get_transaction();
@@ -10766,7 +10807,7 @@ int BlueStore::get_devices(set<string> *ls)
   auto close_bdev = make_scope_guard([&] {
     _close_bdev();
   });
-  if (int r = _minimal_open_bluefs(false, false); r < 0) {
+  if (int r = _minimal_open_bluefs(false); r < 0) {
     return r;
   }
   bdev->get_devices(ls);
@@ -12722,7 +12763,6 @@ int BlueStore::_open_super_meta()
 
   _set_per_pool_omap();
 
-  _open_statfs();
   _set_alloc_sizes();
   _set_throttle_params();
 
@@ -18191,6 +18231,7 @@ void BlueStore::_log_alloc_info(KeyValueDB::Transaction t,
   const interval_set<uint64_t>& allocated,
   const interval_set<uint64_t>& released)
 {
+  ceph_assert(wal != nullptr);
   if (allocated.empty() && released.empty()) {
     return;
   }
@@ -19526,9 +19567,8 @@ int BlueStore::reconstruct_allocations(SimpleBitmap *sbmap, read_alloc_stats_t &
 
   // We have to apply allocations/releases from BlueStore WAL to make
   // allocator map state consistent. Failing to do that might cause data
-  // corruption, particularly on a shared main/db device
-  BluestoreWAL* _wal = _create_wal();
-  // BlueStore WAL may be not setup though.
+  // corruption on a shared main/db device.
+  BluestoreWAL* _wal = _maybe_open_wal(); // nullptr if WAL isn't configured
   if (_wal) {
     std::unique_ptr<KeyValueDB::TxcLogInspector> log_insp(db->get_log_inspector());
 
