@@ -2308,7 +2308,6 @@ private:
 
   // store open_db options:
   bool db_was_opened_read_only = true;
-  bool db_was_restricted = true;
   bool need_to_destage_allocation_file = false;
 
   ///< rwlock to protect coll_map/new_coll_map
@@ -2720,9 +2719,9 @@ private:
   void _validate_bdev();
   void _close_bdev();
 
-  int _minimal_open_bluefs(bool create, bool bluefs_restricted);
+  int _minimal_open_bluefs(bool create);
   void _minimal_close_bluefs();
-  int _open_bluefs(bool create, bool bluefs_restricted);
+  int _open_bluefs(bool create);
   void _close_bluefs();
 
   int _is_bluefs(bool create, bool* ret);
@@ -2736,7 +2735,7 @@ private:
   int _open_db_ex(bool read_only, bool to_repair = false);
   void _close_db_ex();
 
-  int _prepare_db_environment(bool create, bool restricted,
+  int _prepare_db_environment(bool create,
 			      std::string* kv_dir, std::string* kv_backend);
 
   /*
@@ -2745,14 +2744,12 @@ private:
    */
   int _open_db(bool create,
 	       bool to_repair_db=false,
-	       bool read_only = false,
-	       bool restricted = false);
+	       bool read_only = false);
   void _close_db();
 
-  BluestoreWAL* _create_wal();
-
-  void _maybe_open_wal();
-  void _shutdown_wal();
+  bool _is_wal();
+  BluestoreWAL* _maybe_open_wal();
+  void _maybe_shutdown_wal();
 
   int _open_fm(KeyValueDB::Transaction t,
                bool read_only,
