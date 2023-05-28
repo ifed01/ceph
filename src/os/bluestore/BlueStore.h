@@ -2757,7 +2757,7 @@ private:
   void _close_fm();
   int _write_out_fm_meta(uint64_t target_size);
   int _create_alloc();
-  int _init_alloc(std::map<uint64_t, uint64_t> *zone_adjustments);
+  int _init_alloc(bool* meta_rebuilt, std::map<uint64_t, uint64_t> *zone_adjustments);
   void _post_init_alloc(const std::map<uint64_t, uint64_t>& zone_adjustments);
   void _close_alloc();
   int _open_collections();
@@ -3859,7 +3859,7 @@ private:
   class ExtentDecoderPartial : public ExtentMap::ExtentDecoder {
     BlueStore& store;
     read_alloc_stats_t& stats;
-    SimpleBitmap& sbmap;
+    SimpleBitmap* sbmap;
     sb_info_space_efficient_map_t& sb_info;
     uint8_t min_alloc_size_order;
     Extent extent;
@@ -3889,7 +3889,7 @@ private:
   public:
     ExtentDecoderPartial(BlueStore& _store,
                          read_alloc_stats_t& _stats,
-                         SimpleBitmap& _sbmap,
+                         SimpleBitmap* _sbmap,
                          sb_info_space_efficient_map_t& _sb_info,
                          uint8_t _min_alloc_size_order)
       : store(_store), stats(_stats), sbmap(_sbmap), sb_info(_sb_info),

@@ -1,4 +1,5 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
+// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 /*
  * Ceph - scalable distributed file system
@@ -5957,9 +5958,10 @@ int BlueStore::_create_alloc()
   return 0;
 }
 
-int BlueStore::_init_alloc(std::map<uint64_t, uint64_t> *zone_adjustments)
+int BlueStore::_init_alloc(bool* meta_rebuilt, std::map<uint64_t, uint64_t> *zone_adjustments)
 {
   ceph_assert(db);
+  ceph_assert(meta_rebuilt);
   {
     bufferlist bl;
     db->get(PREFIX_SUPER, "min_alloc_size", &bl);
@@ -6086,6 +6088,7 @@ int BlueStore::_init_alloc(std::map<uint64_t, uint64_t> *zone_adjustments)
 	derr << __func__ << "::NCB::If no HW fault is found, please report failure and consider redeploying OSD" << dendl;
 	return -ENOTRECOVERABLE;
       }
+      *meta_rebuilt = true;
     }
   }
   dout(1) << __func__
@@ -6635,12 +6638,15 @@ int BlueStore::_open_db_and_around(bool read_only, bool to_repair)
      incorrect due to prior non-graceful OSD shutdown. Following allocator map
      rebuilding procedure will fix that.
  1.3 _init_alloc() func and underlying NCB stuff retrieve (or rebuild if needed)
-     alloc map at this stage enabling further DB functioning in R/W mode.
+     alloc map/statfs at this stage enabling further DB functioning in R/W mode.
  2   Open DB
  2.1 If DB to be opened for the repair - open in this mode without WAL and quit
  2.2 If R/W mode is requested or standalone WAL is enabled - open DB in R/W mode
  2.3 if WAL is enabled - replay the WAL.
- 2.4 [Re-]open DB in read-only mode if it has been originally requested.
+ 2.4 Do statfs rebuilding once again if it has been originally rebuilt at
+     stage 1.3 and WAL is enabled since the initial recovery might be
+     inconsistent.
+ 2.5 [Re-]open DB in read-only mode if it has been originally requested.
  3   Load crucial metadata
 *
 ****************************/
@@ -6695,6 +6701,7 @@ int BlueStore::_open_db_ex(bool read_only, bool to_repair)
   ///////////////////////////
   dout(1) << __func__ << " running stage 1.3..." << dendl;
 
+  bool meta_rebuilt = false; // if allocations/statfs were rebuilt
   // SMR devices may require a freelist adjustment, but that can only happen after
   // the db is read-write. we'll stash pending changes here.
   std::map<uint64_t, uint64_t> zone_adjustments;
@@ -6703,7 +6710,7 @@ int BlueStore::_open_db_ex(bool read_only, bool to_repair)
   // at this point and hence we might read the prevoius value from DB.
   // Unlikely to happen though.
   //
-  r = _init_alloc(&zone_adjustments);
+  r = _init_alloc(&meta_rebuilt, &zone_adjustments);
   if (r < 0) {
     return r;
   }
@@ -6745,22 +6752,34 @@ int BlueStore::_open_db_ex(bool read_only, bool to_repair)
   ///////////////////////////
   dout(1) << __func__ << " running stage 2.3..." << dendl;
   if (wal) {
+    size_t replay_cnt = 0;
     auto t = db->get_transaction();
     r = wal->replay(
       false,
       [&](const std::string& bytes) {
 	auto t = db->get_transaction();
 	t->set_from_bytes(bytes);
+	++replay_cnt;
 	return db->submit_transaction_sync(t);
       });
     if (r < 0) {
       derr << __func__ << " wal replay failed:" << cpp_strerror(r) << dendl;
       return r;
     }
+    ///////////////////////////
+    // 2.4 Rebuild statfs once again
+    ///////////////////////////
+    // Rebuild statfs once again if statfs weren't persistent and WAL kept
+    // some txc. Initial statfs recovery was inconsistent since DB could lack
+    // some txcs.
+    if (replay_cnt && meta_rebuilt) {
+      read_alloc_stats_t s;
+      read_allocation_from_onodes(nullptr, s);
+    }
   }
 
   ///////////////////////////
-  // 2.4 Reopen DB in read-only mode if it has been originally requested.
+  // 2.5 Reopen DB in read-only mode if it has been originally requested.
   ///////////////////////////
   dout(1) << __func__ << " running stage 2.4..." << dendl;
   if (read_only) {
@@ -19307,6 +19326,7 @@ void BlueStore::note_allocation_in_simple_bmap(bool set, SimpleBitmap* sbmap, ui
            << offset << "~" << length
            << " " << min_alloc_size_mask
            << dendl;
+  ceph_assert(sbmap);
   ceph_assert((offset & min_alloc_size_mask) == 0);
   ceph_assert((length & min_alloc_size_mask) == 0);
   if (set) {
@@ -19342,7 +19362,9 @@ void BlueStore::ExtentDecoderPartial::_consume_new_blob(bool spanning,
         ++stats.skipped_illegal_extent;
         continue;
       }
-      store.note_allocation_in_simple_bmap(true, &sbmap, pe.offset, pe.length);
+      if (sbmap) {
+	store.note_allocation_in_simple_bmap(true, sbmap, pe.offset, pe.length);
+      }
 
       per_pool_statfs->allocated() += pe.length;
       if (compressed) {
@@ -19456,7 +19478,9 @@ int BlueStore::read_allocation_from_onodes(SimpleBitmap *sbmap, read_alloc_stats
       uint64_t allocated = 0;
       for (auto& r : shared_blob.ref_map.ref_map) {
         ceph_assert(r.first != bluestore_pextent_t::INVALID_OFFSET);
-        note_allocation_in_simple_bmap(true, sbmap, r.first, r.second.length);
+	if (sbmap) {
+	  note_allocation_in_simple_bmap(true, sbmap, r.first, r.second.length);
+	}
         allocated += r.second.length;
       }
       auto &sbi = sb_info.add_or_adopt(sbid);
@@ -19476,7 +19500,7 @@ int BlueStore::read_allocation_from_onodes(SimpleBitmap *sbmap, read_alloc_stats
   uint64_t            count_interval = 1'000'000;
   ExtentDecoderPartial edecoder(*this,
                                 stats,
-                                *sbmap,
+                                sbmap,
                                 sb_info,
                                 min_alloc_size_order);
 
@@ -19553,6 +19577,7 @@ int BlueStore::read_allocation_from_onodes(SimpleBitmap *sbmap, read_alloc_stats
 //---------------------------------------------------------
 int BlueStore::reconstruct_allocations(SimpleBitmap *sbmap, read_alloc_stats_t &stats)
 {
+  ceph_assert(sbmap);
   // first set space used by superblock
   auto super_length = std::max<uint64_t>(min_alloc_size, SUPER_RESERVED);
   note_allocation_in_simple_bmap(true, sbmap, 0, super_length);
@@ -19561,7 +19586,6 @@ int BlueStore::reconstruct_allocations(SimpleBitmap *sbmap, read_alloc_stats_t &
   // then set all space taken by Objects
   int ret = read_allocation_from_onodes(sbmap, stats);
   if (ret < 0) {
-    derr << "failed read_allocation_from_onodes()" << dendl;
     return ret;
   }
 
@@ -19604,7 +19628,6 @@ int BlueStore::reconstruct_allocations(SimpleBitmap *sbmap, read_alloc_stats_t &
     // do not call shutdown to avoid WAL update
     delete _wal;
   }
-
   return 0;
 }
 
