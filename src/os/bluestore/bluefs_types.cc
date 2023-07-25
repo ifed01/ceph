@@ -282,3 +282,11 @@ ostream& operator<<(ostream& out, const bluefs_transaction_t& t)
 	     << " crc 0x" << t.op_bl.crc32c(-1)
 	     << std::dec << ")";
 }
+
+uint64_t bluefs_transaction_t::expected_size() const {
+  if (op_bl.length() == 0)
+    return 0;
+  return sizeof(uuid) + sizeof(seq) + sizeof(op_bl.length()) + op_bl.length()
+    + sizeof(int32_t); // crc
+}
+

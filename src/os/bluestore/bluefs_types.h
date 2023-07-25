@@ -308,6 +308,7 @@ struct bluefs_transaction_t {
     encode(delta, op_bl);
     file.reset_delta();
   }
+
   void op_file_remove(uint64_t ino) {
     using ceph::encode;
     encode((__u8)OP_FILE_REMOVE, op_bl);
@@ -331,6 +332,7 @@ struct bluefs_transaction_t {
   void encode(ceph::buffer::list& bl) const;
   void decode(ceph::buffer::list::const_iterator& p);
   void dump(ceph::Formatter *f) const;
+  uint64_t expected_size() const;
   static void generate_test_instances(std::list<bluefs_transaction_t*>& ls);
 };
 WRITE_CLASS_ENCODER(bluefs_transaction_t)
