@@ -105,6 +105,16 @@ void AvlAllocator::_add_to_tree(uint64_t start, uint64_t size)
     rs_before = std::prev(rs_after);
   }
 
+  if (rs_before != range_tree.end() && rs_before->end > start) {
+    dout(0) << __func__ << " assertion " << std::hex
+            << rs_before->start << "~" << rs_before->end - rs_before->start
+            << " intercects with "
+            << start << "~" << size
+            << std::dec << dendl;
+    ceph_assert(false);
+    ceph_assert(rs_before != range_tree.end() && rs_before->end <= start);
+  }
+
   bool merge_before = (rs_before != range_tree.end() && rs_before->end == start);
   bool merge_after = (rs_after != range_tree.end() && rs_after->start == end);
 

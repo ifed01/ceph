@@ -760,6 +760,7 @@ void PGLog::_write_log_and_missing_wo_missing(
     bufferlist bl(sizeof(*p) * 2);
     p->encode_with_checksum(bl);
     (*km)[p->get_key_name()] = std::move(bl);
+//ldpp_dout(dpp, 0) << __func__ << " " << p->get_key_name() << " " << *p << dendl;
   }
 
   for (auto p = log.log.rbegin();
@@ -770,6 +771,7 @@ void PGLog::_write_log_and_missing_wo_missing(
     bufferlist bl(sizeof(*p) * 2);
     p->encode_with_checksum(bl);
     (*km)[p->get_key_name()] = std::move(bl);
+///ldpp_dout(dpp, 1) << __func__ << " " << p->get_key_name() << " " << *p << dendl;
   }
 
   if (log_keys_debug) {
@@ -892,6 +894,7 @@ void PGLog::_write_log_and_missing(
       coll, log_oid,
       eversion_t().get_key_name(), dirty_to.get_key_name());
     clear_up_to(log_keys_debug, dirty_to.get_key_name());
+///ldpp_dout(dpp, 0) << __func__ << " rm < " << dirty_to.get_key_name() << dendl;
   }
   if (dirty_to != eversion_t::max() && dirty_from != eversion_t::max()) {
     ldpp_dout(dpp, 10) << "write_log_and_missing, clearing from "
@@ -900,6 +903,7 @@ void PGLog::_write_log_and_missing(
       coll, log_oid,
       dirty_from.get_key_name(), eversion_t::max().get_key_name());
     clear_after(log_keys_debug, dirty_from.get_key_name());
+///ldpp_dout(dpp, 0) << __func__ << " rm > " << dirty_from.get_key_name() << dendl;
   }
 
   for (auto p = log.log.begin();
@@ -908,6 +912,7 @@ void PGLog::_write_log_and_missing(
     bufferlist bl(sizeof(*p) * 2);
     p->encode_with_checksum(bl);
     (*km)[p->get_key_name()] = std::move(bl);
+///ldpp_dout(dpp, 0) << __func__ << " " << p->get_key_name() << " " << *p << dendl;
   }
 
   for (auto p = log.log.rbegin();
@@ -918,6 +923,7 @@ void PGLog::_write_log_and_missing(
     bufferlist bl(sizeof(*p) * 2);
     p->encode_with_checksum(bl);
     (*km)[p->get_key_name()] = std::move(bl);
+///ldpp_dout(dpp, 0) << __func__ << " r " << p->get_key_name() << " " << *p << dendl;
   }
 
   if (log_keys_debug) {
