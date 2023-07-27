@@ -173,7 +173,9 @@ public:
 
     return total_size;
   }
-
+ TxcLogInspector* get_log_inspector() override {
+   return nullptr;
+ }
 private:
   bool exists_prefix(const std::string &prefix) {
     std::map<std::pair<std::string,std::string>,bufferlist>::iterator it;

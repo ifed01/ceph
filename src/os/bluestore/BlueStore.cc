@@ -13042,6 +13042,13 @@ void BlueStore::_txc_state_proc(TransContext *txc)
       throttle.log_state_latency(*txc, logger, l_bluestore_state_io_done_lat);
       if (wal) {
 	txc->set_state(TransContext::STATE_GOING_WAL);
+	dout(7) << __func__ << " GOING WAL->_log_alloc_info "
+	  << std::hex
+	  << " txc " << txc
+	  << " a:" << txc->allocated
+	  << " r:" << txc->released
+	  << std::dec << dendl;
+
 	_log_alloc_info(txc->t, txc->allocated, txc->released);
         wal->log(txc);
       } else {
@@ -13073,6 +13080,12 @@ void BlueStore::_txc_state_proc(TransContext *txc)
       }
       throttle.log_state_latency(*txc, logger, l_bluestore_state_wal_done_lat);
       logger->tinc(l_bluestore_wal_commit_lat, mono_clock::now() - txc->start);
+	dout(7) << __func__ << " WAL DONE "
+	  << std::hex
+	  << " txc " << txc
+	  << " a:" << txc->allocated
+	  << " r:" << txc->released
+	  << std::dec << dendl;
       _txc_queue_kv(txc);
        return;
     case TransContext::STATE_KV_SUBMITTED:
@@ -13096,6 +13109,12 @@ void BlueStore::_txc_state_proc(TransContext *txc)
 
     case TransContext::STATE_FINISHING:
       throttle.log_state_latency(*txc, logger, l_bluestore_state_finishing_lat);
+	dout(7) << __func__ << " FINISH "
+	  << std::hex
+	  << " txc " << txc
+	  << " a:" << txc->allocated
+	  << " r:" << txc->released
+	  << std::dec << dendl;
       _txc_finish(txc);
       return;
 
@@ -16172,6 +16191,10 @@ int BlueStore::_do_alloc_write(
     for (auto& p : extents) {
       txc->allocated.insert(p.offset, p.length);
     }
+    dout(7) << __func__ << std::hex
+      << " txc " << txc
+      << " allocations:" << txc->allocated
+      << std::dec << dendl;
     dblob.allocated(p2align(b_off, min_alloc_size), final_length, extents);
 
     dout(20) << __func__ << " blob " << *wi.b << dendl;
@@ -16205,7 +16228,7 @@ int BlueStore::_do_alloc_write(
     // queue io
     if (!g_conf()->bluestore_debug_omit_block_device_write) {
       if (data_size < prefer_deferred_size_snapshot) {
-	dout(20) << __func__ << " deferring 0x" << std::hex
+	dout(0) << __func__ << " deferring 0x" << std::hex
 		 << l->length() << std::dec << " write via deferred" << dendl;
 	bluestore_deferred_op_t *op = _get_deferred_op(txc, l->length());
 	op->op = bluestore_deferred_op_t::OP_WRITE;
@@ -19322,9 +19345,9 @@ int BlueStore::restore_allocator(Allocator* dest_allocator, uint64_t *num, uint6
 //-----------------------------------------------------------------------------------
 void BlueStore::note_allocation_in_simple_bmap(bool set, SimpleBitmap* sbmap, uint64_t offset, uint64_t length)
 {
-  dout(30) << __func__ << " 0x" << std::hex
+  dout(0) << std::hex << "0x"
            << offset << "~" << length
-           << " " << min_alloc_size_mask
+           << (set ? " alloc" : " free")
            << dendl;
   ceph_assert(sbmap);
   ceph_assert((offset & min_alloc_size_mask) == 0);
@@ -19381,6 +19404,10 @@ void BlueStore::ExtentDecoderPartial::_consume_new_blob(bool spanning,
     if (it == sb_info.end()) {
       derr << __func__ << " shared blob not found:" << sbid
            << dendl;
+      if (!tolerate_errors) {
+	ceph_assert(false);
+      }
+      return;
     }
     auto &sbi = *it;
     auto pool_id = oid.hobj.get_logical_pool();
@@ -19408,10 +19435,18 @@ void BlueStore::ExtentDecoderPartial::consume_blobid(Extent* le,
   dout(20) << __func__ << " " << spanning << " " << blobid << dendl;
   auto &map = spanning ? spanning_blobs : blobs;
   auto it = map.find(blobid);
-  ceph_assert(it != map.end());
-  per_pool_statfs->stored() += le->length;
-  if (it->second->get_blob().is_compressed()) {
-    per_pool_statfs->compressed_original() += le->length;
+  if (it != map.end()) {
+    per_pool_statfs->stored() += le->length;
+    if (it->second->get_blob().is_compressed()) {
+      per_pool_statfs->compressed_original() += le->length;
+    }
+  } else {
+    derr << __func__ << " blob not found:" << blobid
+         << " spanning: " << spanning
+         << dendl;
+    if (!tolerate_errors) {
+      ceph_assert(false);
+    }
   }
 }
 
@@ -19499,6 +19534,7 @@ int BlueStore::read_allocation_from_onodes(SimpleBitmap *sbmap, read_alloc_stats
   uint64_t            kv_count       = 0;
   uint64_t            count_interval = 1'000'000;
   ExtentDecoderPartial edecoder(*this,
+                                sbmap != nullptr, //FIXME!!!! just a workaround for fast POC validation
                                 stats,
                                 sbmap,
                                 sb_info,

@@ -3858,6 +3858,7 @@ private:
   };
   class ExtentDecoderPartial : public ExtentMap::ExtentDecoder {
     BlueStore& store;
+    bool tolerate_errors;
     read_alloc_stats_t& stats;
     SimpleBitmap* sbmap;
     sb_info_space_efficient_map_t& sb_info;
@@ -3888,11 +3889,13 @@ private:
     }
   public:
     ExtentDecoderPartial(BlueStore& _store,
+                         bool _tolerant,
                          read_alloc_stats_t& _stats,
                          SimpleBitmap* _sbmap,
                          sb_info_space_efficient_map_t& _sb_info,
                          uint8_t _min_alloc_size_order)
-      : store(_store), stats(_stats), sbmap(_sbmap), sb_info(_sb_info),
+      : store(_store), tolerate_errors(_tolerant),
+        stats(_stats), sbmap(_sbmap), sb_info(_sb_info),
         min_alloc_size_order(_min_alloc_size_order)
     {}
     const ghobject_t& get_oid() const {

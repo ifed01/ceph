@@ -1504,6 +1504,9 @@ public:
 	  ldpp_dout(dpp, 20) << "read_log_and_missing " << e << dendl;
 	  if (!entries.empty()) {
 	    pg_log_entry_t last_e(entries.back());
+if (last_e.version.version >= e.version.version) {
+  ldpp_dout(dpp, 0) << last_e << " .vs " << e << dendl;
+}
 	    ceph_assert(last_e.version.version < e.version.version);
 	    ceph_assert(last_e.version.epoch <= e.version.epoch);
 	  }
