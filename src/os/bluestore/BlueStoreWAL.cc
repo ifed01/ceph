@@ -531,7 +531,8 @@ void BluestoreWAL::_maybe_write_unlock(IOContext* anchor_ioc,
 {
   size_t pad = 0;
   if (_bl.length()) {
-    uint64_t write_offs = _page_pos + page_offsets[get_page_idx(page_seqno)];
+    auto page = get_page_idx(page_seqno);
+    uint64_t write_offs = _page_pos + page_offsets[page];
 
     pad = p2nphase(size_t(_bl.length()), block_size);
     avail -= _bl.length() + pad;
@@ -549,6 +550,7 @@ void BluestoreWAL::_maybe_write_unlock(IOContext* anchor_ioc,
             << " write 0x" << std::hex
             << write_offs << "~" << _bl.length()
             << std::dec
+            << " page " << page
             << " cpos " << curpage_pos
             << dendl;
     logger->inc(l_bluestore_wal_output_avg, _bl.length());
@@ -699,7 +701,7 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueWALContext* txc, bool force)
   // last txc should be added in any case
   int r =  my_chest.add(txc, full_len, true);
   dout(7) << __func__ << " added to chest (last),"
-    << " items:" << gate_chest.get_entry_count()
+    << " items:" << my_chest.get_entry_count()
     << " insert pos:" << r
     << dendl;
   ceph_assert(r >= 0);
@@ -869,7 +871,7 @@ BluestoreWAL::Op* BluestoreWAL::_log(BlueWALContext* txc, bool force)
 void BluestoreWAL::submitted(BlueWALContext* txc)
 {
   // txc's wal seqno indicates all the preceeding pages have been submitted,
-  // while the bound one is still 1being submitted (i.e. busy)
+  // while the bound one is still being submitted (i.e. busy)
   // we might get multiple confirmations for the same current page,
   // just ignore repeated/outdated ones.
 
@@ -977,17 +979,18 @@ int BluestoreWAL::_read_page_header(uint64_t o,
 int BluestoreWAL::replay(bool restricted,
   std::function<int(const std::string&)> submit_db_fn)
 {
+  auto page_count = page_offsets.size();
   dout(7) << __func__
            << " start:"
-           << " page = " << page_size
-           << " head = " << head_size
-           << " block = " << block_size
+           << " pagesize = " << page_size
+           << " pages = " << page_count
+           << " headsize = " << head_size
+           << " blocksize = " << block_size
            << " restricted = " << restricted
            << dendl;
   if (!flush_thread.is_started()) {
     flush_thread.create("bwal_kv_flush");
   }
-  auto page_count = page_offsets.size();
   std::deque<bluewal_head_t> valid_page_headers;
   for (auto poffs : page_offsets) {
     bluewal_head_t header;
@@ -1153,7 +1156,7 @@ int BluestoreWAL::replay(bool restricted,
   cur_txc_seqno = next_txc_seqno;
   last_wiping_page_seqno = valid_page_headers.front().page_seq - 1;
   last_wiped_page_seqno = last_wiping_page_seqno;
-  avail = total; // - page_size * (last_committed_page_seqno - last_wiped_page_seqno);
+  avail = total; // - page_size * (last_committed_page_seqno - last_wiped_page_seqno); //FIXME for restricted?
   cur_op_seqno = 0;
   if (!restricted) {
     dout(5) << __func__ << " completed, wiping pending:"
@@ -1168,6 +1171,8 @@ int BluestoreWAL::replay(bool restricted,
             << dendl;
     wipe_pages();
   }
+  auto min_txc_seqno = valid_page_headers.front().seq;
+  auto min_page_seqno = valid_page_headers.front().page_seq;
   dout(5) << __func__ << " completed:"
            << " avail:" << avail
            << " avail/page_size:" << avail / page_size
@@ -1175,6 +1180,8 @@ int BluestoreWAL::replay(bool restricted,
            << " last committed:" << last_committed_page_seqno
            << " wiping: " << last_wiping_page_seqno
            << " wiped: " << last_wiped_page_seqno
+           << " start pseq: " << min_page_seqno
+           << " start tseq: " << min_txc_seqno
            << " next tseq: " << cur_txc_seqno
            << dendl; 
   return 0;
