@@ -534,6 +534,31 @@ int check_duplicates(char* fname)
   return r >= 0 ? errors != 0 : r;
 }
 
+int test_bulk_release(Allocator *a, uint64_t unit, size_t count0)
+{
+  auto count = count0;
+  ceph_assert(a);
+  interval_set<uint64_t> full_alloc;
+  full_alloc.insert(0, a->get_capacity());
+  a->foreach(
+    [&](uint64_t o, uint64_t l) {
+      full_alloc.erase(o, l);
+    });
+  interval_set<uint64_t> to_release;
+  for(auto it = full_alloc.begin(); count && it != full_alloc.end(); it++) {
+    if (unit == 0 || it.get_len() == unit) {
+      to_release.insert(it.get_start(), it.get_len());
+      --count;
+    }
+  }
+  auto t0 = ceph::mono_clock::now();
+  a->release(to_release);
+  std::cout << "Duration (ns): " << (ceph::mono_clock::now() - t0).count()
+            << " " << count0 - count << " extents released"
+            << std::endl;
+  return 0;
+}
+
 int main(int argc, char **argv)
 {
   auto args = argv_to_vec(argc, argv);
@@ -776,9 +801,26 @@ int main(int argc, char **argv)
         }
 	return 0;
     });
+  } else if (strcmp(argv[2], "test_release") == 0) {
+    uint64_t unit = 0;
+    size_t count = 1;
+    if (argc >= 4) {
+      unit = strtoul(argv[3], nullptr, 10);
+    }
+    if (argc >= 5) {
+      count = strtoul(argv[4], nullptr, 10);
+    }
+    return replay_free_dump_and_apply(argv[1],
+      [&](Allocator *a, const string &aname) {
+        return test_bulk_release(a, unit, count);
+
+    });
   } else if (strcmp(argv[2], "export_binary") == 0) {
     return export_as_binary(argv[1], argv[3]);
   } else if (strcmp(argv[2], "duplicates") == 0) {
     return check_duplicates(argv[1]);
+  } else {
+    cerr << "Unknown operation: " << argv[2] 
+         << std::endl;
   }
 }
