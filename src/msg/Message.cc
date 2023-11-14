@@ -49,6 +49,7 @@
 #include "messages/MLogAck.h"
 
 #include "messages/MPing.h"
+#include "messages/MProbe.h"
 
 #include "messages/MCommand.h"
 #include "messages/MCommandReply.h"
@@ -932,6 +933,12 @@ Message *decode_message(CephContext *cct,
 
   case MSG_MON_HEALTH_CHECKS:
     m = make_message<MMonHealthChecks>();
+    break;
+  case MSG_PROBE:
+    m = make_message<MProbe>();
+    break;
+  case MSG_PROBEACK:
+    m = make_message<MProbeAck>();
     break;
 
     // -- simple messages without payload --

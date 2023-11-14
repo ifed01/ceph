@@ -27,6 +27,7 @@
 #include "msg/Message.h"
 
 #include "messages/MPing.h"
+#include "messages/MProbe.h"
 #include "messages/MOSDOp.h"
 #include "messages/MOSDOpReply.h"
 #include "messages/MOSDBackoff.h"
@@ -984,6 +985,9 @@ bool Objecter::ms_dispatch(Message *m)
 {
   ldout(cct, 10) << __func__ << " " << cct << " " << *m << dendl;
   switch (m->get_type()) {
+/*  case CEPH_MSG_PING:
+    ldout(cct, 0) << __func__ << " ping from " << m->get_source() << dendl;
+    return false;*/
     // these we exlusively handle
   case CEPH_MSG_OSD_OPREPLY:
     handle_osd_op_reply(static_cast<MOSDOpReply*>(m));
@@ -5426,4 +5430,20 @@ void ::ObjectOperation::scrub_ls(const librados::object_id_t& start_after,
 {
   scrub_ls_arg_t arg = {*interval, 1, start_after, max_to_get};
   do_scrub_ls(this, arg, snapsets, interval, rval);
+}
+
+int Objecter::ping(int osd)
+{
+/*  ldout(cct, 0) << __func__ << " " << osd << dendl;
+  shunique_lock sul(rwlock, ceph::acquire_unique);
+  OSDSession* s = nullptr;
+  int r = _get_session(osd, &s, sul);
+  ceph_assert(r == 0);
+  ceph_assert(s);
+  ceph_assert(s->con);
+  r = s->con->send_message(new MProbe);
+  ceph_assert(r == 0);
+//  put_session(s);
+  return r;*/
+  return -1;
 }

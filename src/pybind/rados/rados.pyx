@@ -643,6 +643,184 @@ Rados object in state %s." % self.state)
         if ret != 0:
             raise make_ex(ret, "error calling conf_set")
 
+    def probe_osd_connect(self, osd: int):
+        """
+        Establishes probing connection to an osd
+
+        :param osd: the ID of the OSD to establish probing connection to
+        :returns: probe ID
+        """
+
+        self.require_state("connected")
+
+        cdef:
+            int _osd = osd
+
+        with nogil:
+            ret = rados_probe_osd_connect(self.cluster, _osd)
+
+        if ret < 0:
+            raise make_ex(ret, "error calling probe_osd_connect")
+        return ret
+
+    def probe_mon_connect(self, mon: str):
+        """
+        Establishes probing connection to an monitor
+
+        :param mon: the ID of the MON to establish probing connection to
+        :returns: probe ID
+        """
+
+        self.require_state("connected")
+
+        mon_raw = cstr(mon, 'mon')
+        cdef:
+            const char* _mon_raw = mon_raw
+
+        with nogil:
+            ret = rados_probe_mon_connect(self.cluster, _mon_raw)
+
+        if ret < 0:
+            raise make_ex(ret, "error calling probe_mon_connect")
+        return ret
+
+    def probe_mds_connect(self, mds: str):
+        """
+        Establishes probing connection to an MDS
+
+        :param mds: the ID of the MDS to establish probing connection to
+        :returns: probe ID
+        """
+
+        self.require_state("connected")
+
+        mds_raw = cstr(mds, 'mds')
+        cdef:
+            const char* _mds_raw = mds_raw
+
+        with nogil:
+            ret = rados_probe_mds_connect(self.cluster, _mds_raw)
+
+        if ret < 0:
+            raise make_ex(ret, "error calling probe_mds_connect")
+        return ret
+
+    def probe_mgr_connect(self):
+        """
+        Establishes probing connection to a MGR
+
+        :returns: probe ID
+        """
+
+        self.require_state("connected")
+
+        with nogil:
+            ret = rados_probe_mgr_connect(self.cluster)
+
+        if ret < 0:
+            raise make_ex(ret, "error calling probe_mgr_connect")
+        return ret
+
+    def probe_shutdown(self, id: int):
+        """
+        Shuts down established probing connection to a daemon
+
+        :param id: the ID of the daemon obtained from probe_*_connect call
+        :returns: None
+        """
+
+        self.require_state("connected")
+
+        cdef:
+            int _id = id
+
+        with nogil:
+            ret = rados_probe_shutdown(self.cluster, _id)
+
+        if ret < 0:
+            raise make_ex(ret, "error calling probe_shutdown")
+
+    def probe_send(self, id: int, data: str):
+        """
+
+        :param id: the ID of the daemon obtained from probe_[osd|mon|mgr|mds]_connect call
+        :param data: data to send along with the probe msg
+        :returns: None
+        """
+
+        self.require_state("connected")
+
+        data_raw = cstr(data, 'data')
+        cdef:
+            int _id = id
+            const char* _data_raw = data_raw
+
+        with nogil:
+            ret = rados_probe_send(self.cluster, _id, _data_raw)
+
+        if ret != 0:
+            raise make_ex(ret, "error calling probe_send")
+
+    def probe_query(self, id: int, fmt_type : str, reset: bool):
+        """
+        Query probing statistics
+
+        :param id: the ID of the daemon obtained from probe_[osd|mon|mgr|mds]_connect call
+        :param fmt_type: type of output formatting: json, json-pretty, xml, xml-pretty,...
+        : param reset: whether to reset accumulated statistics on completion
+        :returns: the string reply from the daemon
+        """
+
+        self.require_state("connected")
+
+        fmt_type_raw = cstr(fmt_type, 'fmt_type')
+        cdef:
+            int _id = id
+            char *_fmt_type = fmt_type_raw
+            int _reset = reset
+            size_t outstrlen = 0
+            char *outstr
+
+        with nogil:
+            ret = rados_probe_query(self.cluster, _id, _fmt_type, _reset, &outstr, &outstrlen)
+
+        if ret < 0:
+            raise make_ex(ret, "error calling probe_query")
+
+        if outstrlen:
+            my_outstr = outstr[:outstrlen]
+            rados_buffer_free(outstr)
+            return decode_cstr(my_outstr)
+
+    def probe_query_all(self, fmt_type : str, reset: bool):
+        """
+        Query probing statistics
+
+        :param fmt_type: type of output formatting: json, json-pretty, xml, xml-pretty,...
+        : param reset: whether to reset accumulated statistics on completion
+        :returns: the string reply from the daemon
+        """
+
+        self.require_state("connected")
+
+        fmt_type_raw = cstr(fmt_type, 'fmt_type')
+        cdef:
+            char *_fmt_type = fmt_type_raw
+            int _reset = reset
+            size_t outstrlen = 0
+            char *outstr
+
+        with nogil:
+            ret = rados_probe_query_all(self.cluster, _fmt_type, _reset, &outstr, &outstrlen)
+
+        if ret < 0:
+            raise make_ex(ret, "error calling probe_query_all")
+
+        if outstrlen:
+            my_outstr = outstr[:outstrlen]
+            rados_buffer_free(outstr)
+            return decode_cstr(my_outstr)
+
     def ping_monitor(self, mon_id: str):
         """
         Ping a monitor to assess liveness

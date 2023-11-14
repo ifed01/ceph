@@ -408,6 +408,168 @@ TRACEPOINT_EVENT(librados, rados_pool_list_exit,
         ctf_integer(int, retval, retval)
     )
 )
+TRACEPOINT_EVENT(librados, rados_probe_osd_connect_enter,
+    TP_ARGS(
+        rados_t, cluster,
+        int, osd),
+    TP_FIELDS(
+        ctf_integer_hex(rados_t, cluster, cluster)
+        ctf_integer(int, osd, osd)
+    )
+)
+
+TRACEPOINT_EVENT(librados, rados_probe_osd_connect_exit,
+    TP_ARGS(
+        int, retval,
+        char const* const*, buf,
+        size_t*, len),
+    TP_FIELDS(
+        ctf_integer(int, retval, retval)
+        ceph_ctf_sequencep(unsigned char, buf, buf, size_t, len)
+    )
+)
+TRACEPOINT_EVENT(librados, rados_probe_mon_connect_enter,
+    TP_ARGS(
+        rados_t, cluster,
+        const char*, mon_id),
+    TP_FIELDS(
+        ctf_integer_hex(rados_t, cluster, cluster)
+        ctf_string(mon_id, mon_id)
+    )
+)
+
+TRACEPOINT_EVENT(librados, rados_probe_mon_connect_exit,
+    TP_ARGS(
+        int, retval,
+        char const* const*, buf,
+        size_t*, len),
+    TP_FIELDS(
+        ctf_integer(int, retval, retval)
+        ceph_ctf_sequencep(unsigned char, buf, buf, size_t, len)
+    )
+)
+
+TRACEPOINT_EVENT(librados, rados_probe_mds_connect_enter,
+    TP_ARGS(
+        rados_t, cluster,
+        const char*, mds_id),
+    TP_FIELDS(
+        ctf_integer_hex(rados_t, cluster, cluster)
+        ctf_string(mds_id, mds_id)
+    )
+)
+
+TRACEPOINT_EVENT(librados, rados_probe_mds_connect_exit,
+    TP_ARGS(
+        int, retval,
+        char const* const*, buf,
+        size_t*, len),
+    TP_FIELDS(
+        ctf_integer(int, retval, retval)
+        ceph_ctf_sequencep(unsigned char, buf, buf, size_t, len)
+    )
+)
+
+TRACEPOINT_EVENT(librados, rados_probe_mgr_connect_enter,
+    TP_ARGS(
+        rados_t, cluster),
+    TP_FIELDS(
+        ctf_integer_hex(rados_t, cluster, cluster)
+    )
+)
+
+TRACEPOINT_EVENT(librados, rados_probe_mgr_connect_exit,
+    TP_ARGS(
+        int, retval,
+        char const* const*, buf,
+        size_t*, len),
+    TP_FIELDS(
+        ctf_integer(int, retval, retval)
+        ceph_ctf_sequencep(unsigned char, buf, buf, size_t, len)
+    )
+)
+
+TRACEPOINT_EVENT(librados, rados_probe_shutdown_enter,
+    TP_ARGS(
+        rados_t, cluster,
+        int, id),
+    TP_FIELDS(
+        ctf_integer_hex(rados_t, cluster, cluster)
+        ctf_integer(int, id, id)
+    )
+)
+
+TRACEPOINT_EVENT(librados, rados_probe_shutdown_exit,
+    TP_ARGS(
+        int, retval,
+        char const* const*, buf,
+        size_t*, len),
+    TP_FIELDS(
+        ctf_integer(int, retval, retval)
+        ceph_ctf_sequencep(unsigned char, buf, buf, size_t, len)
+    )
+)
+
+TRACEPOINT_EVENT(librados, rados_probe_send_enter,
+    TP_ARGS(
+        rados_t, cluster,
+        int, id),
+    TP_FIELDS(
+        ctf_integer_hex(rados_t, cluster, cluster)
+        ctf_integer(int, id, id)
+    )
+)
+
+TRACEPOINT_EVENT(librados, rados_probe_send_exit,
+    TP_ARGS(
+        int, retval,
+        char const* const*, buf,
+        size_t*, len),
+    TP_FIELDS(
+        ctf_integer(int, retval, retval)
+        ceph_ctf_sequencep(unsigned char, buf, buf, size_t, len)
+    )
+)
+
+TRACEPOINT_EVENT(librados, rados_probe_query_enter,
+    TP_ARGS(
+        rados_t, cluster,
+        int, id),
+    TP_FIELDS(
+        ctf_integer_hex(rados_t, cluster, cluster)
+        ctf_integer(int, id, id)
+    )
+)
+
+TRACEPOINT_EVENT(librados, rados_probe_query_exit,
+    TP_ARGS(
+        int, retval,
+        char const* const*, buf,
+        size_t*, len),
+    TP_FIELDS(
+        ctf_integer(int, retval, retval)
+        ceph_ctf_sequencep(unsigned char, buf, buf, size_t, len)
+    )
+)
+
+TRACEPOINT_EVENT(librados, rados_probe_query_all_enter,
+    TP_ARGS(
+        rados_t, cluster),
+    TP_FIELDS(
+        ctf_integer_hex(rados_t, cluster, cluster)
+    )
+)
+
+TRACEPOINT_EVENT(librados, rados_probe_query_all_exit,
+    TP_ARGS(
+        int, retval,
+        char const* const*, buf,
+        size_t*, len),
+    TP_FIELDS(
+        ctf_integer(int, retval, retval)
+        ceph_ctf_sequencep(unsigned char, buf, buf, size_t, len)
+    )
+)
 
 TRACEPOINT_EVENT(librados, rados_ping_monitor_enter,
     TP_ARGS(

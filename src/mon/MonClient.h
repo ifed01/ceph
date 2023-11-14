@@ -412,6 +412,7 @@ public:
     const ceph::buffer::list& bl,
     ceph::buffer::list *reply) override;
 
+  const EntityName& get_entity_name() const { return entity_name; }
   void set_entity_name(EntityName name) { entity_name = name; }
   void set_handle_authentication_dispatcher(Dispatcher *d) {
     handle_authentication_dispatcher = d;

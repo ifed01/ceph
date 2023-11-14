@@ -7434,9 +7434,16 @@ void OSD::ms_fast_dispatch(Message *m)
   // peering event?
   switch (m->get_type()) {
   case CEPH_MSG_PING:
+  {
     dout(10) << "ping from " << m->get_source() << dendl;
+
+    /*auto* reply = new MPing();
+    reply->get_header().tid = m->get_tid();
+    m->get_connection()->send_message(reply);
+    dout(10) << "pong to " << m->get_source() << dendl;*/
     m->put();
     return;
+  }
   case MSG_OSD_FORCE_RECOVERY:
     handle_fast_force_recovery(static_cast<MOSDForceRecovery*>(m));
     return;

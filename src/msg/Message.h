@@ -239,6 +239,10 @@
 // *** ceph-mgr <-> MON daemons ***
 #define MSG_MGR_UPDATE     0x70b
 
+// *** client -> osd/mds/mon
+#define MSG_PROBE          0x70c
+#define MSG_PROBEACK       0x70d
+
 // ======================================================
 
 // abstract Message class

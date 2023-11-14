@@ -3919,6 +3919,8 @@ public:
   PerfCounters *get_logger() {
     return logger;
   }
+
+  int ping(int osd);
 };
 
 #endif

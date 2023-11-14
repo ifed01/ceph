@@ -192,6 +192,129 @@ int librados::RadosClient::get_fsid(std::string *s)
   return 0;
 }
 
+int librados::RadosClient::_maybe_init_probeclient()
+{
+  if (!probec) {
+    probec = new (std::nothrow) ProbeClient(cct, monclient.get_entity_name(), monclient.auth_registry);
+  }
+  ceph_assert(probec);
+  if (!probec->is_initialized()) {
+    probec->init(monclient.monmap);
+  }
+  return probec->is_initialized() ? 0 : -1;
+}
+
+int librados::RadosClient::probe_osd_connect(int osd)
+{
+  int err = 0;
+
+  err = objecter->with_osdmap(
+    [&](const OSDMap& o) {
+      int r = -ESRCH;
+      if (o.exists(osd)) {
+	ostringstream ss;
+	ss << "OSD." << osd;
+	r = _maybe_init_probeclient();
+	ceph_assert(r == 0);
+        r = probec->probe_connect(CEPH_ENTITY_TYPE_OSD, ss.str(), o.get_addrs(osd));
+      }
+      return r;
+    });
+  ldout(cct, 0) << __func__ << " ret = " << err << dendl;
+  return err;
+}
+
+int librados::RadosClient::probe_mon_connect(const std::string& mon_id)
+{
+  int err = 0;
+  ldout(cct, 0) << __func__ << " enter, mon_id " << mon_id << dendl;
+
+  err = monclient.with_monmap(\
+    [&](const MonMap& monmap) {
+      int r = -ESRCH;
+      if (monmap.contains(mon_id)) {
+	ostringstream ss;
+	ss << "MON." << mon_id;
+	r = _maybe_init_probeclient();
+	ceph_assert(r == 0);
+	r = probec->probe_connect(CEPH_ENTITY_TYPE_MON, ss.str(), monmap.get_addrs(mon_id));
+      }
+      return r;
+    });
+  ldout(cct, 0) << __func__ << " ret = " << err << dendl;
+  return err;
+}
+
+int librados::RadosClient::probe_mds_connect(const std::string& mds_id)
+{
+  int err = 0;
+
+  err = -ENODEV;
+  /*
+    err = monclient.with_monmap(\
+      [&](const MonMap& monmap) {
+	int r = -ESRCH;
+	if (monmap.contains(mon_id)) {
+	  ostringstream ss;
+	  ss << "MDS." << mds_id;
+	  r = _maybe_init_probeclient();
+	  ceph_assert(r == 0);
+	  r = probec->probe_connect(CEPH_ENTITY_TYPE_MON, monmap.get_addrs(mon_id));
+	}
+	return r;
+      });*/
+  ldout(cct, 0) << __func__ << " ret = " << err << dendl;
+  return err;
+}
+
+int librados::RadosClient::probe_mgr_connect()
+{
+  int err = 0;
+
+  err = mgrclient.with_mgrmap(\
+    [&](const MgrMap& mgrmap) {
+      int r;
+      r = _maybe_init_probeclient();
+      ceph_assert(r == 0);
+      r = probec->probe_connect(CEPH_ENTITY_TYPE_MGR, string("MGR"), mgrmap.get_active_addrs());
+      return r;
+    });
+  ldout(cct, 0) << __func__ << " ret = " << err << dendl;
+  return err;
+}
+
+int librados::RadosClient::probe_shutdown(int id)
+{
+  if (!probec || !probec->is_initialized()) {
+    return -EFAULT;
+  }
+  return probec->probe_shutdown(id);
+}
+
+int librados::RadosClient::probe_send(int id, const std::string& payload)
+{
+  if (!probec || !probec->is_initialized()) {
+    return -EFAULT;
+  }
+  return probec->probe_send(id, payload);
+}
+
+int librados::RadosClient::probe_query(int id, Formatter* fmt, bool reset)
+{
+  if (!probec || !probec->is_initialized()) {
+    return -EFAULT;
+  }
+  return probec->probe_query(id, fmt, reset);
+}
+
+int librados::RadosClient::probe_query_all(Formatter* fmt, bool reset)
+{
+  if (!probec || !probec->is_initialized()) {
+    return -EFAULT;
+  }
+  return probec->probe_query_all(fmt, reset);
+}
+
 int librados::RadosClient::ping_monitor(const string mon_id, string *result)
 {
   int err = 0;
@@ -267,6 +390,7 @@ int librados::RadosClient::connect()
 
   objecter->init();
   messenger->add_dispatcher_head(&mgrclient);
+  //messenger->add_dispatcher_head(probec);
   messenger->add_dispatcher_tail(objecter);
   messenger->add_dispatcher_tail(this);
 
@@ -323,7 +447,6 @@ int librados::RadosClient::connect()
  out:
   if (err) {
     state = DISCONNECTED;
-
     if (objecter) {
       delete objecter;
       objecter = NULL;
@@ -356,10 +479,16 @@ void librados::RadosClient::shutdown()
     }
   }
   state = DISCONNECTED;
+  if (probec) {
+    probec->shutdown();
+  }
   instance_id = 0;
   l.unlock();
   if (need_objecter) {
     objecter->shutdown();
+  }
+  if (probec) {
+    probec->shutdown();
   }
   mgrclient.shutdown();
 
@@ -463,6 +592,8 @@ int librados::RadosClient::get_min_compatible_client(int8_t* min_compat_client,
 librados::RadosClient::~RadosClient()
 {
   cct->_conf.remove_observer(this);
+  if (probec)
+    delete probec;
   if (messenger)
     delete messenger;
   if (objecter)

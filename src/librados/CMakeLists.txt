@@ -2,6 +2,7 @@ add_library(librados_impl STATIC
   IoCtxImpl.cc
   RadosXattrIter.cc
   RadosClient.cc
+  ProbeClient.cc
   librados_util.cc
   librados_tp.cc)
 

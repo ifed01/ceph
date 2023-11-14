@@ -139,6 +139,15 @@ cdef extern from "rados/librados.h" nogil:
                                         const char *app_name, char *keys,
                                         size_t *key_len, char *values,
                                         size_t *value_len)
+    int rados_probe_osd_connect(rados_t cluster, int osd)
+    int rados_probe_mon_connect(rados_t cluster, const char* mon)
+    int rados_probe_mds_connect(rados_t cluster, const char* mds)
+    int rados_probe_mgr_connect(rados_t cluster)
+    int rados_probe_shutdown(rados_t cluster, int id)
+    int rados_probe_send(rados_t cluster, int id, const char* data)
+    int rados_probe_query(rados_t cluster, int id, const char* fmt_type, int reset, char **outstr, size_t *outstrlen)
+    int rados_probe_query_all(rados_t cluster, const char* fmt_type, int reset, char **outstr, size_t *outstrlen)
+
     int rados_ping_monitor(rados_t cluster, const char *mon_id, char **outstr, size_t *outstrlen)
     int rados_mon_command(rados_t cluster, const char **cmd, size_t cmdlen,
                           const char *inbuf, size_t inbuflen,

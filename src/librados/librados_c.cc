@@ -864,6 +864,152 @@ static void do_out_buffer(string& outbl, char **outbuf, size_t *outbuflen)
     *outbuflen = outbl.length();
 }
 
+extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_probe_osd_connect)(
+  rados_t cluster,
+  int osd)
+{
+  tracepoint(librados, rados_probe_osd_connect_enter, cluster, osd);
+  librados::RadosClient* client = (librados::RadosClient*)cluster;
+
+  if (osd < 0) {
+    tracepoint(librados, rados_probe_osd_connect_exit, -EINVAL, NULL, NULL);
+    return -EINVAL;
+  }
+
+  int ret = client->probe_osd_connect(osd);
+  tracepoint(librados, rados_probe_osd_connect_exit, ret, NULL, NULL);
+  return ret;
+}
+LIBRADOS_C_API_BASE_DEFAULT(rados_probe_osd_connect);
+
+extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_probe_mon_connect)(
+  rados_t cluster,
+  const char* mon_id)
+{
+  tracepoint(librados, rados_probe_mon_connect_enter, cluster, mon_id);
+  librados::RadosClient* client = (librados::RadosClient*)cluster;
+
+  if (!mon_id || !*mon_id) {
+    tracepoint(librados, rados_probe_mon_connect_exit, -EINVAL, NULL, NULL);
+    return -EINVAL;
+  }
+
+  int ret = client->probe_mon_connect(mon_id);
+  tracepoint(librados, rados_probe_mon_connect_exit, ret, NULL, NULL);
+  return ret;
+}
+LIBRADOS_C_API_BASE_DEFAULT(rados_probe_mon_connect);
+
+extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_probe_mds_connect)(
+  rados_t cluster,
+  const char* mds_id)
+{
+  tracepoint(librados, rados_probe_mds_connect_enter, cluster, mds_id);
+  librados::RadosClient* client = (librados::RadosClient*)cluster;
+
+  if (!mds_id || !*mds_id) {
+    tracepoint(librados, rados_probe_mds_connect_exit, -EINVAL, NULL, NULL);
+    return -EINVAL;
+  }
+
+  int ret = client->probe_mds_connect(mds_id);
+  tracepoint(librados, rados_probe_mds_connect_exit, ret, NULL, NULL);
+  return ret;
+}
+LIBRADOS_C_API_BASE_DEFAULT(rados_probe_mds_connect);
+
+extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_probe_mgr_connect)(
+  rados_t cluster)
+{
+  tracepoint(librados, rados_probe_mgr_connect_enter, cluster);
+  librados::RadosClient* client = (librados::RadosClient*)cluster;
+
+  int ret = client->probe_mgr_connect();
+  tracepoint(librados, rados_probe_mgr_connect_exit, ret, NULL, NULL);
+  return ret;
+}
+LIBRADOS_C_API_BASE_DEFAULT(rados_probe_mgr_connect);
+
+extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_probe_shutdown)(
+  rados_t cluster,
+  int id)
+{
+  tracepoint(librados, rados_probe_shutdown_enter, cluster, id);
+  librados::RadosClient* client = (librados::RadosClient*)cluster;
+
+  int ret = client->probe_shutdown(id);
+  tracepoint(librados, rados_probe_shutdown_exit, ret, NULL, NULL);
+  return ret;
+}
+LIBRADOS_C_API_BASE_DEFAULT(rados_probe_shutdown);
+
+extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_probe_send)(
+  rados_t cluster,
+  int id,
+  const char* data)
+{
+  tracepoint(librados, rados_probe_send_enter, cluster, id);
+  librados::RadosClient* client = (librados::RadosClient*)cluster;
+
+  int ret = client->probe_send(id, string(data));
+  tracepoint(librados, rados_probe_send_exit, ret, NULL, NULL);
+  return ret;
+}
+LIBRADOS_C_API_BASE_DEFAULT(rados_probe_send);
+
+extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_probe_query)(
+  rados_t cluster,
+  int id,
+  const char* out_type,
+  int reset,
+  char** outstr,
+  size_t * outstrlen)
+{
+  tracepoint(librados, rados_probe_query_enter, cluster, id);
+  librados::RadosClient* client = (librados::RadosClient*)cluster;
+
+  std::unique_ptr<Formatter> f(Formatter::create(out_type, "json-pretty"));
+  if (!f.get()) {
+    return -EINVAL;
+  }
+  ceph_assert(f.get());
+  int ret = client->probe_query(id, f.get(), !!reset);
+  if (ret == 0) {
+    bufferlist bl;
+    f->flush(bl);
+    do_out_buffer(bl, outstr, outstrlen);
+  }
+  tracepoint(librados, rados_probe_query_exit, ret, ret < 0 ? NULL : outstr, ret < 0 ? NULL : outstrlen);
+  return ret;
+}
+LIBRADOS_C_API_BASE_DEFAULT(rados_probe_query);
+
+extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_probe_query_all)(
+  rados_t cluster,
+  const char* out_type,
+  int reset,
+  char** outstr,
+  size_t * outstrlen)
+{
+  tracepoint(librados, rados_probe_query_all_enter, cluster);
+  librados::RadosClient* client = (librados::RadosClient*)cluster;
+
+  std::unique_ptr<Formatter> f(Formatter::create(out_type, "json-pretty"));
+  if (!f.get()) {
+    return -EINVAL;
+  }
+  ceph_assert(f.get());
+  int ret = client->probe_query_all(f.get(), !!reset);
+  if (ret == 0) {
+    bufferlist bl;
+    f->flush(bl);
+    do_out_buffer(bl, outstr, outstrlen);
+  }
+  tracepoint(librados, rados_probe_query_all_exit, ret, ret < 0 ? NULL : outstr, ret < 0 ? NULL : outstrlen);
+  return ret;
+}
+LIBRADOS_C_API_BASE_DEFAULT(rados_probe_query_all);
+
 extern "C" int LIBRADOS_C_API_DEFAULT_F(rados_ping_monitor)(
   rados_t cluster,
   const char *mon_id,

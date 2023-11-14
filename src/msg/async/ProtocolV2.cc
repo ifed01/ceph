@@ -12,6 +12,7 @@
 #include "include/random.h"
 #include "auth/AuthClient.h"
 #include "auth/AuthServer.h"
+#include "messages/MProbe.h"
 
 #define dout_subsys ceph_subsys_ms
 #undef dout_prefix
@@ -1465,6 +1466,8 @@ CtPtr ProtocolV2::handle_message() {
   ldout(cct, 5) << __func__ << " received message m=" << message
                 << " seq=" << message->get_seq()
                 << " from=" << message->get_source() << " type=" << header.type
+                << " fast " << messenger->ms_can_fast_dispatch(message)
+                << " lossy " << connection->policy.lossy
                 << " " << *message << dendl;
 
   bool need_dispatch_writer = false;
@@ -1490,11 +1493,19 @@ CtPtr ProtocolV2::handle_message() {
     connection->logger->inc(l_msgr_recv_encrypted_bytes,
                             rx_frame_asm.get_frame_onwire_len());
   }
-
+  if (message->get_type() == MSG_PROBE) {
+    ldout(cct, 20) << __func__ << " probe received:" << *message << dendl;
+    MessageRef probe_req(message, false);
+    auto* reply = new MProbeAck(ref_cast<MProbe>(probe_req));
+    message->get_connection()->send_message(reply);
+    ldout(cct, 20) << __func__ << " probe ack to " << message->get_source() << dendl;
+    goto ack;
+  }
   messenger->ms_fast_preprocess(message);
   fast_dispatch_time = ceph::mono_clock::now();
   connection->logger->tinc(l_msgr_running_recv_time,
 			   fast_dispatch_time - connection->recv_start_time);
+
   if (connection->delay_state) {
     double delay_period = 0;
     if (rand() % 10000 < cct->_conf->ms_inject_delay_probability * 10000.0) {
@@ -1522,7 +1533,7 @@ CtPtr ProtocolV2::handle_message() {
     connection->dispatch_queue->enqueue(message, message->get_priority(),
                                         connection->conn_id);
   }
-
+ack:
   handle_message_ack(current_header.ack_seq);
 
  out:

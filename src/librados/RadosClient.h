@@ -33,6 +33,7 @@
 #include "mgr/MgrClient.h"
 
 #include "IoCtxImpl.h"
+#include "ProbeClient.h"
 
 struct Context;
 class Message;
@@ -65,6 +66,7 @@ private:
   MonClient monclient{cct, poolctx};
   MgrClient mgrclient{cct, nullptr, &monclient.monmap};
   Messenger *messenger{nullptr};
+  ProbeClient* probec{nullptr};
 
   uint64_t instance_id{0};
 
@@ -95,11 +97,21 @@ private:
 
   int wait_for_osdmap();
 
+  int _maybe_init_probeclient();
 public:
   boost::asio::io_context::strand finish_strand{poolctx.get_io_context()};
 
   explicit RadosClient(CephContext *cct);
   ~RadosClient() override;
+  int probe_osd_connect(int osd);
+  int probe_mon_connect(const std::string& mon_id);
+  int probe_mds_connect(const std::string& mds_id);
+  int probe_mgr_connect();
+  int probe_shutdown(int id);
+  int probe_send(int id, const std::string& payload);
+  int probe_query(int id, Formatter* fmt, bool reset);
+  int probe_query_all(Formatter* fmt, bool reset);
+
   int ping_monitor(std::string mon_id, std::string *result);
   int connect();
   void shutdown();

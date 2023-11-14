@@ -15,6 +15,8 @@
 #ifndef MGR_CLIENT_H_
 #define MGR_CLIENT_H_
 
+#include <mutex>
+
 #include <boost/variant.hpp>
 
 #include "msg/Connection.h"
@@ -117,6 +119,12 @@ public:
 
   void init();
   void shutdown();
+
+  template<typename Callback, typename...Args>
+  decltype(auto) with_mgrmap(Callback&& cb, Args&&... args) {
+    std::unique_lock l(lock);
+    return std::forward<Callback>(cb)(map, std::forward<Args>(args)...);
+  }
 
   void set_mgr_optional(bool optional_) {mgr_optional = optional_;}
 

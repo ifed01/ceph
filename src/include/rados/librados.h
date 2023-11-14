@@ -446,6 +446,15 @@ CEPH_RADOS_API int rados_create2(rados_t *pcluster,
                                  const char *const clustername,
                                  const char * const name, uint64_t flags);
 
+CEPH_RADOS_API int rados_probe_osd_connect(rados_t cluster, int osd_id);
+CEPH_RADOS_API int rados_probe_mon_connect(rados_t cluster, const char* mon_id);
+CEPH_RADOS_API int rados_probe_mds_connect(rados_t cluster, const char* mds_id);
+CEPH_RADOS_API int rados_probe_mgr_connect(rados_t cluster);
+CEPH_RADOS_API int rados_probe_shutdown(rados_t cluster, int id);
+CEPH_RADOS_API int rados_probe_send(rados_t cluster, int id, const char* data);
+CEPH_RADOS_API int rados_probe_query(rados_t cluster, int id, const char* fmt_type, int reset, char** outstr, size_t* outstrlen);
+CEPH_RADOS_API int rados_probe_query_all(rados_t cluster, const char* fmt_type, int reset, char** outstr, size_t* outstrlen);
+
 /**
  * Initialize a cluster handle from an existing configuration.
  *
@@ -474,6 +483,7 @@ CEPH_RADOS_API int rados_create_with_context(rados_t *cluster,
  */
 CEPH_RADOS_API int rados_ping_monitor(rados_t cluster, const char *mon_id,
                                       char **outstr, size_t *outstrlen);
+
 
 /**
  * Connect to the cluster.
