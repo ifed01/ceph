@@ -58,6 +58,18 @@ constexpr inline T p2align(T x, T align) {
 }
 
 /*
+ * return whether x is aligned with (1 << bits)
+ * eg, p2aligned(1200, 10) ==> false
+ * eg, p2align(1024, 10) ==> true
+ * eg, p2align(0x1234, 8) ==> false
+ * eg, p2align(0x5600, 8) ==> true
+ */
+template<typename T>
+constexpr inline bool p2_isaligned(T x, unsigned bits) {
+  return !(x & ((T(1) << bits) - 1));
+}
+
+/*
  * return x % (mod) align
  * eg, p2phase(0x1234, 0x100) == 0x34 (x-0x12*align)
  * eg, p2phase(0x5600, 0x100) == 0x00 (x-0x56*align)
