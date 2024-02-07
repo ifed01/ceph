@@ -174,7 +174,7 @@ private:
   }
 protected:
   static const uint64_t pextent_array_size = 64;
-  typedef std::array <const release_set_t::value_type*, pextent_array_size> PExtentArray;
+  typedef std::array <release_set_t::value_type, pextent_array_size> PExtentArray;
 
   void set_weight_factor(double _rweight_factor) {
     rweight_factor = _rweight_factor;
@@ -226,8 +226,7 @@ protected:
     PExtentVector* extents);
 
   void _release(const release_set_t& release_set);
-  void _release(const PExtentVector& release_set);
-  void _release(size_t count, const release_set_entry_t** to_release);
+  void _release(size_t count, const release_set_entry_t* to_release);
 
   /*
    * overridables for HybridAllocator

@@ -165,10 +165,11 @@ TEST_P(AllocTest, test_alloc_bench_seq)
   std::cout << "Executed in " << ceph_clock_now() - start << std::endl;
 
   std::cout << "releasing..." << std::endl;
+  PExtentVector release_set;
   for (size_t i = 0; i < capacity; i += want_size)
   {
-    interval_set<uint64_t> release_set;
-    release_set.insert(i, want_size);
+    release_set.clear();
+    release_set.emplace_back(i, want_size);
     alloc->release(release_set);
     if (0 == (i % (1 * 1024 * _1m))) {
       std::cout << "release " << i / 1024 / 1024 << " mb of "
@@ -200,10 +201,11 @@ TEST_P(AllocTest, test_alloc_bench_seq_interleaving)
   std::cout << "Executed in " << ceph_clock_now() - start << std::endl;
 
   std::cout << "releasing..." << std::endl;
+  PExtentVector release_set;
   for (size_t i = 0; i < capacity; i += want_size * 2)
   {
-    interval_set<uint64_t> release_set;
-    release_set.insert(i, want_size);
+    release_set.clear();
+    release_set.emplace_back(i, want_size);
     alloc->release(release_set);
     if (0 == (i % (1 * 1024 * _1m))) {
       std::cout << "release " << i / 1024 / 1024 << " mb of "
@@ -246,15 +248,17 @@ TEST_P(AllocTest, test_alloc_bench)
     }
     uint64_t want_release = alloc_unit << u2(rng);
     uint64_t released = 0;
+    PExtentVector release_set;
     do {
       uint64_t o = 0;
       uint32_t l = 0;
-      interval_set<uint64_t> release_set;
       if (!at.pop_random(rng, &o, &l, want_release - released)) {
 	break;
       }
-      release_set.insert(o, l);
+      release_set.clear();
+      release_set.emplace_back(o, l);
       alloc->release(release_set);
+
       released += l;
     } while (released < want_release);
 
@@ -323,14 +327,14 @@ struct OverwriteTextContext : public Thread {
     {
       uint64_t want_release = alloc_unit << u2(rng);
       uint64_t released = 0;
-      interval_set<uint64_t> release_set;
+      PExtentVector release_set;
       do {
 	uint64_t o = 0;
 	uint32_t l = 0;
 	if (!tracker->pop_random(rng, &o, &l, want_release - released)) {
 	  break;
 	}
-	release_set.insert(o, l);
+	release_set.emplace_back(o, l);
 	released += l;
       } while (released < want_release);
 
@@ -356,7 +360,7 @@ struct OverwriteTextContext : public Thread {
 	alloc->release(release_set);
 	r_count++;
 	r_time += mono_clock::now() - t0;
-	re_count += release_set.num_intervals();
+	re_count += release_set.size();
       }
       if (0 == (i % (1 * 1024 * _1m))) {
 	std::cout << idx << ">> reuse " << i / 1024 / 1024 << " mb of "
@@ -476,14 +480,14 @@ void AllocTest::doOverwriteMPCTest(size_t thread_count,
   {
     uint64_t want_release = alloc_unit << u1(rng);
     uint64_t released = 0;
-    interval_set<uint64_t> release_set;
+    PExtentVector release_set;
     do {
       uint64_t o = 0;
       uint32_t l = 0;
       if (!at[idx]->pop_random(rng, &o, &l, want_release - released)) {
 	break;
       }
-      release_set.insert(o, l);
+      release_set.emplace_back(o, l);
       released += l;
     } while (released < want_release);
     alloc->release(release_set);
@@ -542,14 +546,14 @@ struct OverwriteTextContext2 : public OverwriteTextContext {
     {
       int64_t want = alloc_unit * u1(rng);
       int64_t released = 0;
-      interval_set<uint64_t> release_set;
+      PExtentVector release_set;
       do {
 	uint64_t o = 0;
 	uint32_t l = 0;
 	if (!tracker->pop_random(rng, &o, &l, want - released)) {
 	  break;
 	}
-	release_set.insert(o, l);
+	release_set.emplace_back(o, l);
 	released += l;
       } while (released < want);
       tmp.clear();
@@ -573,7 +577,7 @@ struct OverwriteTextContext2 : public OverwriteTextContext {
 	alloc->release(release_set);
 	r_count++;
 	r_time += mono_clock::now() - t0;
-	re_count += release_set.num_intervals();
+	re_count += release_set.size();
       }
       auto processed0 = processed;
       processed += want;
@@ -665,14 +669,14 @@ void AllocTest::doOverwriteMPC2Test(size_t thread_count,
   {
     uint64_t want_release = alloc_unit * u2(rng);
     uint64_t released = 0;
-    interval_set<uint64_t> release_set;
+    PExtentVector release_set;
     do {
       uint64_t o = 0;
       uint32_t l = 0;
       if (!at[idx]->pop_random(rng, &o, &l, want_release - released)) {
 	break;
       }
-      release_set.insert(o, l);
+      release_set.emplace_back(o, l);
       released += l;
     } while (released < want_release);
     alloc->release(release_set);

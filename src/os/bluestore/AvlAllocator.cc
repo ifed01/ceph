@@ -329,21 +329,7 @@ int AvlAllocator::_allocate(
   return 0;
 }
 
-void AvlAllocator::_release(const release_set_t& release_set)
-{
-  for (auto p = release_set.begin(); p != release_set.end(); ++p) {
-    const auto offset = p.get_start();
-    const auto length = p.get_len();
-    ceph_assert(offset + length <= uint64_t(device_size));
-    ldout(cct, 20) << __func__ << std::hex
-      << " 0x" << offset
-      << "~" << length
-      << std::dec << dendl;
-    _add_to_tree(offset, length);
-  }
-}
-
-void AvlAllocator::_release(const PExtentVector& release_set) {
+void AvlAllocator::_release(const release_set_t& release_set) {
   for (auto& e : release_set) {
     ldout(cct, 20) << __func__ << std::hex
       << " 0x" << e.offset

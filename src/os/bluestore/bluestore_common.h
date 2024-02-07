@@ -62,6 +62,26 @@ struct Int64ArrayMergeOperator : public KeyValueDB::MergeOperator {
   }
 };
 
+template <class Dev, class Collection>
+bool try_discard(Dev* bdev,
+                 const Collection& release_set,
+                 bool async)
+{
+  ceph_assert(bdev);
+  size_t i = 0;
+  size_t size = release_set.size();
+  bool b = bdev->try_discard(
+    size,
+    [&](std::pair<uint64_t, uint64_t>* ret) {
+      ceph_assert(i < size);
+      ceph_assert(ret);
+      const auto& p = release_set[i++];
+      ret->first = p.offset;
+      ret->second = p.length;
+    });
+  return b;
+}
+
 // write a label in the first block.  always use this size.  note that
 // bluefs makes a matching assumption about the location of its
 // superblock (always the second block of the device).

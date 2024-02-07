@@ -1155,7 +1155,8 @@ WRITE_CLASS_DENC(bluestore_deferred_op_t)
 struct bluestore_deferred_transaction_t {
   uint64_t seq = 0;
   std::list<bluestore_deferred_op_t> ops;
-  interval_set<uint64_t> released;  ///< allocations to release after tx
+  interval_set<uint64_t> legacy_released;  ///< allocations to release after tx
+                                           ///< (not used since Kraken)
 
   bluestore_deferred_transaction_t() : seq(0) {}
 
@@ -1163,7 +1164,7 @@ struct bluestore_deferred_transaction_t {
     DENC_START(1, 1, p);
     denc(v.seq, p);
     denc(v.ops, p);
-    denc(v.released, p);
+    denc(v.legacy_released, p);
     DENC_FINISH(p);
   }
   void dump(ceph::Formatter *f) const;

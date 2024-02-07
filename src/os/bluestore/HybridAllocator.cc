@@ -54,23 +54,20 @@ int64_t HybridBtree2Allocator::allocate(
 }
 void HybridBtree2Allocator::release(const release_set_t& release_set)
 {
-  if (!has_cache() || release_set.num_intervals() >= pextent_array_size) {
+  if (!has_cache() || release_set.size() >= pextent_array_size) {
     HybridAllocatorBase<Btree2Allocator>::release(release_set);
     return;
   }
   PExtentArray to_release;
   size_t count = 0;
-  auto p = release_set.begin();
-  while (p != release_set.end()) {
-    if (!try_put_cache(p.get_start(), p.get_len())) {
-      to_release[count++] = &*p;// bluestore_pextent_t(p.get_start(), p.get_len());
+  for (auto& p : release_set) {
+    if (!try_put_cache(p.offset, p.length)) {
+      to_release[count++] = p;
     }
-    ++p;
   }
   if (count > 0) {
     std::lock_guard l(get_lock());
     _release(count, &to_release.at(0));
   }
 }
-
 #include "HybridAllocator_impl.h"

@@ -18,9 +18,10 @@
 #include "bluestore_types.h"
 #include "common/ceph_mutex.h"
 
-typedef interval_set<uint64_t> release_set_t;
+typedef PExtentVector release_set_t;
 typedef release_set_t::value_type release_set_entry_t;
 
+class BlockDevice;
 class Allocator {
 protected:
 
@@ -281,7 +282,6 @@ public:
   /* Bulk release. Implementations may override this method to handle the whole
    * set at once. This could save e.g. unnecessary mutex dance. */
   virtual void release(const release_set_t& release_set) = 0;
-  void release(const PExtentVector& release_set);
 
   virtual void dump() = 0;
   virtual void foreach(

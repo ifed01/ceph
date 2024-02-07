@@ -240,7 +240,7 @@ public:
 			  const std::set<std::string> &changed) override;
 
   //handler for discard event
-  void handle_discard(interval_set<uint64_t>& to_release);
+  void handle_discard(PExtentVector& to_release);
 
   void _set_csum();
   void _set_compression();
@@ -1897,7 +1897,7 @@ private:
     boost::intrusive::list_member_hook<> deferred_queue_item;
     bluestore_deferred_transaction_t *deferred_txn = nullptr; ///< if any
 
-    interval_set<uint64_t> allocated, released;
+    PExtentVector allocated, released;
     volatile_statfs statfs_delta;	   ///< overall store statistics delta
     uint64_t osd_pool_id = META_POOL_ID;    ///< osd pool id we're operating on
 

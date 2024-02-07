@@ -51,7 +51,7 @@ public:
     uint64_t *offset, uint32_t *length);
 
   void release(
-    const interval_set<uint64_t>& release_set) override;
+    const release_set_t& release_set) override;
 
   uint64_t get_free() override;
   double get_fragmentation() override;

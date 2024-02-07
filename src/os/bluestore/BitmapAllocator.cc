@@ -48,8 +48,7 @@ int64_t BitmapAllocator::allocate(
   return int64_t(allocated);
 }
 
-void BitmapAllocator::release(
-  const interval_set<uint64_t>& release_set)
+void BitmapAllocator::release(const release_set_t& release_set)
 {
   if (cct->_conf->subsys.should_gather<dout_subsys, 10>()) {
     for (auto& [offset, len] : release_set) {

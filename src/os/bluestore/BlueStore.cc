@@ -5617,14 +5617,21 @@ static void aio_cb(void *priv, void *priv2)
   c->aio_finish(store);
 }
 
-static void discard_cb(void *priv, void *priv2)
+static void discard_cb(void *priv,
+                       const BlockDevice::discard_collection_t& entries)
 {
-  BlueStore *store = static_cast<BlueStore*>(priv);
-  interval_set<uint64_t> *tmp = static_cast<interval_set<uint64_t>*>(priv2);
-  store->handle_discard(*tmp);
+  if (!entries.size())
+    return;
+  PExtentVector tmp;
+  tmp.reserve(entries.size());
+  for (const auto& e : entries) {
+    tmp.emplace_back(e.first, e.second);
+  }
+  BlueStore* store = static_cast<BlueStore*>(priv);
+  store->handle_discard(tmp);
 }
 
-void BlueStore::handle_discard(interval_set<uint64_t>& to_release)
+void BlueStore::handle_discard(PExtentVector& to_release)
 {
   dout(10) << __func__ << dendl;
   ceph_assert(alloc);
@@ -6620,9 +6627,7 @@ int BlueStore::_open_bdev(bool create)
     goto fail;
 
   if (create && cct->_conf->bdev_enable_discard) {
-    interval_set<uint64_t> whole_device;
-    whole_device.insert(0, bdev->get_size());
-    bdev->try_discard(whole_device, false);
+    bdev->try_discard_single(0, bdev->get_size(), false);
   }
 
   if (bdev->supported_bdev_label()) {
@@ -10377,7 +10382,9 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
 
     dout(1) << __func__ << " sorting out misreferenced extents" << dendl;
     auto& misref_extents = repairer.get_misreferences();
-    interval_set<uint64_t> to_release;
+    interval_set<uint64_t> to_release; // we still need to use interval_set
+                                       // to be able to build consistent extent
+                                       // list with no overlaps
     it = db->get_iterator(PREFIX_OBJ, KeyValueDB::ITERATOR_NOCACHE);
     if (it) {
       // fill global if not overriden below
@@ -10564,13 +10571,16 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
 	}
       } // for (it->lower_bound(string()); it->valid(); it->next())
 
+      release_set_t release_set;
+      release_set.reserve(to_release.num_intervals());
       for (auto it = to_release.begin(); it != to_release.end(); ++it) {
 	dout(10) << __func__ << " release 0x" << std::hex << it.get_start()
 		 << "~" << it.get_len() << std::dec << dendl;
 	fm->release(it.get_start(), it.get_len(), txn);
+	release_set.emplace_back(it.get_start(), it.get_len());
       }
-      alloc->release(to_release);
       to_release.clear();
+      alloc->release(release_set);
     } // if (it) {
   } //if (repair && repairer.preprocess_misreference()) {
   sb_info.clear();
@@ -10692,8 +10702,9 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
         }
         dout(20) << __func__ << "  deferred " << wt.seq
 	         << " ops " << wt.ops.size()
-	         << " released 0x" << std::hex << wt.released << std::dec << dendl;
-        for (auto e = wt.released.begin(); e != wt.released.end(); ++e) {
+	         << " released 0x" << std::hex << wt.legacy_released
+	         << std::dec << dendl;
+        for (auto e = wt.legacy_released.begin(); e != wt.legacy_released.end(); ++e) {
           apply_for_bitset_range(
             e.get_start(), e.get_len(), alloc_size, used_blocks,
             [&](uint64_t pos, mempool_dynamic_bitset &bs) {
@@ -13542,42 +13553,18 @@ void BlueStore::_txc_finalize_kv(TransContext *txc, KeyValueDB::Transaction t)
 
   if (!fm->is_null_manager())
   {
-    // We have to handle the case where we allocate *and* deallocate the
-    // same region in this transaction.  The freelist doesn't like that.
-    // (Actually, the only thing that cares is the BitmapFreelistManager
-    // debug check. But that's important.)
-    interval_set<uint64_t> tmp_allocated, tmp_released;
-    interval_set<uint64_t> *pallocated = &txc->allocated;
-    interval_set<uint64_t> *preleased = &txc->released;
-    if (!txc->allocated.empty() && !txc->released.empty()) {
-      interval_set<uint64_t> overlap;
-      overlap.intersection_of(txc->allocated, txc->released);
-      if (!overlap.empty()) {
-	tmp_allocated = txc->allocated;
-	tmp_allocated.subtract(overlap);
-	tmp_released = txc->released;
-	tmp_released.subtract(overlap);
-	dout(20) << __func__ << "  overlap 0x" << std::hex << overlap
-		 << ", new allocated 0x" << tmp_allocated
-		 << " released 0x" << tmp_released << std::dec
-		 << dendl;
-	pallocated = &tmp_allocated;
-	preleased = &tmp_released;
-      }
+    // Previously we were handling the case where we allocate *and* deallocate
+    // the same region in this transaction. In fact that's not needed any more
+    // since there is no debug check in the freelist since 2017, see
+    // https://github.com/ceph/ceph/pull/27459
+    // Hence removing tricky handling of overlapping allocate/deallocate ops.
+    for (auto& p : txc->allocated) {
+      fm->allocate(p.offset, p.length, t);
     }
-
-    // update freelist with non-overlap sets
-    for (interval_set<uint64_t>::iterator p = pallocated->begin();
-	 p != pallocated->end();
-	 ++p) {
-      fm->allocate(p.get_start(), p.get_len(), t);
-    }
-    for (interval_set<uint64_t>::iterator p = preleased->begin();
-	 p != preleased->end();
-	 ++p) {
-      dout(20) << __func__ << " release 0x" << std::hex << p.get_start()
-	       << "~" << p.get_len() << std::dec << dendl;
-      fm->release(p.get_start(), p.get_len(), t);
+    for (auto& p : txc->released) {
+      dout(20) << __func__ << " release 0x" << std::hex << p.offset
+	<< "~" << p.length << std::dec << dendl;
+      fm->release(p.offset, p.length, t);
     }
   }
 
@@ -13749,7 +13736,7 @@ void BlueStore::_txc_release_alloc(TransContext *txc)
                txc->released.size() == 0)) {
       goto out;
   }
-  discard_queued = bdev->try_discard(txc->released);
+  discard_queued = ::try_discard(bdev, txc->released, true);
   // if async discard succeeded, will do alloc->release when discard callback
   // else we should release here
   if (!discard_queued) {
@@ -14118,7 +14105,7 @@ void BlueStore::_kv_sync_thread()
       for (auto b : deferred_stable) {
 	for (auto& txc : b->txcs) {
 	  bluestore_deferred_transaction_t& wt = *txc.deferred_txn;
-	  ceph_assert(wt.released.empty()); // only kraken did this
+	  ceph_assert(wt.legacy_released.empty()); // only kraken did this
 	  string key;
 	  get_deferred_key(wt.seq, &key);
 	  synct->rm_single_key(PREFIX_DEFERRED, key);
@@ -16226,9 +16213,8 @@ int BlueStore::_do_alloc_write(
 	break;
       }
     }
-    for (auto& p : extents) {
-      txc->allocated.insert(p.offset, p.length);
-    }
+    txc->allocated.insert(txc->allocated.end(),
+                          extents.begin(), extents.end());
     dblob.allocated(p2align(b_off, min_alloc_size), final_length, extents);
 
     dout(20) << __func__ << " blob " << *wi.b << dendl;
@@ -16311,7 +16297,7 @@ void BlueStore::_wctx_finish(
       }
       txc->statfs_delta.compressed_original() -= lo.e.length;
     }
-    auto& r = lo.r;
+    PExtentVector& r = lo.r;
     txc->statfs_delta.stored() -= lo.e.length;
     if (!r.empty()) {
       dout(20) << __func__ << "  blob " << *b << " release " << r << dendl;
@@ -16344,9 +16330,10 @@ void BlueStore::_wctx_finish(
     // that are no longer referenced but not deallocated (until they
     // age out of the cache naturally).
     b->discard_unallocated(c.get());
+    txc->released.reserve(txc->released.size() + r.size());
     for (auto e : r) {
       dout(20) << __func__ << "  release " << e << dendl;
-      txc->released.insert(e.offset, e.length);
+      txc->released.emplace_back(e.offset, e.length);
       txc->statfs_delta.allocated() -= e.length;
       if (blob.is_compressed()) {
         txc->statfs_delta.compressed_allocated() -= e.length;
