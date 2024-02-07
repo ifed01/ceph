@@ -59,7 +59,7 @@ using ceph::make_timespan;
 using ceph::mono_clock;
 using ceph::operator <<;
 
-KernelDevice::KernelDevice(CephContext* cct, aio_callback_t cb, void *cbpriv, aio_callback_t d_cb, void *d_cbpriv)
+KernelDevice::KernelDevice(CephContext* cct, aio_callback_t cb, void *cbpriv, discard_callback_t d_cb, void *d_cbpriv)
   : BlockDevice(cct, cb, cbpriv),
     aio(false), dio(false),
     discard_callback(d_cb),
@@ -718,11 +718,10 @@ void KernelDevice::_discard_thread()
       discard_running = true;
       l.unlock();
       dout(20) << __func__ << " finishing" << dendl;
-      for (auto p = discard_finishing.begin();p != discard_finishing.end(); ++p) {
-	_discard(p.get_start(), p.get_len());
+      for (auto& p : discard_finishing) {
+	_discard(p.first, p.second);
       }
-
-      discard_callback(discard_callback_priv, static_cast<void*>(&discard_finishing));
+      discard_callback(discard_callback_priv, discard_finishing);
       discard_finishing.clear();
       l.lock();
       discard_running = false;
@@ -732,33 +731,41 @@ void KernelDevice::_discard_thread()
   discard_started = false;
 }
 
-int KernelDevice::_queue_discard(interval_set<uint64_t> &to_release)
+int KernelDevice::_queue_discard(size_t count,
+  BlockDevice::discard_entry_callback_t cb)
 {
   // if bdev_async_discard enabled on the fly, discard_thread is not started here, fallback to sync discard
   if (!discard_thread.is_started())
     return -1;
 
-  if (to_release.empty())
+  if (!count)
     return 0;
-
   std::lock_guard l(discard_lock);
-  discard_queued.insert(to_release);
+  discard_queued.reserve(discard_queued.size() + count);
+  for (size_t i = 0; i < count; i++) {
+    std::pair<uint64_t, uint64_t> p;
+    cb(&p);
+    discard_queued.emplace_back(p);
+  }
   discard_cond.notify_all();
   return 0;
 }
 
 // return true only if _queue_discard succeeded, so caller won't have to do alloc->release
 // otherwise false
-bool KernelDevice::try_discard(interval_set<uint64_t> &to_release, bool async)
+bool KernelDevice::try_discard(size_t count,
+  BlockDevice::discard_entry_callback_t cb, bool async)
 {
   if (!support_discard || !cct->_conf->bdev_enable_discard)
     return false;
 
   if (async && discard_thread.is_started()) {
-    return 0 == _queue_discard(to_release);
+    return 0 == _queue_discard(count, cb);
   } else {
-    for (auto p = to_release.begin(); p != to_release.end(); ++p) {
-      _discard(p.get_start(), p.get_len());
+    for (size_t i = 0; i < count; i++) {
+      std::pair<uint64_t, uint64_t> p;
+      cb(&p);
+      _discard(p.first, p.second);
     }
   }
   return false;

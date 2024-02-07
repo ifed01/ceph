@@ -305,16 +305,16 @@ TEST_P(AllocTest, test_alloc_fragmentation)
 
   for (size_t i = 0; i < allocated.size(); i += 2)
   {
-    interval_set<uint64_t> release_set;
-    release_set.insert(allocated[i].offset, allocated[i].length);
+    release_set_t release_set;
+    release_set.emplace_back(allocated[i].offset, allocated[i].length);
     alloc->release(release_set);
   }
   EXPECT_EQ(1.0, alloc->get_fragmentation());
 
   for (size_t i = 1; i < allocated.size() / 2; i += 2)
   {
-    interval_set<uint64_t> release_set;
-    release_set.insert(allocated[i].offset, allocated[i].length);
+    release_set_t release_set;
+    release_set.emplace_back(allocated[i].offset, allocated[i].length);
     alloc->release(release_set);
   }
   if (bitmap_alloc) {
@@ -327,8 +327,8 @@ TEST_P(AllocTest, test_alloc_fragmentation)
 
   for (size_t i = allocated.size() / 2 + 1; i < allocated.size(); i += 2)
   {
-    interval_set<uint64_t> release_set;
-    release_set.insert(allocated[i].offset, allocated[i].length);
+    release_set_t release_set;
+    release_set.emplace_back(allocated[i].offset, allocated[i].length);
     alloc->release(release_set);
   }
   // doing some rounding trick as stupid allocator doesn't merge all the 
@@ -455,8 +455,9 @@ TEST_P(AllocTest, test_dump_fragmentation_score)
 	size_t item = rng() % allocated.size();
 	ceph_assert(allocated[item].length > 0);
 	allocated_cnt -= allocated[item].length;
-	interval_set<uint64_t> release_set;
-	release_set.insert(allocated[item].offset, allocated[item].length);
+	release_set_t release_set;
+	ceph_assert(allocated[item].length > 0);
+	release_set.emplace_back(allocated[item].offset, allocated[item].length);
 	alloc->release(release_set);
 	std::swap(allocated[item], allocated[allocated.size() - 1]);
 	allocated.resize(allocated.size() - 1);
@@ -475,8 +476,8 @@ TEST_P(AllocTest, test_dump_fragmentation_score)
 
   for (size_t i = 0; i < allocated.size(); i ++)
   {
-    interval_set<uint64_t> release_set;
-    release_set.insert(allocated[i].offset, allocated[i].length);
+    release_set_t release_set;
+    release_set.emplace_back(allocated[i].offset, allocated[i].length);
     alloc->release(release_set);
   }
 }

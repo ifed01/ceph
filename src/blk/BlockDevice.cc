@@ -153,7 +153,7 @@ BlockDevice::device_type_from_name(const std::string& blk_dev_name)
 
 BlockDevice* BlockDevice::create_with_type(block_device_t device_type,
   CephContext* cct, const std::string& path, aio_callback_t cb,
-  void *cbpriv, aio_callback_t d_cb, void *d_cbpriv)
+  void *cbpriv, discard_callback_t d_cb, void *d_cbpriv)
 {
 
   switch (device_type) {
@@ -181,7 +181,7 @@ BlockDevice* BlockDevice::create_with_type(block_device_t device_type,
 
 BlockDevice *BlockDevice::create(
     CephContext* cct, const string& path, aio_callback_t cb,
-    void *cbpriv, aio_callback_t d_cb, void *d_cbpriv)
+    void *cbpriv, discard_callback_t d_cb, void *d_cbpriv)
 {
   const string blk_dev_name = cct->_conf.get_val<string>("bdev_type");
   block_device_t device_type = block_device_t::unknown;

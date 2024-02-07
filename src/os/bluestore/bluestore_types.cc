@@ -1258,7 +1258,7 @@ void bluestore_deferred_transaction_t::dump(Formatter *f) const
   f->close_section();
 
   f->open_array_section("released extents");
-  for (interval_set<uint64_t>::const_iterator p = released.begin(); p != released.end(); ++p) {
+  for (interval_set<uint64_t>::const_iterator p = legacy_released.begin(); p != legacy_released.end(); ++p) {
     f->open_object_section("extent");
     f->dump_unsigned("offset", p.get_start());
     f->dump_unsigned("length", p.get_len());

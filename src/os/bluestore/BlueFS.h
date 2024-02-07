@@ -471,7 +471,7 @@ private:
     uint64_t seq_live = 1;   //seq that is ongoing and dirty files will be written to
     // map of dirty files, files of same dirty_seq are grouped into list.
     std::map<uint64_t, dirty_file_list_t> files;
-    std::vector<interval_set<uint64_t>> pending_release; ///< extents to release
+    std::vector<PExtentVector> pending_release; ///< extents to release
     // TODO: it should be examined what makes pending_release immune to
     // eras in a way similar to dirty_files. Hints:
     // 1) we have actually only 2 eras: log_seq and log_seq+1
@@ -497,7 +497,7 @@ private:
 
   //std::vector<interval_set<uint64_t>> block_unused_too_granular;
 
-  BlockDevice::aio_callback_t discard_cb[3]; //discard callbacks for each dev
+  BlockDevice::discard_callback_t discard_cb[3]; //discard callbacks for each dev
 
   std::unique_ptr<BlueFSVolumeSelector> vselector;
 
@@ -561,7 +561,7 @@ private:
   uint64_t _log_advance_seq();
   void _consume_dirty(uint64_t seq);
   void _clear_dirty_set_stable_D(uint64_t seq_stable);
-  void _release_pending_allocations(std::vector<interval_set<uint64_t>>& to_release);
+  void _release_pending_allocations(std::vector<PExtentVector>& to_release);
 
   void _flush_and_sync_log_core();
   int _flush_and_sync_log_jump_D(uint64_t jump_to);
@@ -745,7 +745,7 @@ public:
   uint64_t get_block_device_size(unsigned bdev) const;
 
   // handler for discard event
-  void handle_discard(unsigned dev, interval_set<uint64_t>& to_release);
+  void handle_discard(unsigned dev, PExtentVector& to_release);
 
   void flush(FileWriter *h, bool force = false);
 

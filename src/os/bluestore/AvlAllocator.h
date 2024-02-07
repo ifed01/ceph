@@ -277,7 +277,6 @@ protected:
     PExtentVector *extents);
 
   void _release(const release_set_t& release_set);
-  void _release(const PExtentVector&  release_set);
   void _shutdown();
 
   void _process_range_removal(uint64_t start, uint64_t end, range_tree_t::iterator& rs);

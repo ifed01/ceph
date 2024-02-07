@@ -42,22 +42,34 @@ MEMPOOL_DEFINE_OBJECT_FACTORY(BlueFS::FileReaderBuffer,
 MEMPOOL_DEFINE_OBJECT_FACTORY(BlueFS::FileReader, bluefs_file_reader, bluefs_file_reader);
 MEMPOOL_DEFINE_OBJECT_FACTORY(BlueFS::FileLock, bluefs_file_lock, bluefs);
 
-static void wal_discard_cb(void *priv, void* priv2) {
-  BlueFS *bluefs = static_cast<BlueFS*>(priv);
-  interval_set<uint64_t> *tmp = static_cast<interval_set<uint64_t>*>(priv2);
-  bluefs->handle_discard(BlueFS::BDEV_WAL, *tmp);
+static void discard_cb_impl(unsigned dev, void* priv,
+  const BlockDevice::discard_collection_t& entries)
+{
+  if (!entries.size())
+    return;
+  PExtentVector tmp;
+  tmp.reserve(entries.size());
+  for (const auto& e : entries) {
+    tmp.emplace_back(e.first, e.second);
+  }
+  BlueFS* bluefs = static_cast<BlueFS*>(priv);
+  bluefs->handle_discard(dev, tmp);
 }
 
-static void db_discard_cb(void *priv, void* priv2) {
-  BlueFS *bluefs = static_cast<BlueFS*>(priv);
-  interval_set<uint64_t> *tmp = static_cast<interval_set<uint64_t>*>(priv2);
-  bluefs->handle_discard(BlueFS::BDEV_DB, *tmp);
+static void wal_discard_cb(void* priv,
+  const BlockDevice::discard_collection_t& entries)
+{
+  discard_cb_impl(BlueFS::BDEV_WAL, priv, entries);
 }
-
-static void slow_discard_cb(void *priv, void* priv2) {
-  BlueFS *bluefs = static_cast<BlueFS*>(priv);
-  interval_set<uint64_t> *tmp = static_cast<interval_set<uint64_t>*>(priv2);
-  bluefs->handle_discard(BlueFS::BDEV_SLOW, *tmp);
+static void db_discard_cb(void* priv,
+  const BlockDevice::discard_collection_t& entries)
+{
+  discard_cb_impl(BlueFS::BDEV_DB, priv, entries);
+}
+static void slow_discard_cb(void* priv,
+  const BlockDevice::discard_collection_t& entries)
+{
+  discard_cb_impl(BlueFS::BDEV_SLOW, priv, entries);
 }
 
 class BlueFS::SocketHook : public AdminSocketHook {
@@ -514,9 +526,7 @@ int BlueFS::add_block_device(unsigned id, const string& path, bool trim,
     return r;
   }
   if (trim) {
-    interval_set<uint64_t> whole_device;
-    whole_device.insert(0, b->get_size());
-    b->try_discard(whole_device, false);
+    b->try_discard_single(0, b->get_size(), false);
   }
 
   dout(1) << __func__ << " bdev " << id << " path " << path
@@ -546,7 +556,7 @@ uint64_t BlueFS::get_block_device_size(unsigned id) const
   return 0;
 }
 
-void BlueFS::handle_discard(unsigned id, interval_set<uint64_t>& to_release)
+void BlueFS::handle_discard(unsigned id, PExtentVector& to_release)
 {
   dout(10) << __func__ << " bdev " << id << dendl;
   ceph_assert(alloc[id]);
@@ -2122,7 +2132,7 @@ void BlueFS::_drop_link_D(FileRef file)
 
     std::lock_guard dl(dirty.lock);
     for (auto& r : file->fnode.extents) {
-      dirty.pending_release[r.bdev].insert(r.offset, r.length);
+      dirty.pending_release[r.bdev].emplace_back(r.offset, r.length);
     }
     if (file->dirty_seq > dirty.seq_stable) {
       // retract request to serialize changes
@@ -2775,7 +2785,7 @@ void BlueFS::_rewrite_log_and_layout_sync_LNF_LD(bool permit_dev_fallback,
              << dendl;
     std::lock_guard dl(dirty.lock);
     for (auto& r : old_log_fnode.extents) {
-      dirty.pending_release[r.bdev].insert(r.offset, r.length);
+      dirty.pending_release[r.bdev].emplace_back(r.offset, r.length);
     }
   }
   logger->tinc(l_bluefs_compaction_lock_lat, mono_clock::now() - t0);
@@ -3068,7 +3078,7 @@ void BlueFS::_compact_log_async_LD_LNF_D() //also locks FW for new_writer
              << dendl;
     std::lock_guard dl(dirty.lock);
     for (auto& r : old_log_fnode.extents) {
-      dirty.pending_release[r.bdev].insert(r.offset, r.length);
+      dirty.pending_release[r.bdev].emplace_back(r.offset, r.length);
     }
   }
 
@@ -3259,19 +3269,20 @@ void BlueFS::_clear_dirty_set_stable_D(uint64_t seq)
   }
 }
 
-void BlueFS::_release_pending_allocations(vector<interval_set<uint64_t>>& to_release)
+void BlueFS::_release_pending_allocations(vector<PExtentVector>& to_release)
 {
   for (unsigned i = 0; i < to_release.size(); ++i) {
     if (to_release[i].empty()) {
         continue;
     }
     /* OK, now we have the guarantee alloc[i] won't be null. */
-
-    bool discard_queued = bdev[i]->try_discard(to_release[i]);
+    bool discard_queued = ::try_discard(bdev[i], to_release[i], true);
     if (!discard_queued) {
       alloc[i]->release(to_release[i]);
       if (is_shared_alloc(i)) {
-        shared_alloc->bluefs_used -= to_release[i].size();
+	for (auto& p : to_release[i]) {
+	  shared_alloc->bluefs_used -= p.length;
+	}
       }
     }
   }
@@ -3292,7 +3303,7 @@ int BlueFS::_flush_and_sync_log_LD(uint64_t want_seq)
   ceph_assert(want_seq == 0 || want_seq <= dirty.seq_live); // illegal to request seq that was not created yet
   uint64_t seq =_log_advance_seq();
   _consume_dirty(seq);
-  vector<interval_set<uint64_t>> to_release(dirty.pending_release.size());
+  vector<PExtentVector> to_release(dirty.pending_release.size());
   to_release.swap(dirty.pending_release);
   dirty.lock.unlock();
 
@@ -3321,7 +3332,7 @@ int BlueFS::_flush_and_sync_log_jump_D(uint64_t jump_to)
   dirty.lock.lock();
   uint64_t seq =_log_advance_seq();
   _consume_dirty(seq);
-  vector<interval_set<uint64_t>> to_release(dirty.pending_release.size());
+  vector<PExtentVector> to_release(dirty.pending_release.size());
   to_release.swap(dirty.pending_release);
   dirty.lock.unlock();
   _flush_and_sync_log_core();
@@ -4141,7 +4152,7 @@ int BlueFS::open_for_write(
 
   std::lock_guard dl(dirty.lock);
   for (auto& p : pending_release_extents) {
-    dirty.pending_release[p.bdev].insert(p.offset, p.length);
+    dirty.pending_release[p.bdev].emplace_back(p.offset, p.length);
   }
   }
   *h = _create_writer(file);

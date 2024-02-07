@@ -316,21 +316,7 @@ int BtreeAllocator::_allocate(
   return 0;
 }
 
-void BtreeAllocator::_release(const interval_set<uint64_t>& release_set)
-{
-  for (auto p = release_set.begin(); p != release_set.end(); ++p) {
-    const auto offset = p.get_start();
-    const auto length = p.get_len();
-    ceph_assert(offset + length <= uint64_t(device_size));
-    ldout(cct, 10) << __func__ << std::hex
-      << " offset 0x" << offset
-      << " length 0x" << length
-      << std::dec << dendl;
-    _add_to_tree(offset, length);
-  }
-}
-
-void BtreeAllocator::_release(const PExtentVector& release_set) {
+void BtreeAllocator::_release(const release_set_t& release_set) {
   for (auto& e : release_set) {
     ldout(cct, 10) << __func__ << std::hex
       << " offset 0x" << e.offset
@@ -399,7 +385,7 @@ int64_t BtreeAllocator::allocate(
   return _allocate(want, unit, max_alloc_size, hint, extents);
 }
 
-void BtreeAllocator::release(const interval_set<uint64_t>& release_set) {
+void BtreeAllocator::release(const release_set_t& release_set) {
   std::lock_guard l(lock);
   _release(release_set);
 }

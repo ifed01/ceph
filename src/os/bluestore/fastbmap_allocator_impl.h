@@ -35,6 +35,7 @@ typedef std::vector<slot_t> slot_vector_t;
 #include "include/ceph_assert.h"
 #include "common/likely.h"
 #include "os/bluestore/bluestore_types.h"
+#include "os/bluestore/Allocator.h"
 #include "include/mempool.h"
 #include "common/ceph_mutex.h"
 
@@ -786,14 +787,14 @@ protected:
 
 #ifndef NON_CEPH_BUILD
   // to provide compatibility with BlueStore's allocator interface
-  void _free_l2(const interval_set<uint64_t> & rr)
+  void _free_l2(const release_set_t& rr)
   {
     uint64_t released = 0;
     std::lock_guard l(lock);
     for (auto r : rr) {
-      released += l1._free_l1(r.first, r.second);
-      uint64_t l2_pos = r.first / l2_granularity;
-      uint64_t l2_pos_end = p2roundup(int64_t(r.first + r.second), int64_t(l2_granularity)) / l2_granularity;
+      released += l1._free_l1(r.offset, r.length);
+      uint64_t l2_pos = r.offset / l2_granularity;
+      uint64_t l2_pos_end = p2roundup(int64_t(r.offset + r.length), int64_t(l2_granularity)) / l2_granularity;
 
       _mark_l2_free(l2_pos, l2_pos_end);
     }

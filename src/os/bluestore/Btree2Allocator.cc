@@ -96,21 +96,17 @@ int64_t Btree2Allocator::allocate(
 
 void Btree2Allocator::release(const release_set_t& release_set)
 {
-  if (!cache || release_set.num_intervals() >= pextent_array_size) {
+  if (!cache || release_set.size() >= pextent_array_size) {
     std::lock_guard l(lock);
     _release(release_set);
     return;
   }
   PExtentArray to_release;
   size_t count = 0;
-  auto p = release_set.begin();
-  while (p != release_set.end()) {
-    if (cache->try_put(p.get_start(), p.get_len())) {
-      num_free += p.get_len();
-    } else {
-      to_release[count++] = &*p;
+  for (auto& p : release_set) {
+    if (!try_put_cache(p.offset, p.length)) {
+      to_release[count++] = p;
     }
-    ++p;
   }
   if (count > 0) {
     std::lock_guard l(lock);
@@ -211,20 +207,6 @@ int64_t Btree2Allocator::_allocate(
 
 void Btree2Allocator::_release(const release_set_t& release_set)
 {
-  for (auto p = release_set.begin(); p != release_set.end(); ++p) {
-    const auto offset = p.get_start();
-    const auto length = p.get_len();
-    ceph_assert(offset + length <= uint64_t(device_size));
-    ldout(cct, 10) << __func__ << std::hex
-      << " offset 0x" << offset
-      << " length 0x" << length
-      << std::dec << dendl;
-    _add_to_tree(offset, length);
-  }
-}
-
-void Btree2Allocator::_release(const PExtentVector& release_set)
-{
   for (auto& e : release_set) {
     ldout(cct, 10) << __func__ << std::hex
       << " offset 0x" << e.offset
@@ -234,15 +216,15 @@ void Btree2Allocator::_release(const PExtentVector& release_set)
   }
 }
 
-void Btree2Allocator::_release(size_t count, const release_set_entry_t** to_release)
+void Btree2Allocator::_release(size_t count, const release_set_entry_t* to_release)
 {
   for (size_t i = 0; i < count; i++) {
-    auto* e = to_release[i];
+    auto& e = to_release[i];
     ldout(cct, 10) << __func__ << std::hex
-      << " offset 0x" << e->first
-      << " length 0x" << e->second
+      << " offset 0x" << e.offset
+      << " length 0x" << e.length
       << std::dec << dendl;
-    _add_to_tree(e->first, e->second);
+    _add_to_tree(e.offset, e.length);
   }
 }
 

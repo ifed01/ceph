@@ -148,6 +148,12 @@ class BlockDevice {
 public:
   CephContext* cct;
   typedef void (*aio_callback_t)(void *handle, void *aio);
+
+  typedef std::vector<std::pair<uint64_t, uint64_t>> discard_collection_t;
+  typedef std::function<void(void* handle, const discard_collection_t& entries)>
+    discard_callback_t;
+  typedef std::function<void(std::pair<uint64_t, uint64_t>*)> discard_entry_callback_t;
+
 private:
   ceph::mutex ioc_reap_lock = ceph::make_mutex("BlockDevice::ioc_reap_lock");
   std::vector<IOContext*> ioc_reap_queue;
@@ -171,7 +177,7 @@ private:
   static block_device_t device_type_from_name(const std::string& blk_dev_name);
   static BlockDevice *create_with_type(block_device_t device_type,
     CephContext* cct, const std::string& path, aio_callback_t cb,
-    void *cbpriv, aio_callback_t d_cb, void *d_cbpriv);
+    void *cbpriv, discard_callback_t d_cb, void *d_cbpriv);
 
 protected:
   uint64_t size = 0;
@@ -202,7 +208,13 @@ public:
   virtual ~BlockDevice() = default;
 
   static BlockDevice *create(
-    CephContext* cct, const std::string& path, aio_callback_t cb, void *cbpriv, aio_callback_t d_cb, void *d_cbpriv);
+    CephContext* cct,
+    const std::string& path,
+    aio_callback_t cb,
+    void *cbpriv,
+    discard_callback_t d_cb,
+    void *d_cbpriv);
+
   virtual bool supported_bdev_label() { return true; }
   virtual bool is_rotational() { return rotational; }
 
@@ -287,7 +299,21 @@ public:
     bool buffered,
     int write_hint = WRITE_LIFE_NOT_SET) = 0;
   virtual int flush() = 0;
-  virtual bool try_discard(interval_set<uint64_t> &to_release, bool async=true) { return false; }
+
+  void try_discard_single(uint64_t offs, uint64_t len, bool async = true) {
+    try_discard(1,
+      [&] (std::pair<uint64_t, uint64_t>* p) {
+        ceph_assert(p);
+        p->first = offs;
+        p->second = len;
+      },
+      async);
+  }
+  virtual bool try_discard(size_t count,
+                           discard_entry_callback_t cb,
+                           bool async=true) {
+    return false;
+  }
   virtual void discard_drain() { return; }
 
   // for managing buffered readers/writers

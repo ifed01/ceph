@@ -47,7 +47,7 @@ private:
   ceph::mutex flush_mutex = ceph::make_mutex("KernelDevice::flush_mutex");
 
   std::unique_ptr<io_queue_t> io_queue;
-  aio_callback_t discard_callback;
+  discard_callback_t discard_callback;
   void *discard_callback_priv;
   bool aio_stop;
   bool discard_started;
@@ -56,8 +56,8 @@ private:
   ceph::mutex discard_lock = ceph::make_mutex("KernelDevice::discard_lock");
   ceph::condition_variable discard_cond;
   bool discard_running = false;
-  interval_set<uint64_t> discard_queued;
-  interval_set<uint64_t> discard_finishing;
+  discard_collection_t discard_queued;
+  discard_collection_t discard_finishing;
 
   struct AioCompletionThread : public Thread {
     KernelDevice *bdev;
@@ -84,8 +84,11 @@ private:
 
   void _aio_thread();
   void _discard_thread();
-  int _queue_discard(interval_set<uint64_t> &to_release);
-  bool try_discard(interval_set<uint64_t> &to_release, bool async = true) override;
+  int _queue_discard(size_t count,
+                     BlockDevice::discard_entry_callback_t cb);
+  bool try_discard(size_t count,
+                   BlockDevice::discard_entry_callback_t cb,
+                   bool async = true) override;
 
   int _aio_start();
   void _aio_stop();
@@ -115,7 +118,7 @@ private:
   ceph::unique_leakable_ptr<buffer::raw> create_custom_aligned(size_t len, IOContext* ioc) const;
 
 public:
-  KernelDevice(CephContext* cct, aio_callback_t cb, void *cbpriv, aio_callback_t d_cb, void *d_cbpriv);
+  KernelDevice(CephContext* cct, aio_callback_t cb, void *cbpriv, discard_callback_t d_cb, void *d_cbpriv);
 
   void aio_submit(IOContext *ioc) override;
   void discard_drain() override;

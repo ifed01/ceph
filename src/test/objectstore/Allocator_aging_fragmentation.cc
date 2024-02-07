@@ -175,12 +175,12 @@ void AllocTest::init_close() {
 uint32_t AllocTest::free_random() {
   uint64_t o = 0;
   uint32_t l = 0;
-  interval_set<uint64_t> release_set;
+  release_set_t release_set;
   if (!at->pop_random(rng, &o, &l)) {
     //empty?
     return 0;
   }
-  release_set.insert(o, l);
+  release_set.emplace_back(o, l);
   alloc->release(release_set);
   level -= l;
   return l;
@@ -429,25 +429,25 @@ TEST_P(AllocTest, test_bonus_empty_fragmented)
     int r = alloc->allocate(want, alloc_unit, 0, 0, &tmp);
     ASSERT_EQ(r, want);
     if (tmp.size() > 1) {
-      interval_set<uint64_t> release_set;
+      release_set_t release_set;
       for (auto& t: tmp) {
-	release_set.insert(t.offset, t.length);
+	release_set.emplace_back(t.offset, t.length);
       }
       alloc->release(release_set);
     } else {
-      interval_set<uint64_t> release_set;
+      release_set_t release_set;
       uint64_t offset = tmp[0].offset;
       uint64_t length = tmp[0].length;
 
-      release_set.insert(offset + alloc_unit, length - 3 * alloc_unit);
+      release_set.emplace_back(offset + alloc_unit, length - 3 * alloc_unit);
       alloc->release(release_set);
       release_set.clear();
 
-      release_set.insert(offset , alloc_unit);
+      release_set.emplace_back(offset , alloc_unit);
       alloc->release(release_set);
       release_set.clear();
 
-      release_set.insert(offset + length - 2 * alloc_unit, 2 * alloc_unit);
+      release_set.emplace_back(offset + length - 2 * alloc_unit, 2 * alloc_unit);
       alloc->release(release_set);
       release_set.clear();
     }

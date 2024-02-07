@@ -78,7 +78,7 @@ public:
     uint64_t max_alloc_size,
     int64_t  hint,
     PExtentVector *extents) override;
-  void release(const interval_set<uint64_t>& release_set) override;
+  void release(const release_set_t& release_set) override;
   uint64_t get_free() override;
   double get_fragmentation() override;
 
@@ -183,8 +183,7 @@ private:
     int64_t  hint,
     PExtentVector *extents);
 
-  void _release(const interval_set<uint64_t>& release_set);
-  void _release(const PExtentVector&  release_set);
+  void _release(const release_set_t&  release_set);
   void _shutdown();
 
   // called when extent to be released/marked free
