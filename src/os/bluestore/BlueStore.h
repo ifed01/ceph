@@ -2891,7 +2891,6 @@ private:
 
   void _buffer_cache_write(
     TransContext *txc,
-    BlobRef blob,
     OnodeRef onode,
     uint32_t offset,
     ceph::buffer::list&& bl,
@@ -2903,7 +2902,6 @@ private:
 
   void _buffer_cache_write(
     TransContext *txc,
-    BlobRef blob,
     OnodeRef onode,
     uint32_t offset,
     ceph::buffer::list& bl,
