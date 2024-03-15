@@ -9,18 +9,18 @@
 #define dout_prefix *_dout << "fbmap_alloc " << this << " "
 
 BitmapAllocator::BitmapAllocator(CephContext* _cct,
-					 int64_t capacity,
-					 int64_t alloc_unit,
-					 std::string_view name) :
-    Allocator(name, capacity, alloc_unit),
-    cct(_cct)
+				  int64_t capacity,
+				  int64_t alloc_unit,
+                                  bool with_cache,
+                                  std::string_view name) :
+    Allocator(cct, name, capacity, alloc_unit, with_cache)
 {
   ldout(cct, 10) << __func__ << " 0x" << std::hex << capacity << "/"
 		 << alloc_unit << std::dec << dendl;
   _init(capacity, alloc_unit, false);
 }
 
-int64_t BitmapAllocator::allocate(
+int64_t BitmapAllocator::allocate_raw(
   uint64_t want_size, uint64_t alloc_unit, uint64_t max_alloc_size,
   int64_t hint, PExtentVector *extents)
 {
@@ -48,20 +48,6 @@ int64_t BitmapAllocator::allocate(
   return int64_t(allocated);
 }
 
-void BitmapAllocator::release(const release_set_t& release_set)
-{
-  if (cct->_conf->subsys.should_gather<dout_subsys, 10>()) {
-    for (auto& [offset, len] : release_set) {
-      ldout(cct, 10) << __func__ << " 0x" << std::hex << offset << "~" << len
-                     << std::dec << dendl;
-      ceph_assert(offset + len <= (uint64_t)device_size);
-    }
-  }
-  _free_l2(release_set);
-  ldout(cct, 10) << __func__ << " done" << dendl;
-}
-
-
 void BitmapAllocator::init_add_free(uint64_t offset, uint64_t length)
 {
   ldout(cct, 10) << __func__ << " 0x" << std::hex << offset << "~" << length
@@ -70,7 +56,7 @@ void BitmapAllocator::init_add_free(uint64_t offset, uint64_t length)
   auto mas = get_min_alloc_size();
   uint64_t offs = round_up_to(offset, mas);
   uint64_t l = p2align(offset + length - offs, mas);
-  ceph_assert(offs + l <= (uint64_t)device_size);
+  ceph_assert(offs + l <= get_capacity());
 
   _mark_free(offs, l);
   ldout(cct, 10) << __func__ << " done" << dendl;
@@ -82,7 +68,7 @@ void BitmapAllocator::init_rm_free(uint64_t offset, uint64_t length)
   auto mas = get_min_alloc_size();
   uint64_t offs = round_up_to(offset, mas);
   uint64_t l = p2align(offset + length - offs, mas);
-  ceph_assert(offs + l <= (uint64_t)device_size);
+  ceph_assert(offs + l <= get_capacity());
   _mark_allocated(offs, l);
   ldout(cct, 10) << __func__ << " done" << dendl;
 }

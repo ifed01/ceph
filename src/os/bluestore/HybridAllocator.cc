@@ -8,27 +8,7 @@
 #undef  dout_prefix
 #define dout_prefix *_dout << (std::string(this->get_type()) + "::").c_str()
 
-/*
- * class HybridAvlAllocator
- *
- *
- */
-const char* HybridAvlAllocator::get_type() const
-{
-  return "hybrid";
-}
-
-/*
- * class HybridBtree2Allocator
- *
- *
- */
-const char* HybridBtree2Allocator::get_type() const
-{
-  return "hybrid_btree2";
-}
-
-int64_t HybridBtree2Allocator::allocate(
+/*int64_t HybridBtree2Allocator::allocate_raw(
   uint64_t want,
   uint64_t unit,
   uint64_t max_alloc_size,
@@ -49,25 +29,8 @@ int64_t HybridBtree2Allocator::allocate(
     extents->emplace_back(cached_chunk_offs, want);
     return want;
   }
-  return HybridAllocatorBase<Btree2Allocator>::allocate(want,
+  return HybridAllocatorBase<Btree2Allocator>::allocate_raw(want,
     unit, max_alloc_size, hint, extents);
-}
-void HybridBtree2Allocator::release(const release_set_t& release_set)
-{
-  if (!has_cache() || release_set.size() >= pextent_array_size) {
-    HybridAllocatorBase<Btree2Allocator>::release(release_set);
-    return;
-  }
-  PExtentArray to_release;
-  size_t count = 0;
-  for (auto& p : release_set) {
-    if (!try_put_cache(p.offset, p.length)) {
-      to_release[count++] = p;
-    }
-  }
-  if (count > 0) {
-    std::lock_guard l(get_lock());
-    _release(count, &to_release.at(0));
-  }
-}
+}*/
+
 #include "HybridAllocator_impl.h"

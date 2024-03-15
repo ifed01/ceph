@@ -540,10 +540,9 @@ public:
       pos1 * l1._children_per_slot() * bits_per_slot);
   }
 
-  uint64_t get_available()
+  uint64_t get_available() const
   {
-    std::lock_guard l(lock);
-    return available;
+    return available.load();
   }
   inline uint64_t get_min_alloc_size() const
   {
@@ -601,7 +600,7 @@ protected:
   L1 l1;
   slot_vector_t l2;
   uint64_t l2_granularity = 0; // space per entry
-  uint64_t available = 0;
+  std::atomic<uint64_t> available = 0;
   uint64_t last_pos = 0;
 
   enum {
@@ -787,11 +786,12 @@ protected:
 
 #ifndef NON_CEPH_BUILD
   // to provide compatibility with BlueStore's allocator interface
-  void _free_l2(const release_set_t& rr)
-  {
+  void _free_l2(size_t count,
+                const bluestore_pextent_t* to_release) {
     uint64_t released = 0;
     std::lock_guard l(lock);
-    for (auto r : rr) {
+    for (size_t i = 0; i < count; i++) {
+      auto& r = to_release[i];
       released += l1._free_l1(r.offset, r.length);
       uint64_t l2_pos = r.offset / l2_granularity;
       uint64_t l2_pos_end = p2roundup(int64_t(r.offset + r.length), int64_t(l2_granularity)) / l2_granularity;

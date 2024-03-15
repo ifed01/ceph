@@ -111,7 +111,7 @@ public:
       int64_t alloc_unit = 4096;
       cmd_getval(cmdmap, "alloc_unit", alloc_unit);
       if (alloc_unit <= 0  ||
-          p2align(alloc_unit, alloc->get_block_size()) != alloc_unit) {
+          p2align(alloc_unit, (int64_t)alloc->get_block_size()) != alloc_unit) {
         ss << "Invalid allocation unit: '" << alloc_unit
            << ", to be aligned with: '" << alloc->get_block_size()
            << std::endl;
@@ -150,15 +150,19 @@ public:
   }
 
 };
-Allocator::Allocator(std::string_view name,
+Allocator::Allocator(CephContext* _cct,
+                     std::string_view name,
                      int64_t _capacity,
-                     int64_t _block_size)
+                     int64_t _block_size,
+                     bool with_cache)
  : device_size(_capacity),
    block_size(_block_size)
 {
   asok_hook = new SocketHook(this, name);
+  if (with_cache) {
+    cache.reset(new WillfulExtentCache());
+  }
 }
-
 
 Allocator::~Allocator()
 {
@@ -178,21 +182,28 @@ Allocator *Allocator::create(
 {
   Allocator* alloc = nullptr;
   if (type == "stupid") {
-    alloc = new StupidAllocator(cct, size, block_size, name);
+    alloc = new StupidAllocator(cct, size, block_size,
+      true, //FIXME
+      name);
   } else if (type == "bitmap") {
-    alloc = new BitmapAllocator(cct, size, block_size, name);
+    alloc = new BitmapAllocator(cct, size, block_size,
+      true, //FIXME
+      name);
   } else if (type == "avl") {
-    return new AvlAllocator(cct, size, block_size, name);
+    return new AvlAllocator(cct, size, block_size,
+      true, //FIXME
+      name);
   } else if (type == "btree") {
-    return new BtreeAllocator(cct, size, block_size, name);
+    return new BtreeAllocator(cct, size, block_size,
+      true, //FIXME
+      name);
   } else if (type == "hybrid") {
     return new HybridAvlAllocator(cct, size, block_size,
-      cct->_conf.get_val<uint64_t>("bluestore_hybrid_alloc_mem_cap"),
+      true, //FIXME
       name);
   }  else if (type == "hybrid_btree2") {
     return new HybridBtree2Allocator(cct, size, block_size,
-      cct->_conf.get_val<uint64_t>("bluestore_hybrid_alloc_mem_cap"),
-      cct->_conf.get_val<double>("bluestore_btree2_alloc_weight_factor"),
+      true, //FIXME
       name);
   }
   if (alloc == nullptr) {
@@ -200,6 +211,47 @@ Allocator *Allocator::create(
 	     << type << dendl;
   }
   return alloc;
+}
+
+static const uint64_t pextent_array_size = 64;
+typedef std::array <bluestore_pextent_t, pextent_array_size> PExtentArray;
+void Allocator::release(const PExtentVector& release_set)
+{
+  if (cct->_conf->subsys.should_gather<dout_subsys, 10>()) {
+    for (size_t i = 0; i < release_set.size(); i++) {
+      auto offset = release_set[i].offset;
+      auto len = release_set[i].length;
+      ldout(cct, 10) << __func__ << " 0x" << std::hex << offset << "~" << len
+        << std::dec << dendl;
+      ceph_assert(offset + len <= get_capacity());
+    }
+  }
+
+  if (!cache || release_set.size() >= pextent_array_size) {
+    release_raw(release_set.size(), &release_set.at(0));
+    ldout(cct, 10) << __func__ << " done" << dendl;
+    return;
+  }
+  PExtentArray to_release;
+  size_t count = 0;
+  for (auto& p : release_set) {
+    if (!try_put_cache(p.offset, p.length)) {
+      to_release[count++] = p;
+    }
+  }
+  if (count > 0) {
+    release_raw(count, &to_release.at(0));
+  }
+  ldout(cct, 10) << __func__ << " done" << dendl;
+}
+
+bool Allocator::try_put_cache(uint64_t start, uint64_t len)
+{
+  return cache && cache->try_put(start, len);
+}
+bool Allocator::try_get_from_cache(uint64_t* res_offset, uint64_t want)
+{
+  return cache && cache->try_get(res_offset, want);
 }
 
 /**

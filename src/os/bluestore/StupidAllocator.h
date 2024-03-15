@@ -14,10 +14,8 @@
 #include "common/ceph_mutex.h"
 
 class StupidAllocator : public Allocator {
-  CephContext* cct;
-  ceph::mutex lock = ceph::make_mutex("StupidAllocator::lock");
 
-  int64_t num_free;     ///< total bytes in freelist
+  std::atomic<int64_t> num_free = 0;     ///< total bytes in freelist
 
   template <typename K, typename V> using allocator_t =
     mempool::bluestore_alloc::pool_allocator<std::pair<const K, V>>;
@@ -31,10 +29,24 @@ class StupidAllocator : public Allocator {
   unsigned _choose_bin(uint64_t len);
   void _insert_free(uint64_t offset, uint64_t len);
 
+  int64_t allocate_int(
+    uint64_t want_size, uint64_t alloc_unit, int64_t hint,
+    uint64_t* offset, uint32_t* length);
+
+protected:
+  int64_t allocate_raw(
+    uint64_t want_size, uint64_t alloc_unit, uint64_t max_alloc_size,
+    int64_t hint, PExtentVector* extents) override;
+  void release_raw(size_t count, const bluestore_pextent_t* to_release) override;
+  uint64_t get_free_raw() const override {
+    return num_free;
+  }
+
 public:
   StupidAllocator(CephContext* cct,
                   int64_t size,
                   int64_t block_size,
+                  bool with_cache,
 		  std::string_view name);
   ~StupidAllocator() override;
   const char* get_type() const override
@@ -42,18 +54,6 @@ public:
     return "stupid";
   }
 
-  int64_t allocate(
-    uint64_t want_size, uint64_t alloc_unit, uint64_t max_alloc_size,
-    int64_t hint, PExtentVector *extents) override;
-
-  int64_t allocate_int(
-    uint64_t want_size, uint64_t alloc_unit, int64_t hint,
-    uint64_t *offset, uint32_t *length);
-
-  void release(
-    const release_set_t& release_set) override;
-
-  uint64_t get_free() override;
   double get_fragmentation() override;
 
   void dump() override;

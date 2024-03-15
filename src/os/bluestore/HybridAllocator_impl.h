@@ -11,7 +11,7 @@
 #define dout_prefix *_dout << (std::string(this->get_type()) + "::").c_str()
 
 template <typename T>
-int64_t HybridAllocatorBase<T>::allocate(
+int64_t HybridAllocatorBase<T>::allocate_raw(
   uint64_t want,
   uint64_t unit,
   uint64_t max_alloc_size,
@@ -55,7 +55,7 @@ int64_t HybridAllocatorBase<T>::allocate(
       res2 = T::_allocate(want - res, unit, max_alloc_size, hint, extents);
     } else if (bmap_alloc) {
       res2 =
-        bmap_alloc->allocate(want - res, unit, max_alloc_size, hint, extents);
+        bmap_alloc->allocate_raw(want - res, unit, max_alloc_size, hint, extents);
     }
     if (res2 >= 0) {
       res += res2;
@@ -125,6 +125,7 @@ void HybridAllocatorBase<T>::_spillover_range(uint64_t start, uint64_t end)
     bmap_alloc = new BitmapAllocator(T::get_context(),
       T::get_capacity(),
       T::get_block_size(),
+      false,
       T::get_name() + ".fallback");
   }
   bmap_alloc->init_add_free(start, size);
@@ -161,23 +162,25 @@ int64_t HybridAllocatorBase<T>::__allocate_or_rollback(
   if (primary) {
     res = T::_allocate(want, unit, max_alloc_size, hint, extents);
   } else if (bmap_alloc) {
-    res = bmap_alloc->allocate(want, unit, max_alloc_size, hint, extents);
+    res = bmap_alloc->allocate_raw(want, unit, max_alloc_size, hint, extents);
   }
   if (res < 0) {
     // got a failure, release already allocated
     PExtentVector local_extents;
-    PExtentVector* e = extents;
+    size_t release_count = extents->size();
+    bluestore_pextent_t* to_release = &(extents->at(0));
     if (orig_size) {
       local_extents.insert(
         local_extents.end(), extents->begin() + orig_size, extents->end());
-      e = &local_extents;
+      release_count = local_extents.size();
+      to_release = &(local_extents.at(0));
     }
 
-    if (e->size()) {
+    if (release_count) {
       if(primary) {
-        T::_release(*e);
+        T::_release(release_count, to_release);
       } else if (bmap_alloc) {
-        bmap_alloc->release(*e);
+        bmap_alloc->release_raw(release_count, to_release);
       }
     }
     extents->resize(orig_size);

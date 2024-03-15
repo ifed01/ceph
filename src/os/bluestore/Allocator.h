@@ -18,9 +18,6 @@
 #include "bluestore_types.h"
 #include "common/ceph_mutex.h"
 
-typedef PExtentVector release_set_t;
-typedef release_set_t::value_type release_set_entry_t;
-
 class BlockDevice;
 class Allocator {
 protected:
@@ -131,7 +128,7 @@ protected:
         std::numeric_limits<uint64_t>::max();
     }
   };
-
+private:
   /*
    * Lockless stack implementation
    * that permits put/get operation exclusively
@@ -142,6 +139,7 @@ protected:
     std::atomic<size_t> ref = 0;
     std::atomic<size_t> count = 0;
     std::vector<uint64_t> data;
+
   public:
     void init(size_t size) {
       data.resize(size);
@@ -192,6 +190,7 @@ protected:
     ceph::shared_mutex lock{
       ceph::make_shared_mutex(std::string(), false, false, false)
     };
+    std::atomic<uint64_t> total_cached = 0;
   public:
     OpportunisticExtentCache() :
       myTraits(BUCKET_COUNT + 1), // 16 regular buckets + 1 "catch-all" pseudo
@@ -201,7 +200,6 @@ protected:
                                   // exceeding the max length.
       buckets(BUCKET_COUNT)
     {
-      //buckets.resize(BUCKET_COUNT);
       for(auto& b : buckets) {
         b.init(EXTENTS_PER_BUCKET);
       }
@@ -216,6 +214,10 @@ protected:
       auto idx = myTraits._get_bucket(len);
       if (idx < buckets.size())
         ret = buckets[idx].try_put(offset);
+        if (ret) {
+          total_cached += len;
+        }
+      }
       lock.unlock_shared();
       return ret;
     }
@@ -230,11 +232,15 @@ protected:
       if (idx < buckets.size()) {
         ret = buckets[idx].try_get(*offset);
         if (ret) {
+          total_cached -= len;
           ++hits;
         }
       }
       lock.unlock_shared();
       return ret;
+    }
+    uint64_t get_cached() const {
+      return total_cached.load();
     }
     size_t get_hit_count() const {
       return hits.load();
@@ -250,17 +256,14 @@ protected:
     }
   };
 
-public:
-  Allocator(std::string_view name,
-	    int64_t _capacity,
-	    int64_t _block_size);
-  virtual ~Allocator();
+  bool try_put_cache(uint64_t start, uint64_t len);
+  bool try_get_from_cache(uint64_t* res_offset, uint64_t want);
 
-  /*
-  * returns allocator type name as per names in config
-  */
-  virtual const char* get_type() const = 0;
+protected:
+  CephContext* cct;
 
+  virtual uint64_t get_free_raw() const = 0;
+  virtual void release_raw(size_t count, const bluestore_pextent_t* to_release) = 0;
   /*
    * Allocate required number of blocks in n number of extents.
    * Min and Max number of extents are limited by:
@@ -270,18 +273,36 @@ public:
    * Apart from that extents can vary between these lower and higher limits according
    * to free block search algorithm and availability of contiguous space.
    */
-  virtual int64_t allocate(uint64_t want_size, uint64_t block_size,
-			   uint64_t max_alloc_size, int64_t hint,
-			   PExtentVector *extents) = 0;
+  virtual int64_t allocate_raw(uint64_t want_size,
+                               uint64_t block_size,
+                               uint64_t max_alloc_size,
+                               int64_t hint,
+                               PExtentVector* extents) = 0;
+
+  inline std::mutex& get_lock() {
+    return lock;
+  }
+public:
+  Allocator(CephContext* _cct,
+            std::string_view name,
+	    int64_t _capacity,
+	    int64_t _block_size,
+            bool with_cache);
+  virtual ~Allocator();
+
+  /*
+  * returns allocator type name as per names in config
+  */
+  virtual const char* get_type() const = 0;
 
   int64_t allocate(uint64_t want_size, uint64_t block_size,
 		   int64_t hint, PExtentVector *extents) {
-    return allocate(want_size, block_size, want_size, hint, extents);
+    return allocate_raw(want_size, block_size, want_size, hint, extents);
   }
 
   /* Bulk release. Implementations may override this method to handle the whole
    * set at once. This could save e.g. unnecessary mutex dance. */
-  virtual void release(const release_set_t& release_set) = 0;
+  void release(const PExtentVector& release_set);
 
   virtual void dump() = 0;
   virtual void foreach(
@@ -290,13 +311,16 @@ public:
   virtual void init_add_free(uint64_t offset, uint64_t length) = 0;
   virtual void init_rm_free(uint64_t offset, uint64_t length) = 0;
 
-  virtual uint64_t get_free() = 0;
   virtual double get_fragmentation()
   {
     return 0.0;
   }
   virtual double get_fragmentation_score();
   virtual void shutdown() = 0;
+
+  size_t get_cache_hit_count() const {
+    return cache ? cache->get_hit_count() : 0;
+  }
 
   static Allocator *create(
     CephContext* cct,
@@ -308,13 +332,19 @@ public:
 
 
   const std::string& get_name() const;
-  int64_t get_capacity() const
+  uint64_t get_capacity() const
   {
-    return device_size;
+    return (uint64_t)device_size;
   }
-  int64_t get_block_size() const
+  uint64_t get_block_size() const
   {
-    return block_size;
+    return (uint64_t)block_size;
+  }
+  uint64_t get_free() const
+  {
+    uint64_t res = cache ? cache->get_cached() : 0;
+    res += get_free_raw();
+    return res;
   }
 
   // The following class implements Allocator's free extents histogram.
@@ -354,7 +384,10 @@ public:
 private:
   class SocketHook;
   SocketHook* asok_hook = nullptr;
-protected:
+
+  std::mutex lock;
+  std::unique_ptr<WillfulExtentCache> cache = nullptr;
+
   const int64_t device_size = 0;
   const int64_t block_size = 0;
 };

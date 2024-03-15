@@ -65,24 +65,18 @@ protected:
   */
   AvlAllocator(CephContext* cct, int64_t device_size, int64_t block_size,
     uint64_t max_mem,
+    bool with_cache,
     std::string_view name);
 
 public:
   AvlAllocator(CephContext* cct, int64_t device_size, int64_t block_size,
+               bool with_cache,
 	       std::string_view name);
   ~AvlAllocator();
   const char* get_type() const override
   {
     return "avl";
   }
-  int64_t allocate(
-    uint64_t want,
-    uint64_t unit,
-    uint64_t max_alloc_size,
-    int64_t  hint,
-    PExtentVector *extents) override;
-  void release(const release_set_t& release_set) override;
-  uint64_t get_free() override;
   double get_fragmentation() override;
 
   void dump() override;
@@ -93,8 +87,6 @@ public:
   void shutdown() override;
 
 private:
-  CephContext* cct;
-  std::mutex lock;
 
   // pick a range by search from cursor forward
   uint64_t _pick_block_after(
@@ -137,7 +129,7 @@ private:
       boost::intrusive::constant_time_size<true>>;
   range_size_tree_t range_size_tree;
 
-  uint64_t num_free = 0;     ///< total bytes in freelist
+  std::atomic<uint64_t> num_free = 0;     ///< total bytes in freelist
 
   /*
    * This value defines the number of elements in the ms_lbas array.
@@ -245,22 +237,22 @@ private:
   }
 
 protected:
+  uint64_t get_free_raw() const override {
+    return num_free;
+  }
+  int64_t allocate_raw(uint64_t want,
+    uint64_t unit,
+    uint64_t max_alloc_size,
+    int64_t  hint,
+    PExtentVector *extents) override;
+  void release_raw(size_t count, const bluestore_pextent_t* to_release) override;
+
   // called when extent to be released/marked free
   virtual void _add_to_tree(uint64_t start, uint64_t size);
 
   CephContext* get_context() { return cct; }
 
-  std::mutex& get_lock() {
-    return lock;
-  }
-
-  double _get_fragmentation() const {
-    auto free_blocks = p2align(num_free, (uint64_t)block_size) / block_size;
-    if (free_blocks <= 1) {
-      return .0;
-    }
-    return (static_cast<double>(range_tree.size() - 1) / (free_blocks - 1));
-  }
+  double _get_fragmentation() const;
   void _dump() const;
   void _foreach(std::function<void(uint64_t offset, uint64_t length)>) const;
 
@@ -278,15 +270,10 @@ protected:
     int64_t  hint,
     PExtentVector *extents);
 
-  void _release(const release_set_t& release_set);
   void _shutdown();
 
   void _process_range_removal(uint64_t start, uint64_t end, range_tree_t::iterator& rs);
   void _remove_from_tree(uint64_t start, uint64_t size);
   void _try_remove_from_tree(uint64_t start, uint64_t size,
     std::function<void(uint64_t offset, uint64_t length, bool found)> cb);
-
-  uint64_t _get_free() const {
-    return num_free;
-  }
 };

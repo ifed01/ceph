@@ -10485,7 +10485,7 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
 	    dout(5) << __func__ << "::NCB::(F)alloc=" << alloc << ", length=" << e->length << dendl;
 	    int64_t alloc_len =
               alloc->allocate(e->length, min_alloc_size,
-				       0, 0, &exts);
+				       0, &exts);
 	    if (alloc_len < 0 || alloc_len < (int64_t)e->length) {
 	      derr << __func__
 	           << " failed to allocate 0x" << std::hex << e->length
@@ -10571,7 +10571,7 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
 	}
       } // for (it->lower_bound(string()); it->valid(); it->next())
 
-      release_set_t release_set;
+      PExtentVector release_set;
       release_set.reserve(to_release.num_intervals());
       for (auto it = to_release.begin(); it != to_release.end(); ++it) {
 	dout(10) << __func__ << " release 0x" << std::hex << it.get_start()
@@ -10877,8 +10877,7 @@ void BlueStore::inject_stray_shared_blob_key(uint64_t sbid)
 void BlueStore::inject_leaked(uint64_t len)
 {
   PExtentVector exts;
-  int64_t alloc_len = alloc->allocate(len, min_alloc_size,
-					   min_alloc_size * 256, 0, &exts);
+  int64_t alloc_len = alloc->allocate(len, min_alloc_size,0, &exts);
   ceph_assert(alloc_len >= 0); // generally we do not expect any errors
   if (fm->is_null_manager()) {
     return;
@@ -16109,7 +16108,7 @@ int BlueStore::_do_alloc_write(
   int64_t prealloc_left = 0;
   auto start = mono_clock::now();
   prealloc_left = alloc->allocate(
-    need, min_alloc_size, need,
+    need, min_alloc_size,
     0, &prealloc);
   log_latency("allocator@_do_alloc_write",
     l_bluestore_allocator_lat,

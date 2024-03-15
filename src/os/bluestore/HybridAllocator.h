@@ -12,24 +12,27 @@
 template <typename T>
 class HybridAllocatorBase : public T {
   BitmapAllocator* bmap_alloc = nullptr;
-public:
-  HybridAllocatorBase(CephContext* cct, int64_t device_size, int64_t _block_size,
-                      uint64_t max_mem,
-	              std::string_view name) :
-      T(cct, device_size, _block_size, max_mem, name) {
-  }
-  int64_t allocate(
+
+protected:
+  int64_t allocate_raw(
     uint64_t want,
     uint64_t unit,
     uint64_t max_alloc_size,
     int64_t  hint,
-    PExtentVector *extents) override;
-  using T::release;
-  uint64_t get_free() override {
-    std::lock_guard l(T::get_lock());
-    return (bmap_alloc ? bmap_alloc->get_free() : 0) + T::_get_free();
+    PExtentVector* extents) override;
+
+  uint64_t get_free_raw() const override {
+    return (bmap_alloc ? bmap_alloc->get_free() : 0) + T::get_free();
   }
 
+public:
+  HybridAllocatorBase(CephContext* cct, int64_t device_size, int64_t _block_size,
+                      bool with_cache,
+	              std::string_view name) :
+      T(cct, device_size, _block_size,
+	cct->_conf.get_val<uint64_t>("bluestore_hybrid_alloc_mem_cap"),
+	with_cache, name) {
+  }
   double get_fragmentation() override {
     std::lock_guard l(T::get_lock());
     auto f = T::_get_fragmentation();
@@ -107,12 +110,14 @@ private:
 class HybridAvlAllocator : public HybridAllocatorBase<AvlAllocator> {
 public:
   HybridAvlAllocator(CephContext* cct, int64_t device_size, int64_t _block_size,
-    uint64_t max_mem,
+    bool with_cache,
     std::string_view name) :
     HybridAllocatorBase<AvlAllocator>(cct,
-      device_size, _block_size, max_mem, name) {
+      device_size, _block_size, with_cache, name) {
   }
-  const char* get_type() const override;
+  const char* get_type() const override {
+    return "hybrid";
+  }
 };
 
 
@@ -122,23 +127,15 @@ public:
   HybridBtree2Allocator(CephContext* cct,
     int64_t device_size,
     int64_t _block_size,
-    uint64_t max_mem,
-    double weight_factor,
+    bool with_cache,
     std::string_view name) :
       HybridAllocatorBase<Btree2Allocator>(cct,
 					  device_size,
 					  _block_size,
-					  max_mem,
+	                                  with_cache,
 					  name) {
-    set_weight_factor(weight_factor);
   }
-  const char* get_type() const override;
-
-  int64_t allocate(
-    uint64_t want,
-    uint64_t unit,
-    uint64_t max_alloc_size,
-    int64_t  hint,
-    PExtentVector* extents) override;
-  void release(const release_set_t& release_set) override;
+  const char* get_type() const override {
+    return "hybrid_btree2";
+  }
 };

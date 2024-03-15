@@ -64,23 +64,20 @@ public:
       return end - start;
     }
   };
-
-public:
-  Btree2Allocator(CephContext* cct, int64_t device_size, int64_t block_size,
-    uint64_t max_mem,
-    double _rweight_factor,
-    bool with_cache,
-    std::string_view name);
-
+protected:
   //
   //ctor intended for the usage from descendant (aka hybrid) class(es)
   // which provide handling for spilled over entries
   //
   Btree2Allocator(CephContext* cct, int64_t device_size, int64_t block_size,
     uint64_t max_mem,
-    std::string_view name) :
-    Btree2Allocator(cct, device_size, block_size, max_mem, 1.0, true, name) {
-  }
+    bool with_cache,
+    std::string_view name);
+
+public:
+  Btree2Allocator(CephContext* cct, int64_t device_size, int64_t block_size,
+    bool with_cache,
+    std::string_view name);
 
   ~Btree2Allocator() override {
     shutdown();
@@ -93,37 +90,21 @@ public:
   void init_add_free(uint64_t offset, uint64_t length) override;
   void init_rm_free(uint64_t offset, uint64_t length) override;
 
-  int64_t allocate(
-    uint64_t want,
-    uint64_t unit,
-    uint64_t max_alloc_size,
-    int64_t  hint,
-    PExtentVector* extents) override;
-
-  void release(const release_set_t& release_set) override;
-
-  uint64_t get_free() override {
-    return num_free;
-  }
   double get_fragmentation() override {
-    std::lock_guard l(lock);
+    std::lock_guard l(get_lock());
     return _get_fragmentation();
   }
-  size_t get_cache_hit_count() const {
-    return cache ? cache->get_hit_count() : 0;
-  }
-
   void dump() override {
-    std::lock_guard l(lock);
+    std::lock_guard l(get_lock());
     _dump();
   }
   void foreach(
       std::function<void(uint64_t offset, uint64_t length)> notify) override {
-    std::lock_guard l(lock);
+    std::lock_guard l(get_lock());
     _foreach(notify);
   }
   void shutdown() override {
-    std::lock_guard l(lock);
+    std::lock_guard l(get_lock());
     _shutdown();
   }
 
@@ -173,18 +154,24 @@ private:
     return rsum * rweight_factor;
   }
 protected:
-  static const uint64_t pextent_array_size = 64;
-  typedef std::array <release_set_t::value_type, pextent_array_size> PExtentArray;
+  int64_t allocate_raw(
+    uint64_t want,
+    uint64_t unit,
+    uint64_t max_alloc_size,
+    int64_t  hint,
+    PExtentVector* extents) override;
+  void release_raw(size_t count, const bluestore_pextent_t* to_release) override;
+  uint64_t get_free_raw() const override {
+    return num_free;
+  }
 
+protected:
   void set_weight_factor(double _rweight_factor) {
     rweight_factor = _rweight_factor;
   }
 
   CephContext* get_context() {
     return cct;
-  }
-  std::mutex& get_lock() {
-    return lock;
   }
   range_size_tree_t* _get_lowest(range_size_tree_t::iterator* rs_p) {
     for (auto& t : range_size_set) {
@@ -202,11 +189,9 @@ protected:
     }
     return std::numeric_limits<uint64_t>::max();
   }
-  uint64_t _get_free() const {
-    return num_free;
-  }
   double _get_fragmentation() const {
-    auto free_blocks = p2align(num_free.load(), (uint64_t)block_size) / block_size;
+    auto bs = get_block_size();
+    auto free_blocks = p2align(num_free.load(), bs) / bs;
     if (free_blocks <= 1) {
       return .0;
     }
@@ -224,9 +209,6 @@ protected:
     uint64_t max_alloc_size,
     int64_t  hint,
     PExtentVector* extents);
-
-  void _release(const release_set_t& release_set);
-  void _release(size_t count, const release_set_entry_t* to_release);
 
   /*
    * overridables for HybridAllocator
@@ -258,23 +240,6 @@ protected:
    */
   void _try_remove_from_tree(uint64_t start, uint64_t size,
     std::function<void(uint64_t offset, uint64_t length, bool found)> cb);
-  bool has_cache() const {
-    return !!cache;
-  }
-  bool try_put_cache(uint64_t start, uint64_t len) {
-    bool ret = cache && cache->try_put(start, len);
-    if (ret) {
-      num_free += len;
-    }
-    return ret;
-  }
-  bool try_get_from_cache(uint64_t* res_offset, uint64_t want) {
-    bool ret = cache && cache->try_get(res_offset, want);
-    if (ret) {
-      num_free -= want;
-    }
-    return ret;
-  }
 
 private:
   int64_t __allocate(size_t bucket0,

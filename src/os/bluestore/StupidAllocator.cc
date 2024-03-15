@@ -13,13 +13,13 @@
 StupidAllocator::StupidAllocator(CephContext* cct,
                                  int64_t capacity,
                                  int64_t _block_size,
+                                 bool with_cache,
                                  std::string_view name)
-  : Allocator(name, capacity, _block_size),
-    cct(cct), num_free(0),
+  : Allocator(cct, name, capacity, _block_size, with_cache),
     free(10)
 {
   ceph_assert(cct != nullptr);
-  ceph_assert(block_size > 0);
+  ceph_assert(_block_size > 0);
 }
 
 StupidAllocator::~StupidAllocator()
@@ -28,7 +28,7 @@ StupidAllocator::~StupidAllocator()
 
 unsigned StupidAllocator::_choose_bin(uint64_t orig_len)
 {
-  uint64_t len = orig_len / block_size;
+  uint64_t len = orig_len / get_block_size();
   int bin = std::min((int)cbits(len), (int)free.size() - 1);
   ldout(cct, 30) << __func__ << " len 0x" << std::hex << orig_len
 		 << std::dec << " -> " << bin << dendl;
@@ -56,7 +56,7 @@ int64_t StupidAllocator::allocate_int(
   uint64_t want_size, uint64_t alloc_unit, int64_t hint,
   uint64_t *offset, uint32_t *length)
 {
-  std::lock_guard l(lock);
+  std::lock_guard l(get_lock());
   ldout(cct, 10) << __func__ << " want_size 0x" << std::hex << want_size
 	   	 << " alloc_unit 0x" << alloc_unit
 	   	 << " hint 0x" << hint << std::dec
@@ -167,7 +167,7 @@ int64_t StupidAllocator::allocate_int(
   return 0;
 }
 
-int64_t StupidAllocator::allocate(
+int64_t StupidAllocator::allocate_raw(
   uint64_t want_size,
   uint64_t alloc_unit,
   uint64_t max_alloc_size,
@@ -220,11 +220,12 @@ int64_t StupidAllocator::allocate(
   return allocated_size;
 }
 
-void StupidAllocator::release(
-  const release_set_t& release_set)
+void StupidAllocator::release_raw(size_t count,
+                                  const bluestore_pextent_t* to_release)
 {
-  std::lock_guard l(lock);
-  for (auto& p : release_set) {
+  std::lock_guard l(get_lock());
+  for (size_t i = 0; i < count; i++) {
+    auto& p = to_release[i];
     auto offset = p.offset;
     auto length = p.length;
     ldout(cct, 10) << __func__ << " 0x" << std::hex << offset << "~" << length
@@ -234,12 +235,6 @@ void StupidAllocator::release(
   }
 }
 
-uint64_t StupidAllocator::get_free()
-{
-  std::lock_guard l(lock);
-  return num_free;
-}
-
 double StupidAllocator::get_fragmentation()
 {
   ceph_assert(get_block_size());
@@ -247,7 +242,7 @@ double StupidAllocator::get_fragmentation()
   uint64_t max_intervals = 0;
   uint64_t intervals = 0;
   {
-    std::lock_guard l(lock);
+    std::lock_guard l(get_lock());
     max_intervals = p2roundup<uint64_t>(num_free,
                                         get_block_size()) / get_block_size();
     for (unsigned bin = 0; bin < free.size(); ++bin) {
@@ -268,7 +263,7 @@ double StupidAllocator::get_fragmentation()
 
 void StupidAllocator::dump()
 {
-  std::lock_guard l(lock);
+  std::lock_guard l(get_lock());
   for (unsigned bin = 0; bin < free.size(); ++bin) {
     ldout(cct, 0) << __func__ << " free bin " << bin << ": "
 	    	  << free[bin].num_intervals() << " extents" << dendl;
@@ -283,7 +278,7 @@ void StupidAllocator::dump()
 
 void StupidAllocator::foreach(std::function<void(uint64_t offset, uint64_t length)> notify)
 {
-  std::lock_guard l(lock);
+  std::lock_guard l(get_lock());
   for (unsigned bin = 0; bin < free.size(); ++bin) {
     for (auto p = free[bin].begin(); p != free[bin].end(); ++p) {
       notify(p.get_start(), p.get_len());
@@ -295,7 +290,7 @@ void StupidAllocator::init_add_free(uint64_t offset, uint64_t length)
 {
   if (!length)
     return;
-  std::lock_guard l(lock);
+  std::lock_guard l(get_lock());
   ldout(cct, 10) << __func__ << " 0x" << std::hex << offset << "~" << length
 		 << std::dec << dendl;
   _insert_free(offset, length);
@@ -306,7 +301,7 @@ void StupidAllocator::init_rm_free(uint64_t offset, uint64_t length)
 {
   if (!length)
     return;
-  std::lock_guard l(lock);
+  std::lock_guard l(get_lock());
   ldout(cct, 10) << __func__ << " 0x" << std::hex << offset << "~" << length
 	   	 << std::dec << dendl;
   interval_set_t rm;

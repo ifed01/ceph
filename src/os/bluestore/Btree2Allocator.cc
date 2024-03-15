@@ -17,23 +17,33 @@
 MEMPOOL_DEFINE_OBJECT_FACTORY(Btree2Allocator::range_seg_t, btree2_range_seg_t, bluestore_alloc);
 
 Btree2Allocator::Btree2Allocator(CephContext* _cct,
-  int64_t device_size,
-  int64_t block_size,
-  uint64_t max_mem,
-  double _rweight_factor,
-  bool with_cache,
+                                 int64_t device_size,
+                                 int64_t block_size,
+                                 uint64_t max_mem,
+                                 bool with_cache,
   std::string_view name) :
-    Allocator(name, device_size, block_size),
+    Allocator(cct, name, device_size, block_size, with_cache),
     myTraits(RANGE_SIZE_BUCKET_COUNT),
-    cct(_cct),
     range_count_cap(max_mem / sizeof(range_seg_t))
 {
+  ldout(cct, 10) << __func__ << " 0x" << std::hex << get_capacity() << "/"
+                 << get_block_size() << std::dec << dendl;
   set_weight_factor(_rweight_factor);
   if (with_cache) {
     cache = new OpportunisticExtentCache();
   }
   range_size_set.resize(myTraits.num_buckets);
 }
+
+Btree2Allocator::Btree2Allocator(CephContext* _cct,
+                                 int64_t device_size,
+                                 int64_t block_size,
+                                 bool with_cache,
+                                 std::string_view name) :
+  Btree2Allocator(_cct, device_size, block_size, 0 /*max_mem*/, with_cache, name)
+{
+}
+
 
 void Btree2Allocator::init_add_free(uint64_t offset, uint64_t length)
 {
@@ -43,8 +53,8 @@ void Btree2Allocator::init_add_free(uint64_t offset, uint64_t length)
     << std::dec << dendl;
   if (!length)
     return;
-  std::lock_guard l(lock);
-  ceph_assert(offset + length <= uint64_t(device_size));
+  std::lock_guard l(get_lock());
+  ceph_assert(offset + length <= get_capacity());
   _add_to_tree(offset, length);
 }
 
@@ -56,12 +66,12 @@ void Btree2Allocator::init_rm_free(uint64_t offset, uint64_t length)
     << std::dec << dendl;
   if (!length)
     return;
-  std::lock_guard l(lock);
-  ceph_assert(offset + length <= uint64_t(device_size));
+  std::lock_guard l(get_lock());
+  ceph_assert(offset + length <= get_capacity());
   _remove_from_tree(offset, length);
 }
 
-int64_t Btree2Allocator::allocate(
+int64_t Btree2Allocator::allocate_raw(
   uint64_t want,
   uint64_t unit,
   uint64_t max_alloc_size,
@@ -82,44 +92,34 @@ int64_t Btree2Allocator::allocate(
   }
   if (constexpr auto cap = std::numeric_limits<decltype(bluestore_pextent_t::length)>::max();
     max_alloc_size >= cap) {
-    max_alloc_size = p2align(uint64_t(cap), (uint64_t)block_size);
+    max_alloc_size = p2align(uint64_t(cap), get_block_size());
   }
-  uint64_t cached_chunk_offs = 0;
+  /*uint64_t cached_chunk_offs = 0;
   if (cache && cache->try_get(&cached_chunk_offs, want)) {
     num_free -= want;
     extents->emplace_back(cached_chunk_offs, want);
     return want;
-  }
-  std::lock_guard l(lock);
+  }*/
+  std::lock_guard l(get_lock());
   return _allocate(want, unit, max_alloc_size, hint, extents);
 }
 
-void Btree2Allocator::release(const release_set_t& release_set)
+void Btree2Allocator::release_raw(size_t count,
+  const bluestore_pextent_t* to_release)
 {
-  if (!cache || release_set.size() >= pextent_array_size) {
-    std::lock_guard l(lock);
-    _release(release_set);
-    return;
-  }
-  PExtentArray to_release;
-  size_t count = 0;
-  for (auto& p : release_set) {
-    if (!try_put_cache(p.offset, p.length)) {
-      to_release[count++] = p;
-    }
-  }
-  if (count > 0) {
-    std::lock_guard l(lock);
-    _release(count, &to_release.at(0));
+  std::lock_guard l(get_lock());
+  for (size_t i = 0; i < count; i++) {
+    auto& e = to_release[i];
+    ldout(cct, 10) << __func__ << std::hex
+      << " offset 0x" << e.offset
+      << " length 0x" << e.length
+      << std::dec << dendl;
+    _add_to_tree(e.offset, e.length);
   }
 }
 
 void Btree2Allocator::_shutdown()
 {
-  if (cache) {
-    delete cache;
-    cache = nullptr;
-  }
   for (auto& tree : range_size_set) {
     tree.clear();
   }
@@ -146,7 +146,7 @@ void Btree2Allocator::_dump(bool full) const
           << "0x" << rs.start << "~" << (rs.end - rs.start)
           << std::dec << dendl;
     }
-    if (cache) {
+/*    if (cache) {
       ldout(cct, 0) << " >>>cache: " << dendl;
       auto cb = [&](uint64_t offset, uint64_t length) {
         ldout(cct, 0) << std::hex
@@ -154,13 +154,13 @@ void Btree2Allocator::_dump(bool full) const
           << std::dec << dendl;
       };
       cache->foreach(cb);
-    }
+    }*/
     ldout(cct, 0) << " >>>>>>>>>>>" << dendl;
   }
-  if (cache) {
+  /*if (cache) {
     ldout(cct, 0) << " >>>cache stats: " << dendl;
     ldout(cct, 0) << " hits: " << cache->get_hit_count() << dendl;
-  }
+  }*/
 }
 
 void Btree2Allocator::_foreach(
@@ -169,9 +169,9 @@ void Btree2Allocator::_foreach(
   for (auto& rs : range_tree) {
     notify(rs.first, rs.second - rs.first);
   }
-  if (cache) {
+  /*if (cache) {
     cache->foreach(notify);
-  }
+  }*/
 }
 
 int64_t Btree2Allocator::_allocate(
@@ -182,7 +182,7 @@ int64_t Btree2Allocator::_allocate(
   PExtentVector* extents)
 {
   uint64_t allocated = 0;
-  while (allocated < want) {
+  /*while (allocated < want) {
     auto want_now = std::min(max_alloc_size, want - allocated);
     if (cache && want_now != want) {
       uint64_t cached_chunk_offs = 0;
@@ -201,31 +201,8 @@ int64_t Btree2Allocator::_allocate(
       break;
     }
     allocated += r;
-  }
+  }*/
   return allocated ? allocated : -ENOSPC;
-}
-
-void Btree2Allocator::_release(const release_set_t& release_set)
-{
-  for (auto& e : release_set) {
-    ldout(cct, 10) << __func__ << std::hex
-      << " offset 0x" << e.offset
-      << " length 0x" << e.length
-      << std::dec << dendl;
-    _add_to_tree(e.offset, e.length);
-  }
-}
-
-void Btree2Allocator::_release(size_t count, const release_set_entry_t* to_release)
-{
-  for (size_t i = 0; i < count; i++) {
-    auto& e = to_release[i];
-    ldout(cct, 10) << __func__ << std::hex
-      << " offset 0x" << e.offset
-      << " length 0x" << e.length
-      << std::dec << dendl;
-    _add_to_tree(e.offset, e.length);
-  }
 }
 
 void Btree2Allocator::_add_to_tree(uint64_t start, uint64_t size)

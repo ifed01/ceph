@@ -8,6 +8,7 @@
 
 #include "common/config_proxy.h"
 #include "common/debug.h"
+#include "include/intarith.h"
 
 #define dout_context cct
 #define dout_subsys ceph_subsys_bluestore
@@ -278,7 +279,7 @@ int AvlAllocator::_allocate(
     force_range_size_alloc = true;
   }
 
-  const int free_pct = num_free * 100 / device_size;
+  const int free_pct = num_free * 100 / get_capacity();
   uint64_t start = 0;
   // If we're running low on space, find a range by size by looking up in the size
   // sorted tree (best-fit), instead of searching in the area pointed by cursor
@@ -329,16 +330,6 @@ int AvlAllocator::_allocate(
   return 0;
 }
 
-void AvlAllocator::_release(const release_set_t& release_set) {
-  for (auto& e : release_set) {
-    ldout(cct, 20) << __func__ << std::hex
-      << " 0x" << e.offset
-      << "~" << e.length
-      << std::dec << dendl;
-    _add_to_tree(e.offset, e.length);
-  }
-}
-
 void AvlAllocator::_shutdown()
 {
   range_size_tree.clear();
@@ -349,9 +340,9 @@ AvlAllocator::AvlAllocator(CephContext* cct,
                            int64_t device_size,
                            int64_t block_size,
                            uint64_t max_mem,
+                           bool with_cache,
                            std::string_view name) :
-  Allocator(name, device_size, block_size),
-  cct(cct),
+  Allocator(cct, name, device_size, block_size, with_cache),
   range_size_alloc_threshold(
     cct->_conf.get_val<uint64_t>("bluestore_avl_alloc_bf_threshold")),
   range_size_alloc_free_pct(
@@ -369,11 +360,10 @@ AvlAllocator::AvlAllocator(CephContext* cct,
 AvlAllocator::AvlAllocator(CephContext* cct,
 			   int64_t device_size,
 			   int64_t block_size,
+                           bool with_cache,
 			   std::string_view name) :
-  AvlAllocator(cct, device_size, block_size, 0 /* max_mem */, name)
+  AvlAllocator(cct, device_size, block_size, 0 /* max_mem */, with_cache, name)
 {
-  ldout(cct, 10) << __func__ << " 0x" << std::hex << get_capacity() << "/"
-                 << get_block_size() << std::dec << dendl;
 }
 
 AvlAllocator::~AvlAllocator()
@@ -381,7 +371,7 @@ AvlAllocator::~AvlAllocator()
   shutdown();
 }
 
-int64_t AvlAllocator::allocate(
+int64_t AvlAllocator::allocate_raw(
   uint64_t want,
   uint64_t unit,
   uint64_t max_alloc_size,
@@ -402,32 +392,45 @@ int64_t AvlAllocator::allocate(
   }
   if (constexpr auto cap = std::numeric_limits<decltype(bluestore_pextent_t::length)>::max();
       max_alloc_size >= cap) {
-    max_alloc_size = p2align(uint64_t(cap), (uint64_t)block_size);
+    max_alloc_size = p2align(uint64_t(cap), get_block_size());
   }
-  std::lock_guard l(lock);
+  std::lock_guard l(get_lock());
   return _allocate(want, unit, max_alloc_size, hint, extents);
 }
 
-void AvlAllocator::release(const release_set_t& release_set) {
-  std::lock_guard l(lock);
-  _release(release_set);
-}
-
-uint64_t AvlAllocator::get_free()
+void AvlAllocator::release_raw(size_t count,
+                               const bluestore_pextent_t* to_release)
 {
-  std::lock_guard l(lock);
-  return num_free;
+  std::lock_guard l(get_lock());
+  for (size_t i = 0; i < count; i++) {
+    auto& e = to_release[i];
+    ldout(cct, 20) << __func__ << std::hex
+      << " 0x" << e.offset
+      << "~" << e.length
+      << std::dec << dendl;
+    _add_to_tree(e.offset, e.length);
+  }
 }
 
 double AvlAllocator::get_fragmentation()
 {
-  std::lock_guard l(lock);
+  std::lock_guard l(get_lock());
   return _get_fragmentation();
+}
+
+double AvlAllocator::_get_fragmentation() const
+{
+  auto bs = get_block_size();
+  auto free_blocks = p2align(num_free.load(), bs) / bs;
+  if (free_blocks <= 1) {
+    return .0;
+  }
+  return (static_cast<double>(range_tree.size() - 1) / (free_blocks - 1));
 }
 
 void AvlAllocator::dump()
 {
-  std::lock_guard l(lock);
+  std::lock_guard l(get_lock());
   _dump();
 }
 
@@ -452,7 +455,7 @@ void AvlAllocator::_dump() const
 void AvlAllocator::foreach(
   std::function<void(uint64_t offset, uint64_t length)> notify)
 {
-  std::lock_guard l(lock);
+  std::lock_guard l(get_lock());
   _foreach(notify);
 }
 
@@ -472,8 +475,8 @@ void AvlAllocator::init_add_free(uint64_t offset, uint64_t length)
                  << std::dec << dendl;
   if (!length)
     return;
-  std::lock_guard l(lock);
-  ceph_assert(offset + length <= uint64_t(device_size));
+  std::lock_guard l(get_lock());
+  ceph_assert(offset + length <= get_capacity());
   _add_to_tree(offset, length);
 }
 
@@ -485,13 +488,13 @@ void AvlAllocator::init_rm_free(uint64_t offset, uint64_t length)
                  << std::dec << dendl;
   if (!length)
     return;
-  std::lock_guard l(lock);
-  ceph_assert(offset + length <= uint64_t(device_size));
+  std::lock_guard l(get_lock());
+  ceph_assert(offset + length <= get_capacity());
   _remove_from_tree(offset, length);
 }
 
 void AvlAllocator::shutdown()
 {
-  std::lock_guard l(lock);
+  std::lock_guard l(get_lock());
   _shutdown();
 }

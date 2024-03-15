@@ -14,10 +14,21 @@
 
 class BitmapAllocator : public Allocator,
   public AllocatorLevel02<AllocatorLevel01Loose> {
-  CephContext* cct;
+protected:
+  int64_t allocate_raw(uint64_t want_size, 
+    uint64_t alloc_unit,
+    uint64_t max_alloc_size,
+    int64_t hint,
+    PExtentVector* extents) override;
+  void release_raw(size_t count, const bluestore_pextent_t* to_release) {
+    _free_l2(count, to_release);
+  }
+  uint64_t get_free_raw() const override {
+    return get_available();
+  }
 public:
   BitmapAllocator(CephContext* _cct, int64_t capacity, int64_t alloc_unit,
-		  std::string_view name);
+                  bool with_cache, std::string_view name);
   ~BitmapAllocator() override
   {
   }
@@ -25,18 +36,6 @@ public:
   const char* get_type() const override
   {
     return "bitmap";
-  }
-  int64_t allocate(
-    uint64_t want_size, uint64_t alloc_unit, uint64_t max_alloc_size,
-    int64_t hint, PExtentVector *extents) override;
-
-  void release(const release_set_t& release_set) override;
-
-  using Allocator::release;
-
-  uint64_t get_free() override
-  {
-    return get_available();
   }
 
   void dump() override;
