@@ -1896,9 +1896,9 @@ void BlueStore::BufferSpace::_dup_writing(TransContext* txc, Collection* collect
       ldout(cache->cct, 20) << __func__ << " offset=" << std::hex << offset
                             << " length=" << std::hex << length << " buffer=" << to_b << dendl;
       ceph_assert(to_b.is_writing());
-      /*if (collection->is_deferred_seq(to_b.seq)) {
+      if (collection->is_deferred_seq(to_b.seq)) {
         collection->add_deferred_dependency(to_b.seq, onode);
-      } else*/ {
+      } else {
         txc->buffers_written.insert({onode.get(), b.seq});
       }
       to._discard(collection->cache, to_b.offset, to_b.length);
@@ -13586,7 +13586,7 @@ void BlueStore::_txc_finish(TransContext *txc)
   ceph_assert(txc->get_state() == TransContext::STATE_FINISHING);
 
   for (auto &[onode, seq] : txc->buffers_written) {
-    /*if (txc->deferred_txn && txc->deferred_txn->txc_seq == seq) {
+    if (txc->deferred_txn && txc->deferred_txn->txc_seq == seq) {
       std::set<OnodeRef> dependent_onodes;
       {
         std::unique_lock l(onode->c->deferred_seq_dependencies_lock);
@@ -13600,7 +13600,7 @@ void BlueStore::_txc_finish(TransContext *txc)
       for (auto &dependent_onode : dependent_onodes) {
         dependent_onode->finish_write(seq);
       }
-    }*/
+    }
     onode->finish_write(seq);
   }
   txc->buffers_written.clear();
@@ -15297,7 +15297,7 @@ void BlueStore::_do_write_small(
                                   return 0;
                                 });
               op->data = bl;
-              //o->c->add_deferred_dependency(txc->seq, o);
+              o->c->add_deferred_dependency(txc->seq, o);
           } else {
               b->get_blob().map_bl(
                   b_off, bl,
@@ -15385,7 +15385,7 @@ void BlueStore::_do_write_small(
               });
           ceph_assert(r == 0);
           op->data = std::move(bl);
-          //o->c->add_deferred_dependency(txc->seq, o);
+          o->c->add_deferred_dependency(txc->seq, o);
           dout(20) << __func__ << "  deferred write 0x" << std::hex << b_off
                    << "~" << b_len << std::dec << " of mutable " << *b << " at "
                    << op->extents << dendl;
@@ -15676,7 +15676,7 @@ void BlueStore::_do_write_big_apply_deferred(
     op->op = bluestore_deferred_op_t::OP_WRITE;
     op->extents.swap(dctx.res_extents);
     op->data = std::move(bl);
-    //o->c->add_deferred_dependency(txc->seq, o);
+    o->c->add_deferred_dependency(txc->seq, o);
   }
 }
 
@@ -16218,7 +16218,7 @@ int BlueStore::_do_alloc_write(
 	  });
         ceph_assert(r == 0);
         op->data = *l;
-        //o->c->add_deferred_dependency(txc->seq, o);
+        o->c->add_deferred_dependency(txc->seq, o);
       } else {
 	wi.b->get_blob().map_bl(
 	  b_off, *l,
@@ -17943,12 +17943,12 @@ void BlueStore::_shutdown_cache()
   for (auto& p : coll_map) {
     // Clear deferred write buffers before clearing up Onodes
     std::unique_lock l(p.second->lock);
-    /*for (auto &[seq, onodes] : p.second->deferred_seq_dependencies) {
+    for (auto &[seq, onodes] : p.second->deferred_seq_dependencies) {
       for (auto &onode : onodes) {
         onode->finish_write(seq);
       }
     }
-    p.second->deferred_seq_dependencies.clear();*/
+    p.second->deferred_seq_dependencies.clear();
 
     p.second->onode_space.clear();
     if (!p.second->shared_blob_set.empty()) {
