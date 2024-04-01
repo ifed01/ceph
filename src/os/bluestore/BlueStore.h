@@ -406,10 +406,10 @@ public:
       auto it = buffer_map.emplace(buffer.offset, std::move(buffer));
       Buffer *cached_buffer = &it.first->second;
       cached_buffer->cache_private = cache_private;
-      _add_buffer(cache, space, cached_buffer, level, near);
+      __add_buffer(cache, space, cached_buffer, level, near);
     }
 
-    void _add_buffer(BufferCacheShard *cache, BufferSpace *space,
+    void __add_buffer(BufferCacheShard *cache, BufferSpace *space,
                      Buffer *buffer, int level, Buffer *near) {
       cache->_audit("_add_buffer start");
       if (buffer->is_writing()) {
