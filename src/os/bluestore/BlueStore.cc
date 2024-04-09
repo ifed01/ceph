@@ -15336,7 +15336,6 @@ void BlueStore::_do_write_small(
 	    b_len % chunk_size == 0 &&
 	    b->get_blob().is_allocated(b_off, b_len)) {
 
-          _buffer_cache_write(txc, o, offset, bl, wctx->buffered ? 0 : Buffer::FLAG_NOCACHE);
 	  _apply_padding(head_pad, tail_pad, bl);
 
 	  dout(20) << __func__ << "  reading head 0x" << std::hex << head_read
@@ -15369,6 +15368,8 @@ void BlueStore::_do_write_small(
 	    logger->inc(l_bluestore_write_penalty_read_ops);
 	  }
           logger->inc(l_bluestore_write_small_pre_read);
+          _buffer_cache_write(txc, o, offset - head_read - head_pad, bl,
+                              wctx->buffered ? 0 : Buffer::FLAG_NOCACHE);
 
           b->dirty_blob().calc_csum(b_off, bl);
 
