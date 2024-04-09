@@ -1197,10 +1197,10 @@ struct LruBufferCacheShard : public BlueStore::BufferCacheShard {
     boost::intrusive::member_hook<
       BlueStore::Buffer,
       boost::intrusive::list_member_hook<>,
-      &BlueStore::Buffer::lru_item> > list_t;
+      &BlueStore::Buffer::list_item> > list_t;
   list_t lru;
 
-  explicit LruBufferCacheShard(CephContext *cct) : BlueStore::BufferCacheShard(cct) {}
+  explicit LruBufferCacheShard(BlueStore* store) : BlueStore::BufferCacheShard(store) {}
 
   void _add(BlueStore::Buffer *b, int level, BlueStore::Buffer *near) override {
     if (near) {
@@ -1305,7 +1305,7 @@ struct TwoQBufferCacheShard : public BlueStore::BufferCacheShard {
     boost::intrusive::member_hook<
       BlueStore::Buffer,
       boost::intrusive::list_member_hook<>,
-      &BlueStore::Buffer::lru_item> > list_t;
+      &BlueStore::Buffer::list_item> > list_t;
   list_t hot;      ///< "Am" hot buffers
   list_t warm_in;  ///< "A1in" newly warm buffers
   list_t warm_out; ///< "A1out" empty buffers we've evicted
@@ -1321,7 +1321,7 @@ struct TwoQBufferCacheShard : public BlueStore::BufferCacheShard {
   uint64_t list_bytes[BUFFER_TYPE_MAX] = {0}; ///< bytes per type
 
 public:
-  explicit TwoQBufferCacheShard(CephContext *cct) : BufferCacheShard(cct) {}
+  explicit TwoQBufferCacheShard(BlueStore* store) : BufferCacheShard(store) {}
 
   void _add(BlueStore::Buffer *b, int level, BlueStore::Buffer *near) override
   {
@@ -1634,15 +1634,15 @@ public:
 // BuferCacheShard
 
 BlueStore::BufferCacheShard *BlueStore::BufferCacheShard::create(
-    CephContext* cct,
+    BlueStore* store,
     string type,
     PerfCounters *logger)
 {
   BufferCacheShard *c = nullptr;
   if (type == "lru")
-    c = new LruBufferCacheShard(cct);
+    c = new LruBufferCacheShard(store);
   else if (type == "2q")
-    c = new TwoQBufferCacheShard(cct);
+    c = new TwoQBufferCacheShard(store);
   else
     ceph_abort_msg("unrecognized cache type");
   c->logger = logger;
@@ -1654,17 +1654,53 @@ BlueStore::BufferCacheShard *BlueStore::BufferCacheShard::create(
 #undef dout_prefix
 #define dout_prefix *_dout << "bluestore.BufferSpace(" << this << " in " << cache << ") "
 
+void BlueStore::BufferSpace::__add_buffer(BufferCacheShard *cache,
+                                          Buffer *buffer, int level,
+                                          Buffer *near)
+{
+  cache->_audit("_add_buffer start");
+  ceph_assert(buffer);
+  if (buffer->is_writing()) {
+    // we might get already cached data for which resetting mempool is inppropriate
+    // hence calling try_assign_to_mempool
+    buffer->data.try_assign_to_mempool(mempool::mempool_bluestore_writing);
+    ldout(cache->cct, 0) << __func__ << " " << buffer->seq << dendl;
+    cache->get_writings().add_writing(buffer->seq, *buffer);
+  } else {
+    buffer->data.reassign_to_mempool(mempool::mempool_bluestore_cache_data);
+    cache->_add(buffer, level, near);
+  }
+   cache->_audit("_add_buffer end");
+}
+
+std::map<uint32_t, BlueStore::Buffer>::iterator
+BlueStore::BufferSpace::__rm_buffer(BufferCacheShard* cache,
+                                    std::map<uint32_t, Buffer>::iterator p)
+{
+  ceph_assert(p != buffer_map.end());
+  cache->_audit("_rm_buffer start");
+  if (p->second.is_writing()) {
+    cache->get_writings().rm_writing(p->second.seq, p->second);
+    ldout(cache->cct, 0) << __func__ << " " << p->second.seq << dendl;
+  } else {
+    cache->_rm(&p->second);
+  }
+  p = buffer_map.erase(p);
+  cache->_audit("_rm_buffer end");
+  return p;
+}
+
 void BlueStore::BufferSpace::_clear(BufferCacheShard* cache)
 {
   // note: we already hold cache->lock
   ldout(cache->cct, 20) << __func__ << dendl;
   while (!buffer_map.empty()) {
-    _rm_buffer(cache, buffer_map.begin());
+    __rm_buffer(cache, buffer_map.begin());
   }
-  ceph_assert(writing.empty());
 }
 
-int BlueStore::BufferSpace::_discard(BufferCacheShard* cache, uint32_t offset, uint32_t length)
+int BlueStore::BufferSpace::_discard(BufferCacheShard* cache,
+                                     uint32_t offset, uint32_t length)
 {
   // note: we already hold cache->lock
   ldout(cache->cct, 20) << __func__ << std::hex << " 0x" << offset << "~" << length 
@@ -1693,9 +1729,13 @@ int BlueStore::BufferSpace::_discard(BufferCacheShard* cache, uint32_t offset, u
 	if (b->data.length()) {
 	  bufferlist bl;
 	  bl.substr_of(b->data, b->length - tail, tail);
-	  _add_buffer(cache, this, Buffer(this, b->state, b->seq, end, bl, b->flags), 0, 0, b);
+	  _add_buffer(cache,
+	              Buffer(this, b->state, b->seq, end, bl, b->flags),
+	              0, 0, b);
 	} else {
-	  _add_buffer(cache, this, Buffer(this, b->state, b->seq, end, tail, b->flags), 0, 0, b);
+	  _add_buffer(cache,
+	              Buffer(this, b->state, b->seq, end, tail, b->flags),
+	              0, 0, b);
 	}
 	if (!b->is_writing()) {
 	  cache->_adjust_size(b, front - (int64_t)b->length);
@@ -1717,7 +1757,7 @@ int BlueStore::BufferSpace::_discard(BufferCacheShard* cache, uint32_t offset, u
     }
     if (b->end() <= end) {
       // drop entire buffer
-      _rm_buffer(cache, i++);
+      __rm_buffer(cache, i++);
       continue;
     }
     // drop front
@@ -1725,13 +1765,13 @@ int BlueStore::BufferSpace::_discard(BufferCacheShard* cache, uint32_t offset, u
     if (b->data.length()) {
       bufferlist bl;
       bl.substr_of(b->data, b->length - keep, keep);
-      _add_buffer(cache, this,
+      _add_buffer(cache,
                   Buffer(this, b->state, b->seq, end, bl, b->flags), 0, 0, b);
     } else {
-      _add_buffer(cache, this,
+      _add_buffer(cache,
                   Buffer(this, b->state, b->seq, end, keep, b->flags), 0, 0, b);
     }
-    _rm_buffer(cache, i);
+    __rm_buffer(cache, i);
     cache->_audit("discard end 2");
     break;
   }
@@ -1810,34 +1850,20 @@ void BlueStore::BufferSpace::read(
   cache->logger->inc(l_bluestore_buffer_miss_bytes, miss_bytes);
 }
 
-void BlueStore::BufferSpace::_finish_write(BufferCacheShard* cache,  uint64_t seq)
+void BlueStore::BufferSpace::_finish_write(BufferCacheShard* cache,
+                                           Buffer& b)
 {
-  ldout(cache->cct, 20) << __func__ << " seq=" << seq << dendl;
-  auto i = writing.begin();
-  while (i != writing.end()) {
-    if (i->seq > seq) {
-      break;
-    }
-    if (i->seq < seq) {
-      ++i;
-      continue;
-    }
-
-    Buffer *b = &*i;
-    ceph_assert(b->is_writing());
-
-    if (b->flags & Buffer::FLAG_NOCACHE) {
-      writing.erase(i++);
-      ldout(cache->cct, 20) << __func__ << " discard " << *b << dendl;
-      buffer_map.erase(b->offset);
-    } else {
-      b->state = Buffer::STATE_CLEAN;
-      writing.erase(i++);
-      b->maybe_rebuild();
-      b->data.reassign_to_mempool(mempool::mempool_bluestore_cache_data);
-      cache->_add(b, 1, nullptr);
-      ldout(cache->cct, 20) << __func__ << " added " << *b << dendl;
-    }
+  ldout(cache->cct, 0) << __func__ << " seq=" << b.seq << dendl;
+  ceph_assert(b.is_writing());
+  if (b.flags & Buffer::FLAG_NOCACHE) {
+    ldout(cache->cct, 20) << __func__ << " discard " << b << dendl;
+    buffer_map.erase(b.offset);
+  } else {
+    b.state = Buffer::STATE_CLEAN;
+    b.maybe_rebuild();
+    b.data.reassign_to_mempool(mempool::mempool_bluestore_cache_data);
+    cache->_add(&b, 1, nullptr);
+    ldout(cache->cct, 20) << __func__ << " added " << b << dendl;
   }
   cache->_trim();
   cache->_audit("finish_write end");
@@ -1852,59 +1878,51 @@ void BlueStore::BufferSpace::_dup_writing(TransContext* txc, Collection* collect
   BufferSpace &to = onode->bc;
   BufferCacheShard *cache = collection->cache;
   ldout(cache->cct, 20) << __func__ << " offset=" << std::hex << offset << " length=" << std::hex << length << dendl; 
-  if (!writing.empty()) {
-    for (auto it = writing.begin(); it != writing.end(); ++it) {
-      Buffer& b = *it;
-      // If no overlap is found between buffer and range to dup then continue
-      bool overlaps = offset < b.end() && end > b.offset;
-      if (!overlaps) {
-        continue;
-      }
-
-      bufferlist buffer_to_copy;
-      uint32_t offset_to_copy = 0;
-      if (b.offset >= offset) {
-        if (b.end() > end) {
-          // take head
-          uint64_t tail = b.end() - end;
-          auto new_length = b.data.length() - tail;
-          buffer_to_copy.substr_of(b.data, 0, new_length);
-          offset_to_copy = b.offset;
-        } else {
-          // take whole buffer
-          buffer_to_copy = b.data;
-          offset_to_copy = b.offset;
-        }
-      } else {
-        if (b.end() > end) {
-          uint64_t front = offset - b.offset;
-          uint64_t tail = b.end() - end;
-          // take middle
-          uint64_t new_length = b.data.length() - front - tail;
-          buffer_to_copy.substr_of(b.data, front, new_length);
-          offset_to_copy = b.offset + front;
-        } else {
-          // take tail
-          uint64_t front = offset - b.offset;
-          uint64_t new_length = b.data.length() - front;
-          buffer_to_copy.substr_of(b.data, front, new_length);
-          offset_to_copy = b.offset + front;
-        }
-      }
-      Buffer to_b(&onode->bc, b.state, b.seq, offset_to_copy, 
-                               std::move(buffer_to_copy), b.flags);
-      ldout(cache->cct, 20) << __func__ << " offset=" << std::hex << offset
-                            << " length=" << std::hex << length << " buffer=" << to_b << dendl;
-      ceph_assert(to_b.is_writing());
-      if (collection->is_deferred_seq(to_b.seq)) {
-        collection->add_deferred_dependency(to_b.seq, onode);
-      } else {
-        txc->buffers_written.insert({onode.get(), b.seq});
-      }
-      to._discard(collection->cache, to_b.offset, to_b.length);
-      to._add_buffer(collection->cache, &to, std::move(to_b), to_b.cache_private, 0, nullptr);
+  for (auto i = _data_lower_bound(offset);
+       i != buffer_map.end() && offset < end && i->first < end; ++i) {
+    Buffer &b = i->second;
+    if (!b.is_writing()) {
+      continue;
     }
-  }
+
+    bufferlist buffer_to_copy;
+    uint32_t offset_to_copy = 0;
+    if (b.offset >= offset) {
+      if (b.end() > end) {
+        // take head
+        uint64_t tail = b.end() - end;
+        auto new_length = b.data.length() - tail;
+        buffer_to_copy.substr_of(b.data, 0, new_length);
+        offset_to_copy = b.offset;
+      } else {
+        // take whole buffer
+        buffer_to_copy = b.data;
+        offset_to_copy = b.offset;
+      }
+    } else {
+      if (b.end() > end) {
+        uint64_t front = offset - b.offset;
+        uint64_t tail = b.end() - end;
+        // take middle
+        uint64_t new_length = b.data.length() - front - tail;
+        buffer_to_copy.substr_of(b.data, front, new_length);
+        offset_to_copy = b.offset + front;
+      } else {
+        // take tail
+        uint64_t front = offset - b.offset;
+        uint64_t new_length = b.data.length() - front;
+        buffer_to_copy.substr_of(b.data, front, new_length);
+        offset_to_copy = b.offset + front;
+      }
+    }
+    Buffer to_b(&onode->bc, b.state, b.seq, offset_to_copy,
+                std::move(buffer_to_copy), b.flags);
+    ldout(cache->cct, 20) << __func__ << " offset=" << std::hex << offset
+                          << " length=" << std::hex << length << " buffer=" << to_b << dendl;
+    ceph_assert(to_b.is_writing());
+    to._discard(collection->cache, to_b.offset, to_b.length);
+    to._add_buffer(collection->cache, std::move(to_b), to_b.cache_private, 0, nullptr);
+  } // for
 }
 
 // lists content of BufferSpace
@@ -1914,15 +1932,28 @@ std::ostream& operator<<(std::ostream& out, const BlueStore::BufferSpace& bc)
   for (auto& [i, j] : bc.buffer_map) {
     out << " [0x" << std::hex << i << "]=" << j << std::dec;
   }
-  if (!bc.writing.empty()) {
-    out << " writing:";
-    for (auto i = bc.writing.begin(); i != bc.writing.end(); ++i) {
-      out << " " << *i;
-    }
-  }
   return out;
 }
 
+// Writings
+void BlueStore::Writings::finish_writing(uint64_t seq)
+{
+  list_t finished;
+  {
+    std::lock_guard l(lock);
+    auto it = seq_to_buf.find(seq);
+    //ceph_assert(it != seq_to_buf.end());
+    if (it != seq_to_buf.end()) {
+      finished.swap(it->second);
+      seq_to_buf.erase(it);
+    }
+  }
+  for (auto it = finished.begin(); it != finished.end();) {
+    Buffer& b = *it;
+    it = finished.erase(it);
+    b.space->onode.finish_write(b);
+  }
+}
 
 // OnodeSpace
 
@@ -4694,7 +4725,7 @@ void BlueStore::Onode::decode_omap_key(const string& key, string *user_key)
   *user_key = key.substr(pos);
 }
 
-void BlueStore::Onode::finish_write(uint64_t seq)
+void BlueStore::Onode::finish_write(Buffer& buf)
 {
   while (true) {
     BufferCacheShard *cache = c->cache;
@@ -4706,9 +4737,11 @@ void BlueStore::Onode::finish_write(uint64_t seq)
 	       << dendl;
       continue;
     }
-    bc._finish_write(cache, seq);
+    ldout(c->store->cct, 0) << __func__ << " " << buf.seq << dendl;
+    bc._finish_write(cache, buf);
     break;
   }
+  ldout(c->store->cct, 0) << __func__ << " done " << buf.seq << dendl;
 }
 
 // =======================================================
@@ -5110,25 +5143,6 @@ void BlueStore::Collection::split_cache(
     }
   }
   dest->cache->_trim();
-}
-
-bool BlueStore::Collection::is_deferred_seq(uint64_t seq) {
-  std::unique_lock l(deferred_seq_dependencies_lock);
-  auto it = deferred_seq_dependencies.find(seq);
-  return it != deferred_seq_dependencies.end();
-
-}
-
-void BlueStore::Collection::add_deferred_dependency(uint64_t seq, OnodeRef onode) {
-  std::unique_lock l(deferred_seq_dependencies_lock);
-  BufferCacheShard* cache = onode->c->cache;
-  ldout(cache->cct, 20) << __func__ << " seq=" << seq << " onode=" << onode << dendl;
-  auto it = deferred_seq_dependencies.find(seq);
-  if (it == deferred_seq_dependencies.end()) {
-    deferred_seq_dependencies.insert({seq, {onode}});
-  } else {
-    it->second.insert(onode);
-  }
 }
 // =======================================================
 
@@ -8538,7 +8552,7 @@ void BlueStore::set_cache_shards(unsigned num)
   }
   for (unsigned i = bold; i < num; ++i) {
     buffer_cache_shards[i] = 
-        BufferCacheShard::create(cct, cct->_conf->bluestore_cache_type,
+        BufferCacheShard::create(this, cct->_conf->bluestore_cache_type,
                                  logger);
   }
 }
@@ -13585,23 +13599,9 @@ void BlueStore::_txc_finish(TransContext *txc)
   dout(20) << __func__ << " " << txc << " onodes " << txc->onodes << dendl;
   ceph_assert(txc->get_state() == TransContext::STATE_FINISHING);
 
-  for (auto &[onode, seq] : txc->buffers_written) {
-    if (txc->deferred_txn && txc->deferred_txn->txc_seq == seq) {
-      std::set<OnodeRef> dependent_onodes;
-      {
-        std::unique_lock l(onode->c->deferred_seq_dependencies_lock);
-        auto it = onode->c->deferred_seq_dependencies.find(seq);
-        if (it != onode->c->deferred_seq_dependencies.end()) {
-          dependent_onodes.swap(it->second);
-          onode->c->deferred_seq_dependencies.erase(it);
-        }
-
-      }
-      for (auto &dependent_onode : dependent_onodes) {
-        dependent_onode->finish_write(seq);
-      }
-    }
-    onode->finish_write(seq);
+  for (auto &seq : txc->buffers_written) {
+    ldout(cct, 0) << __func__ << " " << seq << dendl;
+    writings.finish_writing(seq);
   }
   txc->buffers_written.clear();
 
@@ -14247,7 +14247,6 @@ bluestore_deferred_op_t *BlueStore::_get_deferred_op(
 {
   if (!txc->deferred_txn) {
     txc->deferred_txn = new bluestore_deferred_transaction_t;
-    txc->deferred_txn->txc_seq = txc->seq;
   }
   txc->deferred_txn->ops.push_back(bluestore_deferred_op_t());
   logger->inc(l_bluestore_issued_deferred_writes);
@@ -15297,7 +15296,6 @@ void BlueStore::_do_write_small(
                                   return 0;
                                 });
               op->data = bl;
-              o->c->add_deferred_dependency(txc->seq, o);
           } else {
               b->get_blob().map_bl(
                   b_off, bl,
@@ -15385,7 +15383,6 @@ void BlueStore::_do_write_small(
               });
           ceph_assert(r == 0);
           op->data = std::move(bl);
-          o->c->add_deferred_dependency(txc->seq, o);
           dout(20) << __func__ << "  deferred write 0x" << std::hex << b_off
                    << "~" << b_len << std::dec << " of mutable " << *b << " at "
                    << op->extents << dendl;
@@ -15676,7 +15673,6 @@ void BlueStore::_do_write_big_apply_deferred(
     op->op = bluestore_deferred_op_t::OP_WRITE;
     op->extents.swap(dctx.res_extents);
     op->data = std::move(bl);
-    o->c->add_deferred_dependency(txc->seq, o);
   }
 }
 
@@ -16218,7 +16214,6 @@ int BlueStore::_do_alloc_write(
 	  });
         ceph_assert(r == 0);
         op->data = *l;
-        o->c->add_deferred_dependency(txc->seq, o);
       } else {
 	wi.b->get_blob().map_bl(
 	  b_off, *l,
@@ -17943,12 +17938,6 @@ void BlueStore::_shutdown_cache()
   for (auto& p : coll_map) {
     // Clear deferred write buffers before clearing up Onodes
     std::unique_lock l(p.second->lock);
-    for (auto &[seq, onodes] : p.second->deferred_seq_dependencies) {
-      for (auto &onode : onodes) {
-        onode->finish_write(seq);
-      }
-    }
-    p.second->deferred_seq_dependencies.clear();
 
     p.second->onode_space.clear();
     if (!p.second->shared_blob_set.empty()) {
@@ -17962,6 +17951,7 @@ void BlueStore::_shutdown_cache()
   for (auto i : onode_cache_shards) {
     ceph_assert(i->empty());
   }
+  ceph_assert(writings.empty());
 }
 
 // For external caller.
