@@ -376,7 +376,7 @@ public:
       BYPASS_CLEAN_CACHE = 0x1,  // bypass clean cache
     };
 
-/*    struct BufferKey {
+    struct BufferKey {
       using type = uint32_t;
       const type &operator() (const Buffer& b) {
         return b.offset;
@@ -388,10 +388,8 @@ public:
         Buffer,
 	boost::intrusive::set_member_hook<>,
 	&Buffer::set_item>,
-	boost::intrusive::key_of_value<BufferKey> > _t;
-*/
+	boost::intrusive::key_of_value<BufferKey> > buffer_map_t;
    
-    using buffer_map_t = mempool::bluestore_cache_meta::map<uint32_t, Buffer*>;
     buffer_map_t buffer_map;
 
     Onode& onode;
@@ -407,7 +405,8 @@ public:
       ceph_assert(b->get_nref() == 1); // we don't increment nref presuming
                                        // b just has been created
                                        // (and hence got n == 1)
-      buffer_map.emplace(b->offset, b);
+      ceph_assert(!b->set_item.is_linked());
+      buffer_map.insert(*b);
       b->cache_private = cache_private;
       __add_buffer(cache, b, level, near);
     }
@@ -416,17 +415,17 @@ public:
 
     void _rm_buffer(BufferCacheShard* cache,
                     Buffer* b) {
-      __rm_buffer(cache, buffer_map.find(b->offset));
+      ceph_assert(b->set_item.is_linked());
+      __rm_buffer(cache, b);
     }
-    void
-    __rm_buffer(BufferCacheShard* cache,
-	       buffer_map_t::iterator p);
+    void __rm_buffer(BufferCacheShard* cache, Buffer* b);
+    void __erase_from_map(Buffer* b);
 
     buffer_map_t::iterator _data_lower_bound(uint32_t offset) {
       auto i = buffer_map.lower_bound(offset);
       if (i != buffer_map.begin()) {
 	--i;
-	if (i->second->offset + i->second->length <= offset)
+	if (i->offset + i->length <= offset)
 	  ++i;
       }
       return i;
@@ -495,9 +494,9 @@ public:
     void dump(BufferCacheShard* cache, ceph::Formatter *f) const {
       std::lock_guard l(cache->lock);
       f->open_array_section("buffers");
-      for (auto& [o, b] : buffer_map) {
+      for (auto& b : buffer_map) {
 	f->open_object_section("buffer");
-	b->dump(f);
+	b.dump(f);
 	f->close_section();
       }
       f->close_section();

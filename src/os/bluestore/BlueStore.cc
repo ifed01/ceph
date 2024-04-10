@@ -613,9 +613,9 @@ void _dump_onode(CephContext *cct, const BlueStore::Onode& o)
   }
   _dump_extent_map<LogLevelV>(cct, o.extent_map);
 
-  for (auto& [o, b_ref] : o.bc.buffer_map) {
-    dout(LogLevelV) << __func__ << "       0x" << std::hex << b_ref->offset << "~"
-                    << b_ref->length << std::dec << " " << *b_ref
+  for (auto& b : o.bc.buffer_map) {
+    dout(LogLevelV) << __func__ << "       0x" << std::hex << b.offset << "~"
+                    << b.length << std::dec << " " << b
                     << dendl;
   }
 }
@@ -1676,11 +1676,10 @@ void BlueStore::BufferSpace::__add_buffer(BufferCacheShard *cache,
 }
 
 void BlueStore::BufferSpace::__rm_buffer(BufferCacheShard* cache,
-                                         BufferSpace::buffer_map_t::iterator p)
+                                         Buffer* b)
 {
-  ceph_assert(p != buffer_map.end());
+  ceph_assert(b);
   cache->_audit("_rm_buffer start");
-  Buffer* b = p->second;
   if (b->is_writing()) {
     //
     //By design rm_writing() call might fail to remove Buffers being finishing writings,
@@ -1688,13 +1687,18 @@ void BlueStore::BufferSpace::__rm_buffer(BufferCacheShard* cache,
     //To properly handle that we move Buffer to specific DISCARDED state.
     b->state = Buffer::STATE_WRITING_DISCARDED;
     cache->get_writings().rm_writing(b->seq, b);
-    //ldout(cache->cct, 0) << __func__ << " " << b_ref->seq << dendl;
   } else {
     cache->_rm(b);
   }
-  buffer_map.erase(p);
-  b->put();
+  __erase_from_map(b);
   cache->_audit("_rm_buffer end");
+}
+
+void BlueStore::BufferSpace::__erase_from_map(Buffer* b)
+{
+  ceph_assert(b);
+  buffer_map.erase(buffer_map.iterator_to(*b));
+  b->put();
 }
 
 void BlueStore::BufferSpace::_clear(BufferCacheShard* cache)
@@ -1702,7 +1706,7 @@ void BlueStore::BufferSpace::_clear(BufferCacheShard* cache)
   // note: we already hold cache->lock
   ldout(cache->cct, 20) << __func__ << dendl;
   while (!buffer_map.empty()) {
-    __rm_buffer(cache, buffer_map.begin());
+    __rm_buffer(cache, &*buffer_map.begin());
   }
 }
 
@@ -1717,7 +1721,7 @@ int BlueStore::BufferSpace::_discard(BufferCacheShard* cache,
   auto i = _data_lower_bound(offset);
   uint32_t end = offset + length;
   while (i != buffer_map.end()) {
-    Buffer* b = i->second;
+    Buffer* b = &*i;
     // First iteration either finds a buffer that contains the offset or the next buffer after it.
     // Subsequent iterations are either buffers inside range or after the range.
     // If we already found a buffer that doesn't overlaps with the range, we can break, as it must be next to the range.
@@ -1764,7 +1768,8 @@ int BlueStore::BufferSpace::_discard(BufferCacheShard* cache,
     }
     if (b->end() <= end) {
       // drop entire buffer
-      __rm_buffer(cache, i++);
+      auto i0 = i++;
+      __rm_buffer(cache, &*i0);
       continue;
     }
     // drop front
@@ -1778,7 +1783,7 @@ int BlueStore::BufferSpace::_discard(BufferCacheShard* cache,
       _add_buffer(cache,
                   new Buffer(this, b->state, b->seq, end, keep, b->flags), 0, 0, b);
     }
-    __rm_buffer(cache, i);
+    __rm_buffer(cache, &*i);
     cache->_audit("discard end 2");
     break;
   }
@@ -1801,8 +1806,8 @@ void BlueStore::BufferSpace::read(
   {
     std::lock_guard l(cache->lock);
     for (auto i = _data_lower_bound(offset);
-         i != buffer_map.end() && offset < end && i->first < end; ++i) {
-      Buffer* b = i->second;
+         i != buffer_map.end() && offset < end && i->offset < end; ++i) {
+      Buffer* b = &*i;
       ceph_assert(b->end() > offset);
 
       bool val = false;
@@ -1860,13 +1865,14 @@ void BlueStore::BufferSpace::read(
 void BlueStore::BufferSpace::_finish_write(BufferCacheShard* cache,
                                            Buffer* b)
 {
+  ceph_assert(b);
   ldout(cache->cct, 0) << __func__ << " seq=" << *b << dendl;
   ceph_assert(b->is_writing() || b->is_discarded());
   if (!b->is_discarded()) {
     if (b->flags & Buffer::FLAG_NOCACHE) {
       ldout(cache->cct, 20) << __func__ << " discard " << dendl;
-      buffer_map.erase(b->offset);
-      b->put();
+      ceph_assert(b->set_item.is_linked());
+      __erase_from_map(b);
     } else {
       b->state = Buffer::STATE_CLEAN;
       b->maybe_rebuild();
@@ -1889,8 +1895,8 @@ void BlueStore::BufferSpace::_dup_writing(TransContext* txc, Collection* collect
   BufferCacheShard *cache = collection->cache;
   ldout(cache->cct, 20) << __func__ << " offset=" << std::hex << offset << " length=" << std::hex << length << dendl; 
   for (auto i = _data_lower_bound(offset);
-       i != buffer_map.end() && offset < end && i->first < end; ++i) {
-    Buffer *b = i->second;
+       i != buffer_map.end() && offset < end && i->offset < end; ++i) {
+    Buffer *b = &*i;
     if (!b->is_writing()) {
       continue;
     }
@@ -1939,8 +1945,8 @@ void BlueStore::BufferSpace::_dup_writing(TransContext* txc, Collection* collect
 // BufferSpace must be under exclusive access
 std::ostream& operator<<(std::ostream& out, const BlueStore::BufferSpace& bc)
 {
-  for (auto& [o, b_ref] : bc.buffer_map) {
-    out << " [0x" << std::hex << b_ref->offset << "]=" << *b_ref << std::dec;
+  for (auto& b : bc.buffer_map) {
+    out << " [0x" << std::hex << b.offset << "]=" << b << std::dec;
   }
   return out;
 }
@@ -1949,6 +1955,7 @@ std::ostream& operator<<(std::ostream& out, const BlueStore::BufferSpace& bc)
 void BlueStore::Writings::finish_writing(uint64_t seq)
 {
   list_t finished;
+  bool done = false;
   {
     std::lock_guard l(lock);
     auto it = seq_to_buf.find(seq);
@@ -1958,9 +1965,9 @@ void BlueStore::Writings::finish_writing(uint64_t seq)
       seq_to_buf.erase(it);
     }
   }
-  for (auto it = finished.begin(); it != finished.end();) {
-    Buffer& b = *it;
-    it = finished.erase(it);
+  while (!finished.empty()) {
+    Buffer& b = *finished.begin();
+    finished.erase(finished.begin());
     b.space->onode.finish_write(&b);
     b.put(); // decrement ref counter to match the increment from add_writing()
   }
@@ -5126,10 +5133,10 @@ void BlueStore::Collection::split_cache(
         b.second->last_encoded_id = -1;
       }
 
-      for (auto &[o, b_ref] : o->bc.buffer_map) {
+      for (auto& b : o->bc.buffer_map) {
         ldout(store->cct, 1)
-          << __func__ << "   moving " << *b_ref << dendl;
-        dest->cache->_move(cache, &*b_ref);
+          << __func__ << "   moving " << b << dendl;
+        dest->cache->_move(cache, &b);
       }
       for (auto& e : o->extent_map.extent_map) {
         cache->rm_extent();
