@@ -1658,17 +1658,16 @@ std::atomic<uint64_t> BlueStore::Buffer::total = 0;
 #define dout_prefix *_dout << "bluestore.BufferSpace(" << this << " in " << cache << ") "
 
 void BlueStore::BufferSpace::__add_buffer(BufferCacheShard *cache,
-                                          BufferRef b_ref, int level,
+                                          Buffer* b, int level,
                                           Buffer *near)
 {
   cache->_audit("_add_buffer start");
-  Buffer* b = b_ref.get();
   if (b->is_writing()) {
     // we might get already cached data for which resetting mempool is inppropriate
     // hence calling try_assign_to_mempool
     b->data.try_assign_to_mempool(mempool::mempool_bluestore_writing);
     ldout(cache->cct, 0) << __func__ << " " << b->seq << dendl;
-    cache->get_writings().add_writing(b->seq, b_ref);
+    cache->get_writings().add_writing(b->seq, b);
   } else {
     b->data.reassign_to_mempool(mempool::mempool_bluestore_cache_data);
     cache->_add(b, level, near);
@@ -1681,20 +1680,20 @@ void BlueStore::BufferSpace::__rm_buffer(BufferCacheShard* cache,
 {
   ceph_assert(p != buffer_map.end());
   cache->_audit("_rm_buffer start");
-  BufferRef b_ref = p->second;
-  Buffer* b = b_ref.get();
+  Buffer* b = p->second;
   if (b->is_writing()) {
     //
     //By design rm_writing() call might fail to remove Buffers being finishing writings,
     //so we'll get finish_write indication for them a moment later.
     //To properly handle that we move Buffer to specific DISCARDED state.
     b->state = Buffer::STATE_WRITING_DISCARDED;
-    cache->get_writings().rm_writing(b->seq, b_ref);
+    cache->get_writings().rm_writing(b->seq, b);
     //ldout(cache->cct, 0) << __func__ << " " << b_ref->seq << dendl;
   } else {
     cache->_rm(b);
   }
   buffer_map.erase(p);
+  b->put();
   cache->_audit("_rm_buffer end");
 }
 
@@ -1718,8 +1717,7 @@ int BlueStore::BufferSpace::_discard(BufferCacheShard* cache,
   auto i = _data_lower_bound(offset);
   uint32_t end = offset + length;
   while (i != buffer_map.end()) {
-    BufferRef b_ref = i->second;
-    Buffer* b = b_ref.get();
+    Buffer* b = i->second;
     // First iteration either finds a buffer that contains the offset or the next buffer after it.
     // Subsequent iterations are either buffers inside range or after the range.
     // If we already found a buffer that doesn't overlaps with the range, we can break, as it must be next to the range.
@@ -1804,8 +1802,7 @@ void BlueStore::BufferSpace::read(
     std::lock_guard l(cache->lock);
     for (auto i = _data_lower_bound(offset);
          i != buffer_map.end() && offset < end && i->first < end; ++i) {
-      BufferRef b_ref = i->second;
-      Buffer* b = b_ref.get();
+      Buffer* b = i->second;
       ceph_assert(b->end() > offset);
 
       bool val = false;
@@ -1861,21 +1858,20 @@ void BlueStore::BufferSpace::read(
 }
 
 void BlueStore::BufferSpace::_finish_write(BufferCacheShard* cache,
-                                           BufferRef b_ref)
+                                           Buffer* b)
 {
-  Buffer& b = *b_ref;
-  ldout(cache->cct, 0) << __func__ << " seq=" << b << dendl;
-  ceph_assert(b.is_writing() || b.is_discarded());
-  if (!b.is_discarded()) {
-    if (b.flags & Buffer::FLAG_NOCACHE) {
+  ldout(cache->cct, 0) << __func__ << " seq=" << *b << dendl;
+  ceph_assert(b->is_writing() || b->is_discarded());
+  if (!b->is_discarded()) {
+    if (b->flags & Buffer::FLAG_NOCACHE) {
       ldout(cache->cct, 20) << __func__ << " discard " << dendl;
-      buffer_map.erase(b.offset);
+      buffer_map.erase(b->offset);
     } else {
-      b.state = Buffer::STATE_CLEAN;
-      b.maybe_rebuild();
-      b.data.reassign_to_mempool(mempool::mempool_bluestore_cache_data);
-      cache->_add(&b, 1, nullptr);
-      ldout(cache->cct, 20) << __func__ << " added " << b << dendl;
+      b->state = Buffer::STATE_CLEAN;
+      b->maybe_rebuild();
+      b->data.reassign_to_mempool(mempool::mempool_bluestore_cache_data);
+      cache->_add(b, 1, nullptr);
+      ldout(cache->cct, 20) << __func__ << " added " << *b << dendl;
     }
   }
   cache->_trim();
@@ -1893,8 +1889,7 @@ void BlueStore::BufferSpace::_dup_writing(TransContext* txc, Collection* collect
   ldout(cache->cct, 20) << __func__ << " offset=" << std::hex << offset << " length=" << std::hex << length << dendl; 
   for (auto i = _data_lower_bound(offset);
        i != buffer_map.end() && offset < end && i->first < end; ++i) {
-    BufferRef b_ref = i->second;
-    Buffer *b = b_ref.get();
+    Buffer *b = i->second;
     if (!b->is_writing()) {
       continue;
     }
@@ -1964,10 +1959,8 @@ void BlueStore::Writings::finish_writing(uint64_t seq)
   }
   for (auto it = finished.begin(); it != finished.end();) {
     Buffer& b = *it;
-    BufferRef b_ref;
-    b_ref.reset(&b);
     it = finished.erase(it);
-    b.space->onode.finish_write(b_ref);
+    b.space->onode.finish_write(&b);
     b.put(); // decrement ref counter to match the increment from add_writing()
   }
 }
@@ -4742,7 +4735,7 @@ void BlueStore::Onode::decode_omap_key(const string& key, string *user_key)
   *user_key = key.substr(pos);
 }
 
-void BlueStore::Onode::finish_write(BufferRef b_ref)
+void BlueStore::Onode::finish_write(Buffer* b)
 {
   while (true) {
     BufferCacheShard *cache = c->cache;
@@ -4754,11 +4747,11 @@ void BlueStore::Onode::finish_write(BufferRef b_ref)
 	       << dendl;
       continue;
     }
-    ldout(c->store->cct, 0) << __func__ << " " << b_ref->seq << dendl;
-    bc._finish_write(cache, b_ref);
+    ldout(c->store->cct, 0) << __func__ << " " << b->seq << dendl;
+    bc._finish_write(cache, b);
     break;
   }
-  ldout(c->store->cct, 0) << __func__ << " done " << b_ref->seq << dendl;
+  ldout(c->store->cct, 0) << __func__ << " done " << b->seq << dendl;
 }
 
 // =======================================================
