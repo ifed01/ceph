@@ -367,8 +367,6 @@ public:
       f->dump_unsigned("data_length", data.length());
     }
   };
-  using BufferRef = ceph::ref_t<Buffer>;
-
   struct BufferCacheShard;
   class Writings;
 
@@ -392,8 +390,8 @@ public:
 	&Buffer::set_item>,
 	boost::intrusive::key_of_value<BufferKey> > _t;
 */
-
-    using buffer_map_t = mempool::bluestore_cache_meta::map<uint32_t, BufferRef>;
+   
+    using buffer_map_t = mempool::bluestore_cache_meta::map<uint32_t, Buffer*>;
     buffer_map_t buffer_map;
 
     Onode& onode;
@@ -404,22 +402,21 @@ public:
     }
 
     void _add_buffer(BufferCacheShard* cache,
-                     Buffer* buffer,
+                     Buffer* b,
                      uint16_t cache_private, int level, Buffer *near) {
-      {
-      BufferRef b_ref;
-      b_ref.reset(buffer, false);
-      buffer_map.emplace(b_ref->offset, b_ref);
-      b_ref->cache_private = cache_private;
-      __add_buffer(cache, b_ref, level, near);
-      }
+      ceph_assert(b->get_nref() == 1); // we don't increment nref presuming
+                                       // b just has been created
+                                       // (and hence got n == 1)
+      buffer_map.emplace(b->offset, b);
+      b->cache_private = cache_private;
+      __add_buffer(cache, b, level, near);
     }
     void __add_buffer(BufferCacheShard* cache,
-                     BufferRef b_ref, int level, Buffer *near);
+                     Buffer* b, int level, Buffer *near);
 
     void _rm_buffer(BufferCacheShard* cache,
-                    BufferRef b_ref) {
-      __rm_buffer(cache, buffer_map.find(b_ref->offset));
+                    Buffer* b) {
+      __rm_buffer(cache, buffer_map.find(b->offset));
     }
     void
     __rm_buffer(BufferCacheShard* cache,
@@ -470,8 +467,7 @@ public:
                   nullptr);
       cache->_trim();
     }
-    void _finish_write(BufferCacheShard* cache,
-                       BufferRef buf);
+    void _finish_write(BufferCacheShard* cache, Buffer* b);
     void did_read(BufferCacheShard* cache,
                   uint32_t offset, ceph::buffer::list&& bl) {
       std::lock_guard l(cache->lock);
@@ -499,9 +495,9 @@ public:
     void dump(BufferCacheShard* cache, ceph::Formatter *f) const {
       std::lock_guard l(cache->lock);
       f->open_array_section("buffers");
-      for (auto& [o, b_ref] : buffer_map) {
+      for (auto& [o, b] : buffer_map) {
 	f->open_object_section("buffer");
-	b_ref->dump(f);
+	b->dump(f);
 	f->close_section();
       }
       f->close_section();
@@ -521,20 +517,20 @@ public:
     mempool::bluestore_writing::map<uint64_t, list_t> seq_to_buf; // seq no -> Buffer list
 
   public:
-    void add_writing(uint64_t seq, BufferRef b_ref) {
+    void add_writing(uint64_t seq, Buffer* b) {
       std::lock_guard l(lock);
-      ceph_assert(!b_ref->list_item.is_linked());
-      seq_to_buf[seq].push_back(*b_ref.get());
-      b_ref->get(); // inc ref counter to avoid buffer release while we own it
+      ceph_assert(!b->list_item.is_linked());
+      seq_to_buf[seq].push_back(*b);
+      b->get(); // inc ref counter to avoid buffer release while we own it
     }
-    void rm_writing(uint64_t seq, BufferRef b_ref) {
+    void rm_writing(uint64_t seq, Buffer* b) {
       std::lock_guard l(lock);
       auto it = seq_to_buf.find(seq);
       // we can miss seq when racing with finish_writing()
       if (it != seq_to_buf.end()) {
-        ceph_assert(b_ref->list_item.is_linked());
-        it->second.erase(it->second.iterator_to(*b_ref.get()));
-        b_ref->put(); // dec ref counter to match the increment from add_writing()
+        ceph_assert(b->list_item.is_linked());
+        it->second.erase(it->second.iterator_to(*b));
+        b->put(); // dec ref counter to match the increment from add_writing()
         if (it->second.empty()) {
           seq_to_buf.erase(it);
         }
@@ -1455,7 +1451,7 @@ public:
     void rewrite_omap_key(const std::string& old, std::string *out);
     void decode_omap_key(const std::string& key, std::string *user_key);
 
-    void finish_write(BufferRef buf);
+    void finish_write(Buffer* b);
 
 private:
     void _decode(const ceph::buffer::list& v);
