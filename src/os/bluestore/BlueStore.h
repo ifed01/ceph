@@ -268,21 +268,19 @@ public:
   };
 
   /// cached buffer
-  struct Buffer : public RefCountedObject {
+  struct Buffer {
     MEMPOOL_CLASS_HELPERS();
 
     enum {
       STATE_EMPTY,     ///< empty buffer -- used for cache history
       STATE_CLEAN,     ///< clean data that is up to date
       STATE_WRITING,   ///< data that is being written (io not yet complete)
-      STATE_WRITING_DISCARDED,  ///< pending io completion, already discarded
     };
     static const char *get_state_name(int s) {
       switch (s) {
       case STATE_EMPTY: return "empty";
       case STATE_CLEAN: return "clean";
       case STATE_WRITING: return "writing";
-      case STATE_WRITING_DISCARDED: return "writing/discarded";
       default: return "???";
       }
     }
@@ -333,9 +331,6 @@ public:
     }
     bool is_writing() const {
       return state == STATE_WRITING;
-    }
-    bool is_discarded() const {
-      return state == STATE_WRITING_DISCARDED;
     }
 
     uint32_t end() const {
@@ -401,17 +396,7 @@ public:
 
     void _add_buffer(BufferCacheShard* cache,
                      Buffer* b,
-                     uint16_t cache_private, int level, Buffer *near) {
-      ceph_assert(b->get_nref() == 1); // we don't increment nref presuming
-                                       // b just has been created
-                                       // (and hence got n == 1)
-      ceph_assert(!b->set_item.is_linked());
-      buffer_map.insert(*b);
-      b->cache_private = cache_private;
-      __add_buffer(cache, b, level, near);
-    }
-    void __add_buffer(BufferCacheShard* cache,
-                     Buffer* b, int level, Buffer *near);
+                     uint16_t cache_private, int level, Buffer *near);
 
     void _rm_buffer(BufferCacheShard* cache,
                     Buffer* b) {
@@ -466,7 +451,7 @@ public:
                   nullptr);
       cache->_trim();
     }
-    void _finish_write(BufferCacheShard* cache, Buffer* b);
+    void _finish_write(BufferCacheShard* cache, uint64_t seq, uint32_t offset, uint32_t length);
     void did_read(BufferCacheShard* cache,
                   uint32_t offset, ceph::buffer::list&& bl) {
       std::lock_guard l(cache->lock);
@@ -505,35 +490,27 @@ public:
   };
 
   class Writings {
-    typedef boost::intrusive::list<
-      BlueStore::Buffer,
-      boost::intrusive::member_hook<
-        BlueStore::Buffer,
-        boost::intrusive::list_member_hook<>,
-        &BlueStore::Buffer::list_item> > list_t;
+    struct WriteEntry {
+      Onode* onode;
+      uint32_t offset;
+      uint32_t length;
+      WriteEntry(Onode* _o, Buffer* b)
+        : onode(_o), offset(b->offset), length(b->length) {}
+    };
+
+    using write_list_t = mempool::bluestore_writing::list<WriteEntry>;
 
     ceph::mutex lock = ceph::make_mutex("BlueStore::Writings::lock");
-    mempool::bluestore_writing::map<uint64_t, list_t> seq_to_buf; // seq no -> Buffer list
+    mempool::bluestore_writing::map<uint64_t, write_list_t> seq_to_buf; // seq no -> list of <onode, offset, length>
 
   public:
-    void add_writing(uint64_t seq, Buffer* b) {
-      std::lock_guard l(lock);
-      ceph_assert(!b->list_item.is_linked());
-      seq_to_buf[seq].push_back(*b);
-      b->get(); // inc ref counter to avoid buffer release while we own it
+    ~Writings() {
+      // sanity
+      ceph_assert(seq_to_buf.empty());
     }
-    void rm_writing(uint64_t seq, Buffer* b) {
+    void add_writing(Onode* o, Buffer* b) {
       std::lock_guard l(lock);
-      auto it = seq_to_buf.find(seq);
-      // we can miss seq when racing with finish_writing()
-      if (it != seq_to_buf.end()) {
-        ceph_assert(b->list_item.is_linked());
-        it->second.erase(it->second.iterator_to(*b));
-        b->put(); // dec ref counter to match the increment from add_writing()
-        if (it->second.empty()) {
-          seq_to_buf.erase(it);
-        }
-      }
+      seq_to_buf[b->seq].emplace_back(o, b);
     }
     void finish_writing(uint64_t seq);
 
@@ -1450,7 +1427,7 @@ public:
     void rewrite_omap_key(const std::string& old, std::string *out);
     void decode_omap_key(const std::string& key, std::string *user_key);
 
-    void finish_write(Buffer* b);
+    void finish_write(uint64_t seq, uint32_t offset, uint32_t length);
 
 private:
     void _decode(const ceph::buffer::list& v);

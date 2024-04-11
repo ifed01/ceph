@@ -1657,17 +1657,20 @@ std::atomic<uint64_t> BlueStore::Buffer::total = 0;
 #undef dout_prefix
 #define dout_prefix *_dout << "bluestore.BufferSpace(" << this << " in " << cache << ") "
 
-void BlueStore::BufferSpace::__add_buffer(BufferCacheShard *cache,
-                                          Buffer* b, int level,
-                                          Buffer *near)
+void BlueStore::BufferSpace::_add_buffer(BufferCacheShard* cache,
+                                         Buffer* b,
+                                         uint16_t cache_private, int level,
+                                         Buffer *near)
 {
   cache->_audit("_add_buffer start");
+  ceph_assert(!b->set_item.is_linked());
+  buffer_map.insert(*b);
+  b->cache_private = cache_private;
   if (b->is_writing()) {
     // we might get already cached data for which resetting mempool is inppropriate
     // hence calling try_assign_to_mempool
     b->data.try_assign_to_mempool(mempool::mempool_bluestore_writing);
-    ldout(cache->cct, 0) << __func__ << " " << b->seq << dendl;
-    cache->get_writings().add_writing(b->seq, b);
+    cache->get_writings().add_writing(&onode, b);
   } else {
     b->data.reassign_to_mempool(mempool::mempool_bluestore_cache_data);
     cache->_add(b, level, near);
@@ -1680,14 +1683,7 @@ void BlueStore::BufferSpace::__rm_buffer(BufferCacheShard* cache,
 {
   ceph_assert(b);
   cache->_audit("_rm_buffer start");
-  if (b->is_writing()) {
-    //
-    //By design rm_writing() call might fail to remove Buffers being finishing writings,
-    //so we'll get finish_write indication for them a moment later.
-    //To properly handle that we move Buffer to specific DISCARDED state.
-    b->state = Buffer::STATE_WRITING_DISCARDED;
-    cache->get_writings().rm_writing(b->seq, b);
-  } else {
+  if (!b->is_writing()) {
     cache->_rm(b);
   }
   __erase_from_map(b);
@@ -1698,7 +1694,7 @@ void BlueStore::BufferSpace::__erase_from_map(Buffer* b)
 {
   ceph_assert(b);
   buffer_map.erase(buffer_map.iterator_to(*b));
-  b->put();
+  delete b;
 }
 
 void BlueStore::BufferSpace::_clear(BufferCacheShard* cache)
@@ -1863,26 +1859,36 @@ void BlueStore::BufferSpace::read(
 }
 
 void BlueStore::BufferSpace::_finish_write(BufferCacheShard* cache,
-                                           Buffer* b)
+                                           uint64_t seq,
+                                           uint32_t offset, uint32_t len)
 {
-  ceph_assert(b);
-  ldout(cache->cct, 0) << __func__ << " seq=" << *b << dendl;
-  ceph_assert(b->is_writing() || b->is_discarded());
-  if (!b->is_discarded()) {
-    if (b->flags & Buffer::FLAG_NOCACHE) {
-      ldout(cache->cct, 20) << __func__ << " discard " << dendl;
-      ceph_assert(b->set_item.is_linked());
-      __erase_from_map(b);
-    } else {
-      b->state = Buffer::STATE_CLEAN;
-      b->maybe_rebuild();
-      b->data.reassign_to_mempool(mempool::mempool_bluestore_cache_data);
-      cache->_add(b, 1, nullptr);
-      ldout(cache->cct, 20) << __func__ << " added " << *b << dendl;
+  ldout(cache->cct, 10) << __func__ << " seq " << seq
+                        << std::hex << " 0x" << offset << "~" << len << std::dec
+                        << dendl;
+
+  uint32_t end = offset + len;
+  std::lock_guard l(cache->lock);
+  auto i = _data_lower_bound(offset);
+  while (i != buffer_map.end() && offset < end && i->offset < end) {
+    Buffer* b = &*i;
+    i++;
+    ceph_assert(b->end() > offset);
+    if (b->seq == seq && b->is_writing()) {
+      ldout(cache->cct, 20) << __func__ << " finish " << *b
+                            << dendl;
+      if (b->flags & Buffer::FLAG_NOCACHE) {
+        __erase_from_map(b);
+      } else {
+        b->state = Buffer::STATE_CLEAN;
+        b->maybe_rebuild();
+        b->data.reassign_to_mempool(mempool::mempool_bluestore_cache_data);
+        cache->_add(b, 1, nullptr);
+      }
     }
   }
   cache->_trim();
   cache->_audit("finish_write end");
+ ldout(cache->cct, 20) << __func__ << " done." << dendl;
 }
 
 /*
@@ -1954,23 +1960,38 @@ std::ostream& operator<<(std::ostream& out, const BlueStore::BufferSpace& bc)
 // Writings
 void BlueStore::Writings::finish_writing(uint64_t seq)
 {
-  list_t finished;
-  bool done = false;
-  {
-    std::lock_guard l(lock);
-    auto it = seq_to_buf.find(seq);
-    //ceph_assert(it != seq_to_buf.end());
-    if (it != seq_to_buf.end()) {
-      finished.swap(it->second);
-      seq_to_buf.erase(it);
+  // We might get a race when onode cloning/overwriting put more
+  // WriteEntries with the same seq_no while finish_writing() is in progress
+  // (and after finished list has been already filled).
+  // So we might want to repeat processing for these new onodes.
+  // The proposed processing scheme below is apparently valid:
+  // there should be no new entries after empty 'finished' container
+  // processing.
+  //
+  write_list_t finished;
+  do {
+    finished.clear();
+    {
+      std::lock_guard l(lock);
+      auto it = seq_to_buf.find(seq);
+      if (it != seq_to_buf.end()) {
+        finished.swap(it->second);
+        seq_to_buf.erase(it);
+      }
     }
-  }
-  while (!finished.empty()) {
-    Buffer& b = *finished.begin();
-    finished.erase(finished.begin());
-    b.space->onode.finish_write(&b);
-    b.put(); // decrement ref counter to match the increment from add_writing()
-  }
+    for (auto& e : finished) {
+      e.onode->finish_write(seq, e.offset, e.length);
+    }
+
+    // If 'finished' is not empty - new entries could appear in seq_to_buf
+    // after the last swap. Hence we need to reiterate. And this could even
+    // need multiple iterations.
+    // But if 'finished' list is empty - no more entries matching the seq_no
+    // would appear (previous onode::finish_write() calls would be logical
+    // "walls" as they acquires relevant onode cache's locks).
+    // So we're safe to exit the loop.
+    //
+  } while (!finished.empty());
 }
 
 // OnodeSpace
@@ -4743,7 +4764,7 @@ void BlueStore::Onode::decode_omap_key(const string& key, string *user_key)
   *user_key = key.substr(pos);
 }
 
-void BlueStore::Onode::finish_write(Buffer* b)
+void BlueStore::Onode::finish_write(uint64_t seq, uint32_t offset, uint32_t length)
 {
   while (true) {
     BufferCacheShard *cache = c->cache;
@@ -4755,11 +4776,13 @@ void BlueStore::Onode::finish_write(Buffer* b)
 	       << dendl;
       continue;
     }
-    ldout(c->store->cct, 0) << __func__ << " " << b->seq << dendl;
-    bc._finish_write(cache, b);
+    ldout(c->store->cct, 10) << __func__ << " seq " << seq << std::hex
+                             << " 0x" << offset << "~" << length << std::dec
+                             << dendl;
+    bc._finish_write(cache, seq, offset, length);
     break;
   }
-  ldout(c->store->cct, 0) << __func__ << " done " << b->seq << dendl;
+  ldout(c->store->cct, 10) << __func__ << " done " << seq << dendl;
 }
 
 // =======================================================
