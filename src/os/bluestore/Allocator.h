@@ -351,7 +351,7 @@ public:
       std::function<void(uint64_t, uint64_t, uint64_t, uint64_t)> cb);
   };
 
-  // The following code build Allocator's free extents spatial histogram.
+  // The following code builds the allocator's free extents spatial histogram.
   // Which is a set of N buckets to track extents location.
   // Extent lands into a bucket depending on its offset using N buckets.
   // An extent which spans multiple buckets lands into all of them
