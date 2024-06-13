@@ -1741,7 +1741,7 @@ mds_rank_t Client::choose_target_mds(MetaRequest *req, Inode** phash_diri)
            * I think the MDS should be able to redirect as needed*/
 	  in = in->get_first_parent()->dir->parent_inode;
         else {
-          ldout(cct, 10) << __func__ << "got unlinked inode, can't look at parent" << dendl;
+          ldout(cct, 10) << __func__ << " got unlinked inode, can't look at parent" << dendl;
           break;
         }
       }
@@ -9325,10 +9325,13 @@ int Client::_readdir_get_frag(int op, dir_result_t* dirp,
   else
     fg = frag_t(dirp->offset_high());
   
-  ldout(cct, 10) << __func__ << " " << dirp << " on " << dirp->inode->ino << " fg " << fg
-		 << " offset " << hex << dirp->offset << dec << dendl;
 
   InodeRef& diri = dirp->inode;
+  ldout(cct, 10) << __func__ << " " << dirp << " on " << diri->ino
+                << " diri " << diri.get()
+                << " *diri " << *(diri.get())
+                << " fg " << fg
+		<< " offset " << hex << dirp->offset << dec << dendl;
 
   MetaRequest *req = new MetaRequest(op);
   fill_req_cb(dirp, req, diri, fg);
@@ -9346,7 +9349,7 @@ int Client::_readdir_get_frag(int op, dir_result_t* dirp,
     ldout(cct, 10) << __func__ << " " << dirp << " got frag " << dirp->buffer_frag
 		   << " size " << dirp->buffer.size() << dendl;
   } else {
-    ldout(cct, 10) << __func__ << " got error " << res << ", setting end flag" << dendl;
+    lderr(cct) << __func__ << " got error " << res << ", setting end flag" << dendl;
     dirp->set_end();
   }
 
@@ -9608,6 +9611,7 @@ int Client::_readdir_r_cb(int op,
     int err = _readdir_cache_cb(dirp, cb, p, caps, getref);
     if (err != -CEPHFS_EAGAIN)
       return err;
+    }
   }
 
   while (1) {
