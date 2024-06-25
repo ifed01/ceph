@@ -9325,13 +9325,13 @@ int Client::_readdir_get_frag(int op, dir_result_t* dirp,
   else
     fg = frag_t(dirp->offset_high());
   
-
   InodeRef& diri = dirp->inode;
-  ldout(cct, 10) << __func__ << " " << dirp << " on " << diri->ino
-                << " diri " << diri.get()
-                << " *diri " << *(diri.get())
-                << " fg " << fg
-		<< " offset " << hex << dirp->offset << dec << dendl;
+  ldout(cct, 10) << __func__ << " " << dirp
+                 << " on " << dirp->inode->ino << " snap " << dirp->inode->snapid
+                 << " diri " << diri.get()
+                 << " *diri " << *(diri.get())
+                 << " fg " << fg
+		 << " offset " << hex << dirp->offset << dec << dendl;
 
   MetaRequest *req = new MetaRequest(op);
   fill_req_cb(dirp, req, diri, fg);
@@ -9349,7 +9349,7 @@ int Client::_readdir_get_frag(int op, dir_result_t* dirp,
     ldout(cct, 10) << __func__ << " " << dirp << " got frag " << dirp->buffer_frag
 		   << " size " << dirp->buffer.size() << dendl;
   } else {
-    lderr(cct) << __func__ << " got error " << res << ", setting end flag" << dendl;
+    ldout(cct, 10) << __func__ << " got error " << res << ", setting end flag" << dendl;
     dirp->set_end();
   }
 
@@ -9611,7 +9611,6 @@ int Client::_readdir_r_cb(int op,
     int err = _readdir_cache_cb(dirp, cb, p, caps, getref);
     if (err != -CEPHFS_EAGAIN)
       return err;
-    }
   }
 
   while (1) {
@@ -9852,6 +9851,85 @@ int Client::readdir_snapdiff(dir_result_t* d1, snapid_t snap2,
     lderr(cct) << __func__ << " error: "
                << cpp_strerror(ret)
                << dendl;
+    errno = -ret;  // this sucks.
+    return ret;
+  }
+
+  ldout(cct, 15) << __func__ << " " << ret
+    << " " << sr.de->d_name
+    << " " << stx.stx_dev
+    << dendl;
+  if (sr.full) {
+    if (out_de) {
+      *out_de = de;
+    }
+    if (out_snap) {
+      *out_snap = stx.stx_dev;
+    }
+    return 1;
+  }
+  return 0;
+}
+
+int Client::readdir_snapdiff2(
+  const filepath& d1path,
+  dir_result_t* d1, snapid_t snap2,
+  struct dirent* out_de,
+  snapid_t* out_snap)
+{
+  if (d1path.empty() || !d1 || !d1->inode || d1->inode->snapid == snap2 || snap2 == CEPH_NOSNAP) {
+    lderr(cct) << __func__ << " invalid parameters: "
+      << " d1path :" << d1path
+      << " d1:" << d1
+      << " d1->inode:" << (d1 ? d1->inode : nullptr)
+      << " snap1 id:" << (d1 && d1->inode ? d1->inode->snapid : (snapid_t) - 1)
+      << " snap2 id :" << snap2
+      << dendl;
+    errno = EINVAL;
+    return -errno;
+  }
+
+  auto& de = d1->de;
+  ceph_statx stx;
+  single_readdir sr;
+  sr.de = &de;
+  sr.stx = &stx;
+  sr.inode = NULL;
+  sr.full = false;
+
+  auto fill_snapdiff_cb = [&](dir_result_t* dirp,
+    MetaRequest* req,
+    InodeRef& diri,
+    frag_t fg) {
+      req->set_filepath(d1path);
+      req->set_inode(diri.get());
+      req->head.args.snapdiff.snap_other = snap2;
+      req->head.args.snapdiff.frag = fg;
+      req->head.args.snapdiff.flags = CEPH_READDIR_REPLY_BITFLAGS;
+      if (dirp->last_name.length()) {
+	req->path2.set_path(dirp->last_name);
+      }
+      else if (dirp->hash_order()) {
+	req->head.args.snapdiff.offset_hash = dirp->offset_high();
+      }
+      req->dirp = dirp;
+  };
+
+  // our callback fills the dirent and sets sr.full=true on first
+  // call, and returns -1 the second time around.
+  int ret = _readdir_r_cb(CEPH_MDS_OP_READDIR_SNAPDIFF,
+    d1,
+    _readdir_single_dirent_cb,
+    fill_snapdiff_cb,
+    (void*)&sr,
+    0,
+    AT_STATX_DONT_SYNC,
+    false,
+    true);
+  if (ret < -1) {
+    lderr(cct) << __func__ << " error: "
+      << cpp_strerror(ret)
+      << dendl;
     errno = -ret;  // this sucks.
     return ret;
   }

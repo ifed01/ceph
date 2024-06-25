@@ -131,6 +131,8 @@ struct ceph_ll_io_info {
   bool syncdataonly;
 };
 
+struct ceph_snapdiff_info2;
+
 /* setattr mask bits (up to an int in size) */
 #ifndef CEPH_SETATTR_MODE
 #define CEPH_SETATTR_MODE		(1 << 0)
@@ -655,6 +657,7 @@ int ceph_open_snapdiff(struct ceph_mount_info* cmount,
                        const char* snap1,
                        const char* snap2,
                        struct ceph_snapdiff_info* out);
+
 /**
  * Get the next snapshot delta entry.
  *
@@ -667,6 +670,7 @@ int ceph_open_snapdiff(struct ceph_mount_info* cmount,
  */
 int ceph_readdir_snapdiff(struct ceph_snapdiff_info* snapdiff,
                           struct ceph_snapdiff_entry_t* out);
+
 /**
  * Close snapdiff stream.
  *
@@ -674,6 +678,23 @@ int ceph_readdir_snapdiff(struct ceph_snapdiff_info* snapdiff,
  * @returns 0 on success and negative error code otherwise
  */
 int ceph_close_snapdiff(struct ceph_snapdiff_info* snapdiff);
+
+int ceph_start_snapdiff2(struct ceph_mount_info* cmount,
+  const char* root_path,
+  const char* rel_path,
+  const char* snap1,
+  const char* snap2,
+  struct ceph_snapdiff_info2** out);
+
+int ceph_open_snapdiff2(const struct ceph_snapdiff_info2* parent,
+  const char* name,
+  uint64_t ino,
+  struct ceph_snapdiff_info2** out);
+
+int ceph_readdir_snapdiff2(struct ceph_snapdiff_info2* snapdiff,
+  struct ceph_snapdiff_entry_t* out);
+
+int ceph_close_snapdiff2(struct ceph_snapdiff_info2* snapdiff);
 
 /**
  * Gets multiple directory entries.
