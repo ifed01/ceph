@@ -375,6 +375,61 @@ cdef class SnapDiffHandle(object):
             raise make_ex(ret, "closesnapdiff failed")
         self.opened = 0
 
+cdef class SnapDiffHandle2(object):
+    cdef LibCephFS lib
+    cdef ceph_snapdiff_info2* handle
+    cdef int opened
+    cdef int64_t snapid1
+    cdef int64_t snapid2
+
+    def __cinit__(self, _lib):
+        self.opened = 0
+        self.lib = _lib
+
+    def __dealloc__(self):
+        self.close()
+
+    def readdir(self):
+        self.lib.require_state("mounted")
+
+        cdef:
+            ceph_snapdiff_entry_t difent
+        with nogil:
+            ret = ceph_readdir_snapdiff2(self.handle, &difent)
+        if ret < 0:
+            raise make_ex(ret, "ceph_readdir_snapdiff2 failed, ret {}"
+                .format(ret))
+        if ret == 0:
+            return None
+
+        IF UNAME_SYSNAME == "FreeBSD" or UNAME_SYSNAME == "Darwin":
+            return DirEntry(d_ino=difent.dir_entry.d_ino,
+                            d_off=0,
+                            d_reclen=difent.dir_entry.d_reclen,
+                            d_type=difent.dir_entry.d_type,
+                            d_name=difent.dir_entry.d_name,
+                            d_snapid=difent.snapid)
+        ELSE:
+            return DirEntry(d_ino=difent.dir_entry.d_ino,
+                            d_off=difent.dir_entry.d_off,
+                            d_reclen=difent.dir_entry.d_reclen,
+                            d_type=difent.dir_entry.d_type,
+                            d_name=difent.dir_entry.d_name,
+                            d_snapid=difent.snapid)
+
+    def close(self):
+        if (not self.opened):
+            return
+        self.lib.require_state("mounted")
+        with nogil:
+            ret = ceph_close_snapdiff2(self.handle)
+        if ret < 0:
+            raise make_ex(ret, "closesnapdiff2 failed")
+        self.opened = 0
+    def get_snap1(self):
+        return self.snapid1
+    def get_snap2(self):
+        return self.snapid2
 
 def cstr(val, name, encoding="utf-8", opt=False) -> bytes:
     """
@@ -1053,6 +1108,54 @@ cdef class LibCephFS(object):
         if ret < 0:
             raise make_ex(ret, "open_snapdiff failed for {} vs. {}"
                 .format(snap1.decode('utf-8'), snap2.decode('utf-8')))
+        h.opened = 1
+        return h
+
+    def startsnapdiff2(self, root_path, rel_path, snap1name, snap2name) -> SnapDiffHandle2:
+        """
+        Open the given directory.
+
+        :param path: the path name of the directory to open.  Must be either an absolute path
+                     or a path relative to the current working directory.
+        :returns: the open directory stream handle
+        """
+        self.require_state("mounted")
+
+        h = SnapDiffHandle2(self)
+        root = cstr(root_path, 'root')
+        relp = cstr(rel_path, 'relp')
+        snap1 = cstr(snap1name, 'snap1')
+        snap2 = cstr(snap2name, 'snap2')
+        cdef:
+            char* _root = root
+            char* _relp = relp
+            char* _snap1 = snap1
+            char* _snap2 = snap2
+        with nogil:
+            ret1 = ceph_start_snapdiff2(self.cluster, _root, _relp, _snap1, _snap2, &h.handle);
+
+        if ret1 < 0:
+            raise make_ex(ret1, "start_snapdiff2 failed for {}, {} vs. {}"
+              .format(relp.decode('utf-8'), snap1.decode('utf-8'), snap2.decode('utf-8')))
+        h.opened = 1
+        return h
+
+    def opensnapdiff2(self, SnapDiffHandle2 diff, name, ino, snapid1, snapid2) -> SnapDiffHandle2:
+        """
+        Open a snapdiff V2 handle for a given pair of snapshots.
+
+        :returns: the open snapdiff stream handle
+        """
+        self.require_state("mounted")
+        h = SnapDiffHandle2(self)
+        cdef:
+            char* _name = name
+            uint64_t _ino = ino
+        with nogil:
+            ret = ceph_open_snapdiff2(diff.handle, _name, _ino, &h.handle);
+        if ret < 0:
+            raise make_ex(ret, "open_snapdiff2 failed for ino {}, {} vs. {}"
+                .format(_ino, snapid1, snapid2))
         h.opened = 1
         return h
 

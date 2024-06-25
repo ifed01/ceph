@@ -42,7 +42,13 @@ cdef nogil:
     cdef struct ceph_snapdiff_info:
         int dummy
 
+    cdef struct ceph_snapdiff_info2:
+        int dummy
+
     cdef struct ceph_snapdiff_entry_t:
+        int dummy
+
+    cdef struct vinodeno_t:
         int dummy
 
     ctypedef void* rados_t
@@ -186,6 +192,14 @@ cdef nogil:
     int ceph_readdir_snapdiff(ceph_snapdiff_info *snapdiff, ceph_snapdiff_entry_t *out):
         pass
     int ceph_close_snapdiff(ceph_snapdiff_info *snapdiff):
+        pass
+    int ceph_start_snapdiff(ceph_mount_info *cmount, const char *root_path, const char *rel_path, const char *snap1path, const char *snap2root, uint64_t *out_ino, uint64_t* snapid1, uint64_t* out_snapid2):
+        pass
+    int ceph_open_snapdiff(ceph_mount_info *cmount, uint64_t ino, uint64_t snapid1, uint64_t snapid2):
+        pass
+    int ceph_readdir_snapdiff2(ceph_snapdiff_info2 *snapdiff, ceph_snapdiff_entry_t *out):
+        pass
+    int ceph_close_snapdiff(ceph_snapdiff_info2 *snapdiff):
         pass
     int ceph_rmdir(ceph_mount_info *cmount, const char *path):
         pass
