@@ -370,18 +370,23 @@ int PeerReplayer::register_directory(const std::string &dir_root,
     return r;
   }
 
-  dout(5) << ": dir_root=" << dir_root << " registered with replayer="
-          << replayer << dendl;
+  dout(4) << ": dir_root=" << dir_root << " registered with replayer="
+          << replayer
+          << " fd = " << registry.fd
+          << dendl;
   m_registered.emplace(dir_root, std::move(registry));
   return 0;
 }
 
 void PeerReplayer::unregister_directory(const std::string &dir_root) {
-  dout(20) << ": dir_root=" << dir_root << dendl;
+  dout(4) << ": dir_root=" << dir_root << dendl;
 
   auto it = m_registered.find(dir_root);
   ceph_assert(it != m_registered.end());
 
+  dout(4) << ": dir_root=" << dir_root
+          << " fd = " << it->second.fd
+          << dendl;
   unlock_directory(it->first, it->second);
   m_registered.erase(it);
   if (std::find(m_directories.begin(), m_directories.end(), dir_root) == m_directories.end()) {
