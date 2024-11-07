@@ -1017,12 +1017,7 @@ protected:
   /*
    * Resolve file descriptor, or return NULL.
    */
-  Fh *get_filehandle(int fd) {
-    auto it = fd_map.find(fd);
-    if (it == fd_map.end())
-      return NULL;
-    return it->second;
-  }
+  Fh *get_filehandle(int fd);
   int get_fd_inode(int fd, InodeRef *in);
 
   // helpers
