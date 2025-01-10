@@ -311,3 +311,72 @@ TEST(LibCephFS, BrokenStatxAfterTrimCache)
   test_mount.test_close(s2fd);
   test_mount.test_close(bulk_fd);
 }
+
+TEST(LibCephFS, GetDents) {
+  struct ceph_mount_info *cmount;
+  ASSERT_EQ(ceph_create(&cmount, NULL), 0);
+  ASSERT_EQ(ceph_conf_read_file(cmount, NULL), 0);
+  ASSERT_EQ(0, ceph_conf_parse_env(cmount, NULL));
+  ASSERT_EQ(ceph_mount(cmount, NULL), 0);
+
+  std::string dir_root = "/root";
+  ceph_mkdir(cmount, dir_root.c_str(), 0777);
+  int root_fd = ceph_open(cmount, dir_root.c_str(), O_DIRECTORY | O_RDONLY, 0);
+
+  // create n subdirectories
+  int i, n = 100000;
+  for (i = 1; i <= n; ++i) {
+    int r = ceph_mkdirat(cmount, root_fd, to_string(i).c_str(), 0777);
+    ASSERT_TRUE(!(r < 0 && r != -EEXIST));
+  }
+
+  int m = 10;
+  std::unordered_set <int> unique_num;
+  while (unique_num.size() < m) {
+    int num = std::rand() % n + 1;
+    unique_num.insert(num);
+  }
+
+  for (int num : unique_num) {
+    std::cout << num << " ";
+  }
+  std::cout << std::endl;
+
+  ceph_dir_result* dirp;
+  int r = ceph_openat(cmount, root_fd, ".", AT_SYMLINK_NOFOLLOW, 0);
+  ASSERT_TRUE(r >= 0);
+
+  int fd = r;
+  r = ceph_fdopendir(cmount, fd, &dirp);
+  ASSERT_TRUE(r >= 0);
+
+  struct dirent *dire = (struct dirent *)alloca(512 * sizeof(struct dirent));
+
+  unordered_set <int> tot_dir;
+  while (true) {
+    int len = ceph_getdents(cmount, dirp, (char *)dire, 512);
+    ASSERT_TRUE(len >= 0);
+    if (len == 0) {
+      break;
+    }
+    int nr = len / sizeof(struct dirent);
+    for (i = 0; i < nr; ++i) {
+      std::string d_name = std::string(dire[i].d_name);
+      if (d_name == "." || d_name == "..") {
+        continue;
+      }
+      int num = std::stoi(d_name);
+      tot_dir.insert(num);
+      if (unique_num.find(num) != unique_num.end()) {
+        // remove on the fly
+        r = ceph_unlinkat(cmount, fd, d_name.c_str(), AT_REMOVEDIR);
+        ASSERT_TRUE(r >= 0);
+      }
+    }
+  }
+  std::cout << tot_dir.size() << std::endl;
+  EXPECT_EQ(tot_dir.size(), n);
+
+  ASSERT_EQ(0, ceph_unmount(cmount));
+  ceph_shutdown(cmount);
+}
