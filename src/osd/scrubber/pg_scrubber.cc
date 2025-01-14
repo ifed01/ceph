@@ -1753,7 +1753,7 @@ void PgScrubber::discard_replica_reservations()
 
 void PgScrubber::clear_scrub_reservations()
 {
-  dout(10) << __func__ << dendl;
+  dout(0) << __func__ << dendl;
   m_reservations.reset();	  // the remote reservations
   m_local_osd_resource.reset();	  // the local reservation
   m_remote_osd_resource.reset();  // we as replica reserved for a Primary
@@ -1789,7 +1789,7 @@ void PgScrubber::message_all_replicas(int32_t opcode, std::string_view op_text)
 
 void PgScrubber::unreserve_replicas()
 {
-  dout(10) << __func__ << dendl;
+  dout(0) << __func__ << dendl;
   m_reservations.reset();
 }
 
@@ -2666,6 +2666,7 @@ ReplicaReservations::update_latecomers(tpoint_t now_is)
 
 ReplicaReservations::~ReplicaReservations()
 {
+  dout(0) << __func__ << dendl;
   m_had_rejections = true;  // preventing late-coming responses from triggering
 			    // events
 
