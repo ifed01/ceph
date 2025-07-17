@@ -37,6 +37,10 @@ if(HAVE_BROTLI)
   add_subdirectory(brotli)
 endif()
 
+if(HAVE_MXL)
+  add_subdirectory(mxl)
+endif()
+
 add_library(compressor STATIC)
 target_link_libraries(compressor PUBLIC compressor_objs)
 
@@ -51,6 +55,10 @@ endif()
 
 if(HAVE_BROTLI)
   list(APPEND ceph_compressor_libs ceph_brotli)
+endif()
+
+if(HAVE_MXL)
+  list(APPEND ceph_compressor_libs ceph_mxl)
 endif()
 
 add_custom_target(compressor_plugins DEPENDS

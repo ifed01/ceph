@@ -816,6 +816,44 @@ options:
   default: 2
   min: 2
   max: 1024
+- name: compressor_mxl_param
+  type: int
+  level: advanced
+  desc: Mxl accelerator compression parameter
+  long_desc: This is additional parameter for Mxl compressor, the meaning depends on the compression algorithm.
+    * deflate - window size, possible values are
+      0 - 4  KB
+      1 - 8  KB
+      2 - 16 KB
+      3 - 32 KB
+    * xp10 - compression level, possible values are
+      0 - MAX
+      3 - level 3
+      4 - level 4
+      5 - level 5
+      11 - level 11
+    * others - not applicable
+  default: 0
+  flags:
+  - runtime
+  with_legacy: true
+  see_also:
+  - compressor_mxl_alg
+- name: compressor_mxl_alg
+  type: str
+  level: advanced
+  desc: Mxl accelerator compression algorithm
+  default: xp10
+  enum_values:
+  - lzs
+  - elzs
+  - gzip
+  - deflate
+  - zlib
+  - xp10
+  flags:
+  - runtime
+  with_legacy: true
 - name: plugin_crypto_accelerator
   type: str
   level: advanced
@@ -4716,6 +4754,7 @@ options:
   - zlib
   - zstd
   - lz4
+  - mxl
   flags:
   - runtime
   with_legacy: true
