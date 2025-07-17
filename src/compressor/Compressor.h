@@ -39,12 +39,9 @@ public:
     COMP_ALG_SNAPPY = 1,
     COMP_ALG_ZLIB = 2,
     COMP_ALG_ZSTD = 3,
-#ifdef HAVE_LZ4
     COMP_ALG_LZ4 = 4,
-#endif
-#ifdef HAVE_BROTLI
     COMP_ALG_BROTLI = 5,
-#endif
+    COMP_ALG_MXL = 6,
     COMP_ALG_LAST   //the last value for range checks
   };
 
@@ -54,12 +51,9 @@ public:
 	{ "snappy",	COMP_ALG_SNAPPY },
 	{ "zlib",	COMP_ALG_ZLIB },
 	{ "zstd",	COMP_ALG_ZSTD },
-#ifdef HAVE_LZ4
 	{ "lz4",	COMP_ALG_LZ4 },
-#endif
-#ifdef HAVE_BROTLI
 	{ "brotli",	COMP_ALG_BROTLI },
-#endif
+	{ "mxl",	COMP_ALG_MXL },
   };
 
   // compression options

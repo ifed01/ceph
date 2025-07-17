@@ -95,7 +95,9 @@ CompressorRef Compressor::create(CephContext *cct, const std::string &type)
   }
   int err = factory->factory(&cs_impl, &ss);
   if (err)
-    lderr(cct) << __func__ << " factory return error " << err << dendl;
+    lderr(cct) << __func__ << " factory return error " << err
+               << ":" << ss.str()
+               << dendl;
   return cs_impl;
 }
 

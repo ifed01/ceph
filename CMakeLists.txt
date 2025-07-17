@@ -353,6 +353,11 @@ if(WITH_LZ4)
   set(HAVE_LZ4 ${LZ4_FOUND})
 endif(WITH_LZ4)
 
+option(WITH_MXL "MaxLinear compression support" OFF)
+if(WITH_MXL)
+  set(HAVE_MXL TRUE)
+endif(WITH_MXL)
+
 CMAKE_DEPENDENT_OPTION(WITH_CEPH_DEBUG_MUTEX "Use debug ceph::mutex with lockdep" ON
   "CMAKE_BUILD_TYPE STREQUAL Debug" OFF)
 
