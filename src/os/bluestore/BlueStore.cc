@@ -696,13 +696,19 @@ ostream& operator<<(ostream& out, const BlueStore::Buffer& b)
 
 std::ostream& operator<<(std::ostream& out, const BlueStore::pool_fsck_stats_t& s)
 {
-  out << "(" << s.num_objects << " objects, "
+  out << "(" << s.num_objects << " objects total, "
+      << s.num_meta_objects << " objects meta, "
+      << s.num_head_objects << " head objects, "
+      << s.num_snap_objects << " snap objects, "
       << s.shared_blobs << " shared blobs, "
       << s.omaps << " omaps, "
       << s.omap_key_size << " bytes in omap keys, "
       << s.omap_val_size << " bytes in omap vals, "
       << s.stored << " bytes stored, "
-      << s.allocated << " bytes allocated"
+      << s.allocated << " bytes allocated, "
+      << s.stored_meta << " bytes stored in meta, "
+      << s.stored_head << " bytes stored in head, "
+      << s.stored_snap << " bytes stored in snaps"
       << ")";
   return out;
 }
@@ -8237,11 +8243,19 @@ BlueStore::OnodeRef BlueStore::fsck_check_objects_shallow(
 
   map<uint32_t, uint64_t> zone_first_offsets;  // for zoned/smr devices
 
-  dout(10) << __func__ << "  " << oid << dendl;
+  dout(3) << __func__ << "  " << oid << dendl;
   OnodeRef o;
   o.reset(Onode::create_decode(c, oid, key, value));
   ++num_objects;
   ++pool_fsck_stat->num_objects;
+  if (oid.is_pgmeta()) {
+    ++pool_fsck_stat->num_meta_objects;
+  } else if (oid.hobj.is_head()) {
+    ++pool_fsck_stat->num_head_objects;
+  } else {
+    ++pool_fsck_stat->num_snap_objects;
+  }
+
   num_spanning_blobs += o->extent_map.spanning_blob_map.size();
 
   o->extent_map.fault_range(db, 0, OBJECT_MAX_SIZE);
@@ -8290,6 +8304,14 @@ BlueStore::OnodeRef BlueStore::fsck_check_objects_shallow(
     pos = l.logical_offset + l.length;
     res_statfs->data_stored += l.length;
     pool_fsck_stat->stored += l.length;
+    if (oid.is_pgmeta()) {
+      pool_fsck_stat->stored_meta += l.length;
+    } else if (oid.hobj.is_head()) {
+      pool_fsck_stat->stored_head += l.length;
+    } else {
+      pool_fsck_stat->stored_snap += l.length;
+    }
+
     ceph_assert(l.blob);
     const bluestore_blob_t& blob = l.blob->get_blob();
 
@@ -10108,14 +10130,14 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
 
 out_scan:
   dout(2) << __func__ << " " << num_objects << " objects, "
-	  << num_sharded_objects << " of them sharded.  "
+	  << num_sharded_objects << " of them sharded, "
 	  << dendl;
   dout(2) << __func__ << " " << num_extents << " extents to "
 	  << num_blobs << " blobs, "
 	  << num_spanning_blobs << " spanning, "
 	  << num_shared_blobs << " shared."
 	  << dendl;
-  dout(2) << __func__ << " Per-pool stats:"
+  dout(2) << __func__ << " per-pool stats:"
     << dendl;
   for (auto& p : per_pool_fsck_stats) {
     dout(2) << __func__

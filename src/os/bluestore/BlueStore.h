@@ -2773,21 +2773,33 @@ public:
 
   struct pool_fsck_stats_t {
     uint64_t num_objects = 0;
+    uint64_t num_meta_objects = 0;
+    uint64_t num_head_objects = 0;
+    uint64_t num_snap_objects = 0;
     uint64_t shared_blobs = 0;
     uint64_t omaps = 0;
     uint64_t omap_key_size = 0;
     uint64_t omap_val_size = 0;
     uint64_t stored = 0;
     uint64_t allocated = 0;
+    uint64_t stored_meta = 0;
+    uint64_t stored_head = 0;
+    uint64_t stored_snap = 0;
 
     void add(const pool_fsck_stats_t& other) {
       num_objects += other.num_objects;
+      num_meta_objects += other.num_meta_objects;
+      num_head_objects += other.num_head_objects;
+      num_snap_objects += other.num_snap_objects;
       shared_blobs += other.shared_blobs;
       omaps += other.omaps;
       omap_key_size += other.omap_key_size;
       omap_val_size += other.omap_val_size;
       stored += other.stored;
       allocated += other.allocated;
+      stored_meta += other.stored_meta;
+      stored_head += other.stored_head;
+      stored_snap += other.stored_snap;
     }
     friend std::ostream& operator<<(std::ostream& out, const pool_fsck_stats_t& s);
   };
