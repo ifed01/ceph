@@ -2781,10 +2781,18 @@ public:
     uint64_t omap_key_size = 0;
     uint64_t omap_val_size = 0;
     uint64_t stored = 0;
-    uint64_t allocated = 0;
     uint64_t stored_meta = 0;
     uint64_t stored_head = 0;
     uint64_t stored_snap = 0;
+    uint64_t allocated = 0;
+    uint64_t allocated_unique = 0;
+    uint64_t allocated_unique_meta = 0;
+    uint64_t allocated_unique_head = 0;
+    uint64_t allocated_unique_snap = 0;
+    uint64_t allocated_shared = 0;
+    uint64_t allocated_shared_meta = 0;
+    uint64_t allocated_shared_head_and_snap = 0;
+    uint64_t allocated_shared_snap_only = 0;
 
     void add(const pool_fsck_stats_t& other) {
       num_objects += other.num_objects;
@@ -2796,10 +2804,18 @@ public:
       omap_key_size += other.omap_key_size;
       omap_val_size += other.omap_val_size;
       stored += other.stored;
-      allocated += other.allocated;
       stored_meta += other.stored_meta;
       stored_head += other.stored_head;
       stored_snap += other.stored_snap;
+      allocated += other.allocated;
+      allocated_unique += other.allocated_unique;
+      allocated_unique_meta += other.allocated_unique_meta;
+      allocated_unique_head += other.allocated_unique_head;
+      allocated_unique_snap += other.allocated_unique_snap;
+      allocated_shared += other.allocated_shared;
+      allocated_shared_meta += other.allocated_shared_meta;
+      allocated_shared_head_and_snap += other.allocated_shared_head_and_snap;
+      allocated_shared_snap_only += other.allocated_shared_snap_only;
     }
     friend std::ostream& operator<<(std::ostream& out, const pool_fsck_stats_t& s);
   };

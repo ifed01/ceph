@@ -704,11 +704,22 @@ std::ostream& operator<<(std::ostream& out, const BlueStore::pool_fsck_stats_t& 
       << s.omaps << " omaps, "
       << s.omap_key_size << " bytes in omap keys, "
       << s.omap_val_size << " bytes in omap vals, "
-      << s.stored << " bytes stored, "
+      << s.stored << "/"
+        << s.stored_meta << "/"
+        << s.stored_head << "/"
+        << s.stored_snap
+          << " bytes stored total/meta/head/snaps, "
       << s.allocated << " bytes allocated, "
-      << s.stored_meta << " bytes stored in meta, "
-      << s.stored_head << " bytes stored in head, "
-      << s.stored_snap << " bytes stored in snaps"
+      << s.allocated_unique << "/"
+        << s.allocated_unique_meta << "/"
+        << s.allocated_unique_head << "/"
+        << s.allocated_unique_snap
+          << " bytes allocated unique total/meta/head/snaps, "
+      << s.allocated_shared << "/"
+        << s.allocated_shared_meta << "/"
+        << s.allocated_shared_head_and_snap << "/"
+        << s.allocated_shared_snap_only
+          << " bytes allocated shared total/meta/head_and_snaps/snaps_only"
       << ")";
   return out;
 }
@@ -8420,29 +8431,49 @@ BlueStore::OnodeRef BlueStore::fsck_check_objects_shallow(
 	    sbi.allocated_chunks += (e.length >> min_alloc_size_order);
 	  }
 	  sb_ref_counts.inc_range(sbid, e.offset, e.length, 1);
+          if (oid.is_pgmeta()) {
+            sbi.flags |= sb_info_t::META;
+          } else if (oid.hobj.is_head()) {
+            sbi.flags |= sb_info_t::HEAD;
+          }
         }
       }
       if (sb_info_lock) {
         sb_info_lock->unlock();
       }
-    } else if (depth != FSCK_SHALLOW) {
-      ceph_assert(used_blocks);
-      string ctx_descr = " oid " + stringify(oid);
-      errors += _fsck_check_extents(ctx_descr,
-	blob.get_extents(),
-        blob.is_compressed(),
-        *used_blocks,
-        fm->get_alloc_size(),
-        repairer,
-        *res_statfs,
-        *pool_fsck_stat,
-        depth);
     } else {
-      errors += _fsck_sum_extents(
-        blob.get_extents(),
-        blob.is_compressed(),
-        *res_statfs,
-        *pool_fsck_stat);
+      auto& pextents = blob.get_extents();
+      if (depth != FSCK_SHALLOW) {
+        ceph_assert(used_blocks);
+        string ctx_descr = " oid " + stringify(oid);
+        errors += _fsck_check_extents(ctx_descr,
+	  pextents,
+          blob.is_compressed(),
+          *used_blocks,
+          fm->get_alloc_size(),
+          repairer,
+          *res_statfs,
+          *pool_fsck_stat,
+          depth);
+      } else {
+        errors += _fsck_sum_extents(
+          pextents,
+          blob.is_compressed(),
+          *res_statfs,
+          *pool_fsck_stat);
+      }
+      for (auto& e : pextents) {
+        if (e.is_valid()) {
+          pool_fsck_stat->allocated_unique += e.length;
+          if (oid.is_pgmeta()) {
+            pool_fsck_stat->allocated_unique_meta += e.length;
+          } else if (oid.hobj.is_head()) {
+            pool_fsck_stat->allocated_unique_head += e.length;
+          } else {
+            pool_fsck_stat->allocated_unique_snap += e.length;
+          }
+        }
+      }
     }
   } // for (auto& i : ref_map)
 
@@ -9588,9 +9619,18 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
 	  continue;
 	}
 	dout(20) << __func__ << "  " << shared_blob << dendl;
+	pool_fsck_stats_t& ppfs = per_pool_fsck_stats[sbi.pool_id];
 	PExtentVector extents;
 	for (auto& r : shared_blob.ref_map.ref_map) {
 	  extents.emplace_back(bluestore_pextent_t(r.first, r.second.length));
+          ppfs.allocated_shared += r.second.length;
+          if (sbi.flags & sb_info_t::META) {
+            ppfs.allocated_shared_meta += r.second.length;
+          } else if (sbi.flags & sb_info_t::HEAD) {
+            ppfs.allocated_shared_head_and_snap += r.second.length;
+          } else {
+            ppfs.allocated_shared_snap_only += r.second.length;
+          }
 	}
 	if (sbi.pool_id != sb_info_t::INVALID_POOL_ID &&
 	    (per_pool_stat_collection || repair)) {
@@ -9599,7 +9639,6 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
 	std::stringstream ss;
 	ss << "sbid 0x" << std::hex << sbid << std::dec;
 
-	pool_fsck_stats_t& ppfs = per_pool_fsck_stats[sbi.pool_id];
 	ppfs.shared_blobs++;
 	errors += _fsck_check_extents(ss.str(),
 	  extents,

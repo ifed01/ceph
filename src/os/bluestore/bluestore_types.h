@@ -1253,6 +1253,11 @@ public:
   int64_t pool_id = INVALID_POOL_ID;
   // subzero value indicates compressed_allocated as well
   int32_t allocated_chunks = 0;
+  enum {
+    META = 1,
+    HEAD = 2
+  };
+  uint8_t flags = 0;
 
   sb_info_t(int64_t _sbid = 0) : sbid(_sbid)
   {
