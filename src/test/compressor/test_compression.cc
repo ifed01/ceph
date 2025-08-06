@@ -33,21 +33,39 @@ public:
   std::string plugin;
   CompressorRef compressor;
   bool old_zlib_isal;
+  string old_mxl_alg;
+  int old_mxl_param = 0;
 
   CompressorTest() {
     // note for later
     old_zlib_isal = g_conf()->compressor_zlib_isal;
+    old_mxl_alg = g_conf()->compressor_mxl_alg;
+    old_mxl_param = g_conf()->compressor_mxl_param;
 
     plugin = GetParam();
     size_t pos = plugin.find('/');
     if (pos != std::string::npos) {
-      string isal = plugin.substr(pos + 1);
+      string aux = plugin.substr(pos + 1);
+      auto pos2 = aux.find('/');
+      string aux2;
+      if (pos2 != std::string::npos) {
+        aux2 = aux.substr(pos2 + 1);
+        aux = aux.substr(0, pos2);
+      }
       plugin = plugin.substr(0, pos);
-      if (isal == "isal") {
+      if (aux == "isal") {
 	g_conf().set_val("compressor_zlib_isal", "true");
 	g_ceph_context->_conf.apply_changes(nullptr);
-      } else if (isal == "noisal") {
+      } else if (aux == "noisal") {
 	g_conf().set_val("compressor_zlib_isal", "false");
+	g_ceph_context->_conf.apply_changes(nullptr);
+      } else if (plugin == "mxl" && (!aux.empty() || !aux2.empty())) {
+        if (!aux.empty()) {
+	  g_conf().set_val("compressor_mxl_alg", aux);
+	}
+        if (!aux2.empty()) {
+	  g_conf().set_val("compressor_mxl_param", aux2);
+	}
 	g_ceph_context->_conf.apply_changes(nullptr);
       } else {
 	ceph_abort_msg("bad option");
@@ -57,6 +75,8 @@ public:
   }
   ~CompressorTest() override {
     g_conf().set_val("compressor_zlib_isal", old_zlib_isal ? "true" : "false");
+    g_conf().set_val("compressor_mxl_alg", old_mxl_alg);
+    g_conf().set_val("compressor_mxl_param", std::to_string(old_mxl_param));
     g_ceph_context->_conf.apply_changes(nullptr);
   }
 
@@ -297,6 +317,9 @@ void test_compress(CompressorRef compressor, size_t size)
     std::optional<int32_t> compressor_message;
     int res = compressor->compress(in, out, compressor_message);
     EXPECT_EQ(res, 0);
+    if (t == 0) {
+      std::cout << in.length() << " bytes compressed into " << out.length() << std::endl;
+    }
   }
   free(data);
 }
@@ -345,6 +368,11 @@ TEST_P(CompressorTest, compress_16384)
   test_compress(compressor, 16384);
 }
 
+TEST_P(CompressorTest, compress_65536)
+{
+  test_compress(compressor, 65536);
+}
+
 TEST_P(CompressorTest, decompress_1024)
 {
   test_decompress(compressor, 1024);
@@ -370,6 +398,11 @@ TEST_P(CompressorTest, decompress_16384)
   test_decompress(compressor, 16384);
 }
 
+TEST_P(CompressorTest, decompress_65536)
+{
+  test_decompress(compressor, 65536);
+}
+
 
 INSTANTIATE_TEST_SUITE_P(
   Compressor,
@@ -385,6 +418,18 @@ INSTANTIATE_TEST_SUITE_P(
     "snappy",
 #ifdef HAVE_BROTLI
     "brotli",
+#endif
+#ifdef HAVE_MXL
+    "mxl",
+    "mxl/elzs",
+    "mxl/gzip",
+    "mxl/deflate",
+    "mxl/deflate/3",
+    "mxl/zlib",
+    "mxl/xp10",
+    "mxl/xp10/3",
+    "mxl/xp10/5",
+    "mxl/xp10/11",
 #endif
     "zstd"));
 
