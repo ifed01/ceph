@@ -1364,7 +1364,7 @@ TEST_P(StoreTest, CompressionTest) {
   SetVal(g_conf(), "bluestore_compression_mode", "force");
   g_ceph_context->_conf.apply_changes(nullptr);
   doCompressionTest();
-  SetVal(g_conf(), "bluestore_compression_algorithm", "zlib");
+  SetVal(g_conf(), "bluestore_compression_algorithm", "mxl");
   SetVal(g_conf(), "bluestore_compression_mode", "aggressive");
   g_ceph_context->_conf.apply_changes(nullptr);
   doCompressionTest();
@@ -4556,6 +4556,13 @@ public:
   void shutdown() {
     ghobject_t next;
     queue_transactions();
+
+    const PerfCounters* logger = store->get_perf_counters();
+    std::cout << " compressed in:" << logger->get(l_bluestore_compressed_original)
+              << " compressed res:" << logger->get(l_bluestore_compressed)
+              << " written:" << logger->get(l_bluestore_write_big_bytes)
+              <<std::endl;
+
     while (1) {
       vector<ghobject_t> objects;
       int r = collection_list(store, ch, next, ghobject_t::get_max(), 10,
@@ -4856,6 +4863,7 @@ public:
     EnterExit ee("write");
     if (!can_unlink())
       return -ENOENT;
+
     wait_for_ready(locker);
 
     ghobject_t new_obj = get_uniform_random_object(locker);
@@ -4890,7 +4898,6 @@ public:
           data.length()-value.length(), value);
       value.swap(data);
     }
-
     t.write(cid, new_obj, offset, len, bl);
     ++in_flight;
     in_flight_objects.insert(new_obj);
@@ -5597,7 +5604,7 @@ INSTANTIATE_TEST_SUITE_P(
     { "max_size", "262144" },
     { "alignment", "512" },
     { "bluestore_compression_mode", "force" },
-    { "bluestore_compression_algorithm", "snappy", "zlib" },
+    { "bluestore_compression_algorithm", "snappy", "zlib", "mxl" },
     { "bluestore_csum_type", "crc32c" },
     { "bluestore_default_buffered_read", "true", "false" },
     { "bluestore_default_buffered_write", "true", "false" },
@@ -5639,7 +5646,7 @@ INSTANTIATE_TEST_SUITE_P(
     { "max_write", "1048576" },
     { "max_size", "4194304" },
     { "alignment", "65536" },
-    { "bluestore_compression_algorithm", "zlib", "snappy" },
+    { "bluestore_compression_algorithm", "zstd", "snappy", "mxl" },
     { "bluestore_compression_mode", "force" },
     { "bluestore_default_buffered_write", "false" }
   }))
@@ -9878,6 +9885,7 @@ TEST_P(StoreTestSpecificAUSize, garbageCollection) {
   SetVal(g_conf(), "bluestore_compression_min_blob_size", "262144");
   SetVal(g_conf(), "bluestore_max_blob_size", "524288");
   SetVal(g_conf(), "bluestore_compression_mode", "force");
+  SetVal(g_conf(), "bluestore_compression_algorithm", "mxl");
   g_conf().apply_changes(nullptr);
 
   auto ch = store->create_new_collection(cid);
@@ -12172,6 +12180,9 @@ int main(int argc, char **argv) {
 
   g_ceph_context->_conf.set_val_or_die(
     "enable_experimental_unrecoverable_data_corrupting_features", "*");
+
+  g_ceph_context->_conf.set_val_or_die("bluestore_compression_algorithm", "mxl");
+
   g_ceph_context->_conf.apply_changes(nullptr);
 
   ::testing::InitGoogleTest(&argc, argv);
