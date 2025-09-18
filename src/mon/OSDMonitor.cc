@@ -13500,6 +13500,25 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     wait_for_commit(op, new Monitor::C_Command(mon, op, 0, rs,
 					      get_last_committed() + 1));
     return true;
+  } else if (prefix == "osd pool list purged snap") {
+    string poolstr;
+    cmd_getval(cmdmap, "pool", poolstr);
+    int64_t pool = osdmap.lookup_pg_pool_name(poolstr.c_str());
+    if (pool < 0) {
+      ss << "unrecognized pool '" << poolstr << "'";
+      err = -ENOENT;
+      goto reply_no_propose;
+    }
+    auto k = make_purged_snap_key(pool, 0);
+    auto it = mon.store->get_iterator(OSD_SNAP_PREFIX);
+    for (it->lower_bound(k); it->valid(); it->next()) {
+      bufferlist v = it->value();
+      auto p = v.cbegin();
+      snapid_t begin, end;
+      decode(begin, p);
+      decode(end, p);
+      ss << it->key() <<":" << begin << "~" << end << std::endl;
+    }
   } else if (prefix == "osd pool force-remove-snap") {
     /*
      *  Forces removal of snapshots in the range of
@@ -13529,11 +13548,11 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       *pp = *p;
     }
 
-    if (!p->is_unmanaged_snaps_mode() && !p->is_pool_snaps_mode()) {
+/*    if (!p->is_unmanaged_snaps_mode() && !p->is_pool_snaps_mode()) {
       ss << "pool " << poolstr << " invalid snaps mode";
       err = -EINVAL;
       goto reply_no_propose;
-    }
+    }*/
 
     int64_t lower_snapid_bound =
       cmd_getval_or<int64_t>(cmdmap, "lower_snapid_bound", 1);
@@ -13550,8 +13569,11 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     bool dry_run = false;
     cmd_getval(cmdmap, "dry_run", dry_run);
 
+    bool force = false;
+    cmd_getval(cmdmap, "force", force);
+
     // don't redelete past pool's snap_seq
-    auto snapid_limit = std::min(upper_snapid_bound, (int64_t)p->get_snap_seq());
+    auto snapid_limit = upper_snapid_bound; //std::min(upper_snapid_bound, (int64_t)p->get_snap_seq());
 
     if (dry_run) {
       ss << "Dry run: ";
@@ -13564,7 +13586,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     for (auto i = lower_snapid_bound; i < snapid_limit; i++) {
       snapid_t before_begin, before_end;
       int res = lookup_purged_snap(pool, i, &before_begin, &before_end);
-      if (res == 0) {
+      if (res == 0 && !force) {
         ss << "snapids: " << i << " was already marked as purged. ";
       } else {
         // Remove non purged_snaps
