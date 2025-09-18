@@ -2993,6 +2993,56 @@ will start to track new ops received afterwards.";
     store->get_db_statistics(f);
   } else if (prefix == "dump_scrubs") {
     service.get_scrub_services().dump_scrubs(f);
+  } else if (prefix == "dump_purged_snaps") {
+    stringstream res_ss;
+    int64_t pool = -1;
+    int64_t snap_first = -1;
+    int64_t snap_last = -1;
+    string error;
+    bool success = true;
+    if (!cmd_getval(cmdmap, "pool", pool)) {
+      error = "unable to get pool";
+      success = false;
+    } else if (!cmd_getval(cmdmap, "first_snap", snap_first)) {
+      error = "unable to get first snap";
+      success = false;
+    } else if (!cmd_getval(cmdmap, "last_snap", snap_last)) {
+      error = "unable to get last snap";
+      success = false;
+    }
+    if (success) {
+      SnapMapper::dump_purged_snaps(cct,
+        store.get(), service.meta_ch, make_purged_snaps_oid(),
+        pool, snap_first, snap_last, res_ss);
+      outbl.append(res_ss.str());
+    } else {
+      ss << error;
+    }
+  } else if (prefix == "dump_snap_map") {
+    stringstream res_ss;
+    int64_t pool = -1;
+    int64_t snap_first = -1;
+    int64_t snap_last = -1;
+    string error;
+    bool success = true;
+    if (!cmd_getval(cmdmap, "pool", pool)) {
+      error = "unable to get pool";
+      success = false;
+    } else if (!cmd_getval(cmdmap, "first_snap", snap_first)) {
+      error = "unable to get first snap";
+      success = false;
+    } else if (!cmd_getval(cmdmap, "last_snap", snap_last)) {
+      error = "unable to get last snap";
+      success = false;
+    }
+    if (success) {
+      SnapMapper::dump_snap_map(cct,
+        store.get(), service.meta_ch, make_snapmapper_oid(),
+        pool, snap_first, snap_last, res_ss);
+      outbl.append(res_ss.str());
+    } else {
+      ss << error;
+    }
   } else if (prefix == "calc_objectstore_db_histogram") {
     store->generate_db_histogram(f);
   } else if (prefix == "flush_store_cache") {
@@ -4255,7 +4305,21 @@ void OSD::final_init()
 				     asok_hook,
 				     "print scheduled scrubs");
   ceph_assert(r == 0);
+  r = admin_socket->register_command("dump_purged_snaps " \
+				     "name=pool,type=CephInt "  \
+				     "name=first_snap,type=CephInt " \
+				     "name=last_snap,type=CephInt",
+				     asok_hook,
+				     "show purged snaps for the pool");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command("dump_snap_map " \
+				     "name=pool,type=CephInt "  \
+				     "name=first_snap,type=CephInt " \
+				     "name=last_snap,type=CephInt ",
+				     asok_hook,
+				     "show snap mapping for the pool");
 
+  ceph_assert(r == 0);
   r = admin_socket->register_command("calc_objectstore_db_histogram",
                                      asok_hook,
                                      "Generate key value histogram of kvdb(rocksdb) which used by bluestore");
