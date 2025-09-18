@@ -19,6 +19,7 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <ostream>
 
 #include "common/hobject.h"
 #include "common/map_cacher.hpp"
@@ -209,6 +210,30 @@ public:
     unsigned max);
 #endif
 
+  static int dump_purged_snaps(
+    CephContext *cct,
+    ObjectStore* store,
+    ObjectStore::CollectionHandle ch,
+    const ghobject_t &psnaps_hoid,
+    int64_t pool, snapid_t snap_first, snapid_t snap_last,
+    std::ostream& out);
+
+  static int dump_snap_map(
+    CephContext *cct,
+    ObjectStore* store,
+    ObjectStore::CollectionHandle ch,
+    const ghobject_t &psnaps_hoid,
+    int64_t pool, snapid_t snap_first, snapid_t snap_last,
+    std::ostream& out);
+
+/*  static int dump_obj_snap_map(
+    CephContext *cct,
+    ObjectStore* store,
+    ObjectStore::CollectionHandle ch,
+    const ghobject_t &psnaps_hoid,
+    const ghobject_t &hoid,
+    std::ostream& out);
+*/
   static void record_purged_snaps(
     CephContext *cct,
     OSDriver& backend,

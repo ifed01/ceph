@@ -751,6 +751,99 @@ void SnapMapper::record_purged_snaps(
 	   << " keys" << dendl;
 }
 
+int SnapMapper::dump_purged_snaps(
+  CephContext *cct,
+  ObjectStore* store,
+  ObjectStore::CollectionHandle ch,
+  const ghobject_t &psnaps_hoid,
+  int64_t pool, snapid_t snap_first, snapid_t snap_last,
+  std::ostream& out)
+{
+  string k = make_purged_snap_key(pool, snap_first);
+  string k_end = make_purged_snap_key(pool, snap_last);
+
+  store->omap_iterate(
+    ch, psnaps_hoid,
+    ObjectStore::omap_iter_seek_t{
+      .seek_position = k,
+      .seek_type = ObjectStore::omap_iter_seek_t::LOWER_BOUND
+    },
+    [&] (std::string_view key, std::string_view value) mutable {
+      if (key.find(PURGED_SNAP_PREFIX) != 0) {
+        return ObjectStore::omap_iter_ret_t::STOP;
+      }
+      bufferlist bl;
+      bl.append(value);
+      auto p = bl.cbegin();
+      int64_t gotpool;
+      snapid_t begin, end;
+      decode(gotpool, p);
+      decode(begin, p);
+      decode(end, p);
+      if (gotpool != pool || key >= k_end) {
+        return ObjectStore::omap_iter_ret_t::STOP;
+      }
+      dout(10) << __func__ << " key:" << key << " " << begin << ":" << end << dendl;
+      out << " key:" << key << " " << begin << ":" << end << std::endl;
+
+      return ObjectStore::omap_iter_ret_t::NEXT;
+    });
+  return 0;
+}
+
+
+int SnapMapper::dump_snap_map(
+  CephContext *cct,
+  ObjectStore* store,
+  ObjectStore::CollectionHandle ch,
+  const ghobject_t &snapmap_hoid,
+  int64_t pool, snapid_t snap_first, snapid_t snap_last,
+  std::ostream& out)
+{
+  string k = get_prefix(pool, snap_first);
+  string k_end = get_prefix(pool, snap_last);
+
+  store->omap_iterate(
+    ch, snapmap_hoid,
+    ObjectStore::omap_iter_seek_t{
+      .seek_position = k,
+      .seek_type = ObjectStore::omap_iter_seek_t::LOWER_BOUND
+    },
+    [&] (std::string_view key, std::string_view value) mutable {
+      if (key.find(MAPPING_PREFIX) != 0) {
+        return ObjectStore::omap_iter_ret_t::STOP;
+      }
+      unsigned long long gotpool, s;
+      long sh;
+      sscanf(key.data(), "SNA_%lld_%llx_.%lx", &gotpool, &s, &sh);
+      if ((int64_t)gotpool != pool || key >= k_end) {
+        return ObjectStore::omap_iter_ret_t::STOP;
+      }
+      Mapping m;
+      bufferlist bl;
+      bl.append(value);
+      auto p = bl.cbegin();
+      m.decode(p);
+      dout(10) << __func__ << " key:" << key << " " << m.snap << " " << m.hoid << dendl;
+      out << " key:" << key << " " << m.snap << " " << m.hoid << std::endl;
+
+      return ObjectStore::omap_iter_ret_t::NEXT;
+    });
+  return 0;
+}
+
+/*int SnapMapper::dump_obj_snap_map(
+    CephContext *cct,
+    ObjectStore* store,
+    ObjectStore::CollectionHandle ch,
+    const ghobject_t &psnaps_hoid,
+    const ghobject_t &hoid,
+    std::ostream& out)
+{
+  
+  return 0;
+}*/
+
 
 #ifndef WITH_SEASTAR
 bool SnapMapper::Scrubber::_parse_p()
