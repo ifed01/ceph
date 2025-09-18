@@ -762,32 +762,29 @@ int SnapMapper::dump_purged_snaps(
   string k = make_purged_snap_key(pool, snap_first);
   string k_end = make_purged_snap_key(pool, snap_last);
 
-  store->omap_iterate(
-    ch, psnaps_hoid,
-    ObjectStore::omap_iter_seek_t{
-      .seek_position = k,
-      .seek_type = ObjectStore::omap_iter_seek_t::LOWER_BOUND
-    },
-    [&] (std::string_view key, std::string_view value) mutable {
-      if (key.find(PURGED_SNAP_PREFIX) != 0) {
-        return ObjectStore::omap_iter_ret_t::STOP;
-      }
-      bufferlist bl;
-      bl.append(value);
-      auto p = bl.cbegin();
-      int64_t gotpool;
-      snapid_t begin, end;
-      decode(gotpool, p);
-      decode(begin, p);
-      decode(end, p);
-      if (gotpool != pool || key >= k_end) {
-        return ObjectStore::omap_iter_ret_t::STOP;
-      }
-      dout(10) << __func__ << " key:" << key << " " << begin << ":" << end << dendl;
-      out << " key:" << key << " " << begin << ":" << end << std::endl;
+  auto psit = store->get_omap_iterator(ch, psnaps_hoid);
+  psit->lower_bound(PURGED_SNAP_PREFIX);
 
-      return ObjectStore::omap_iter_ret_t::NEXT;
-    });
+  for (; psit->valid(); psit->next()) {
+    const auto& key = psit->key();
+    if (key.find(PURGED_SNAP_PREFIX) != 0) {
+      return 0;
+    }
+
+    bufferlist bl;
+    bl.append(psit->value());
+    auto p = bl.cbegin();
+    int64_t gotpool;
+    snapid_t begin, end;
+    decode(gotpool, p);
+    decode(begin, p);
+    decode(end, p);
+    if (gotpool != pool || key >= k_end) {
+      return 0;
+    }
+    dout(10) << __func__ << " key:" << key << " " << begin << ":" << end << dendl;
+    out << " key:" << key << " " << begin << ":" << end << std::endl;
+  }
   return 0;
 }
 
@@ -803,32 +800,28 @@ int SnapMapper::dump_snap_map(
   string k = get_prefix(pool, snap_first);
   string k_end = get_prefix(pool, snap_last);
 
-  store->omap_iterate(
-    ch, snapmap_hoid,
-    ObjectStore::omap_iter_seek_t{
-      .seek_position = k,
-      .seek_type = ObjectStore::omap_iter_seek_t::LOWER_BOUND
-    },
-    [&] (std::string_view key, std::string_view value) mutable {
-      if (key.find(MAPPING_PREFIX) != 0) {
-        return ObjectStore::omap_iter_ret_t::STOP;
-      }
-      unsigned long long gotpool, s;
-      long sh;
-      sscanf(key.data(), "SNA_%lld_%llx_.%lx", &gotpool, &s, &sh);
-      if ((int64_t)gotpool != pool || key >= k_end) {
-        return ObjectStore::omap_iter_ret_t::STOP;
-      }
-      Mapping m;
-      bufferlist bl;
-      bl.append(value);
-      auto p = bl.cbegin();
-      m.decode(p);
-      dout(10) << __func__ << " key:" << key << " " << m.snap << " " << m.hoid << dendl;
-      out << " key:" << key << " " << m.snap << " " << m.hoid << std::endl;
+  auto mapit = store->get_omap_iterator(ch, snapmap_hoid);
+  mapit->lower_bound(MAPPING_PREFIX);
 
-      return ObjectStore::omap_iter_ret_t::NEXT;
-    });
+  for (; mapit->valid(); mapit->next()) {
+    const auto& key = mapit->key();
+    if (key.find(MAPPING_PREFIX) != 0) {
+      return 0;
+    }
+    unsigned long long gotpool, s;
+    long sh;
+    sscanf(key.data(), "SNA_%lld_%llx_.%lx", &gotpool, &s, &sh);
+    if ((int64_t)gotpool != pool || key >= k_end) {
+      return 0;
+    }
+    Mapping m;
+    bufferlist bl;
+    bl.append(mapit->value());
+    auto p = bl.cbegin();
+    m.decode(p);
+    dout(10) << __func__ << " key:" << key << " " << m.snap << " " << m.hoid << dendl;
+    out << " key:" << key << " " << m.snap << " " << m.hoid << std::endl;
+  }
   return 0;
 }
 
